@@ -1,0 +1,187 @@
+# =============================================================================
+# OS & editor
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# Environment & secrets
+# =============================================================================
+.env
+.env.*
+!.env.example
+!.env*.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+secrets.json
+*.secret
+
+# =============================================================================
+# Node.js / npm / yarn / pnpm
+# =============================================================================
+node_modules/
+jspm_packages/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.npm
+.eslintcache
+.stylelintcache
+.parcel-cache
+.turbo
+*.log
+
+# =============================================================================
+# Next.js
+# =============================================================================
+.next/
+out/
+.vercel
+.vercel.json
+next-env.d.ts
+*.tsbuildinfo
+
+# =============================================================================
+# React / Vite / frontend build tools
+# =============================================================================
+dist/
+dist-ssr/
+build/
+.vite/
+vite.config.*.timestamp-*
+*.local
+
+# =============================================================================
+# Testing & coverage
+# =============================================================================
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+test-results/
+playwright-report/
+playwright/.cache/
+cypress/videos/
+cypress/screenshots/
+cypress/downloads/
+
+# =============================================================================
+# Go / Gin
+# =============================================================================
+# Compiled binaries
+/backend/truerp
+/backend/main
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test & debug artifacts
+*.test
+*.prof
+*.pprof
+debug
+debug.test
+__debug_bin
+__debug_bin*
+
+# Go workspace & vendor (optional local vendoring)
+/vendor/
+go.work
+go.work.sum
+
+# Air live-reload
+tmp/
+.air.toml.local
+
+# =============================================================================
+# Database & migrations (local/dev data)
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+*.sql.gz
+*.dump
+pgdata/
+mysql-data/
+redis-data/
+mongo-data/
+
+# =============================================================================
+# Uploads & generated runtime files
+# =============================================================================
+uploads/
+backend/uploads/
+
+# =============================================================================
+# ML model weights (auto-downloaded at runtime; exceed GitHub size limits)
+# =============================================================================
+models/**/*.bin
+
+# =============================================================================
+# Logs & temp files
+# =============================================================================
+logs/
+*.log
+tmp/
+temp/
+.cache/
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# =============================================================================
+# Docker (local overrides only; keep docker-compose.yml tracked)
+# =============================================================================
+docker-compose.override.yml
+.docker/
+
+# =============================================================================
+# Misc tooling
+# =============================================================================
+.netlify/
+.sentryclirc
+*.orig
+*.rej
