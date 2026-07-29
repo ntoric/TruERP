@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"net/http"
 	"time"
 
@@ -10,25 +10,72 @@ import (
 	"github.com/google/uuid"
 )
 
+func parseDashboardPeriod(c *gin.Context) (start time.Time, end time.Time, filterDates bool) {
+	now := time.Now()
+	loc := now.Location()
+	end = time.Date(now.Year(), now.Month(), now.Day(), 23, 59, 59, 999999999, loc)
+
+	from := c.Query("from_date")
+	to := c.Query("to_date")
+	if from != "" || to != "" {
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+		if from != "" {
+			if t, err := time.ParseInLocation("2006-01-02", from, loc); err == nil {
+				start = t
+			}
+		}
+		if to != "" {
+			if t, err := time.ParseInLocation("2006-01-02", to, loc); err == nil {
+				end = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			}
+		}
+		return start, end, true
+	}
+
+	switch c.DefaultQuery("period", "month") {
+	case "today":
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	case "week":
+		weekday := int(now.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc).AddDate(0, 0, -(weekday - 1))
+	case "year":
+		start = time.Date(now.Year(), 1, 1, 0, 0, 0, 0, loc)
+	case "all":
+		return start, end, false
+	default: // month
+		start = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, loc)
+	}
+	return start, end, true
+}
+
 func GetDashboardStats(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	start, end, filterDates := parseDashboardPeriod(c)
 
 	var stats models.DashboardStats
 
-	// Total sales
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "paid").Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.TotalSales)
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID).Count(&stats.TotalInvoices)
+	salesQuery := utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "paid")
+	invoiceQuery := utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID)
+	if filterDates {
+		salesQuery = salesQuery.Where("date >= ? AND date <= ?", start, end)
+		invoiceQuery = invoiceQuery.Where("date >= ? AND date <= ?", start, end)
+	}
+	salesQuery.Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.TotalSales)
+	invoiceQuery.Count(&stats.TotalInvoices)
+
 	utils.DB.Model(&models.Party{}).Where("user_id = ?", userID).Count(&stats.TotalParties)
 
-	// Pending amount (unpaid invoices)
+	// Pending amount (unpaid invoices) — current snapshot, not period-filtered
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ?", userID, []string{"sent", "overdue"}).Select("COALESCE(SUM(total_amount - amount_paid), 0)").Scan(&stats.PendingAmount)
 
-	// Today's sales
-	today := time.Now().Format("2006-01-02")
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND DATE(date) = ? AND status = ?", userID, today, "paid").Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.TodaySales)
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND DATE(date) = ?", userID, today).Count(&stats.TodayInvoices)
+	// Period paid sales and invoice count (mirrors filtered totals for dashboard cards)
+	stats.TodaySales = stats.TotalSales
+	stats.TodayInvoices = stats.TotalInvoices
 
-	// Overdue invoices
+	// Overdue invoices — current snapshot
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ? AND due_date < ?", userID, "sent", time.Now()).Count(&stats.OverdueInvoices)
 
 	c.JSON(http.StatusOK, stats)
@@ -36,9 +83,14 @@ func GetDashboardStats(c *gin.Context) {
 
 func GetRecentInvoices(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	start, end, filterDates := parseDashboardPeriod(c)
 
 	var invoices []models.Invoice
-	if err := utils.DB.Where("user_id = ?", userID).Preload("Party").Order("created_at DESC").Limit(5).Find(&invoices).Error; err != nil {
+	query := utils.DB.Where("user_id = ?", userID)
+	if filterDates {
+		query = query.Where("date >= ? AND date <= ?", start, end)
+	}
+	if err := query.Preload("Party").Order("created_at DESC").Limit(5).Find(&invoices).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recent invoices"})
 		return
 	}

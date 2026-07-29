@@ -12,6 +12,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FileText, Calculator, FileCheck, FileX, Search, FileDigit, Truck, XCircle } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 export default function GSTPage() {
   const { user, loading: authLoading } = useAuth()
@@ -29,6 +31,14 @@ export default function GSTPage() {
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'summary')
 
   useEffect(() => { if (!authLoading && user) { fetchGSTData(); fetchInvoices() } }, [authLoading, user, period])
+
+  const gstr1Pagination = usePagination(gstr1)
+  const gstr2Pagination = usePagination(gstr2)
+
+  useEffect(() => {
+    gstr1Pagination.resetPage()
+    gstr2Pagination.resetPage()
+  }, [period])
 
   const fetchGSTData = async () => {
     setLoading(true)
@@ -164,7 +174,7 @@ export default function GSTPage() {
               <Table>
                 <TableHeader><TableRow><TableHead>Invoice #</TableHead><TableHead>Date</TableHead><TableHead>Customer</TableHead><TableHead>GSTIN</TableHead><TableHead className="text-right">Taxable</TableHead><TableHead className="text-right">CGST</TableHead><TableHead className="text-right">SGST</TableHead><TableHead className="text-right">IGST</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {gstr1.map((r, i) => (
+                  {gstr1Pagination.paginatedItems.map((r, i) => (
                     <TableRow key={i}>
                       <TableCell>{r.invoice_number}</TableCell>
                       <TableCell>{r.invoice_date}</TableCell>
@@ -179,6 +189,13 @@ export default function GSTPage() {
                   {gstr1.length === 0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-gray-500">No data</TableCell></TableRow>}
                 </TableBody>
               </Table>
+              <PaginationControls
+                page={gstr1Pagination.page}
+                totalPages={gstr1Pagination.totalPages}
+                totalItems={gstr1Pagination.totalItems}
+                pageSize={gstr1Pagination.pageSize}
+                onPageChange={gstr1Pagination.setPage}
+              />
             </CardContent></Card>
           </TabsContent>
 
@@ -187,7 +204,7 @@ export default function GSTPage() {
               <Table>
                 <TableHeader><TableRow><TableHead>Bill #</TableHead><TableHead>Date</TableHead><TableHead>Vendor</TableHead><TableHead>GSTIN</TableHead><TableHead className="text-right">Taxable</TableHead><TableHead className="text-right">CGST</TableHead><TableHead className="text-right">SGST</TableHead><TableHead className="text-right">IGST</TableHead></TableRow></TableHeader>
                 <TableBody>
-                  {gstr2.map((r, i) => (
+                  {gstr2Pagination.paginatedItems.map((r, i) => (
                     <TableRow key={i}>
                       <TableCell>{r.bill_number}</TableCell>
                       <TableCell>{r.receipt_date}</TableCell>
@@ -202,6 +219,13 @@ export default function GSTPage() {
                   {gstr2.length === 0 && <TableRow><TableCell colSpan={8} className="text-center py-8 text-gray-500">No data</TableCell></TableRow>}
                 </TableBody>
               </Table>
+              <PaginationControls
+                page={gstr2Pagination.page}
+                totalPages={gstr2Pagination.totalPages}
+                totalItems={gstr2Pagination.totalItems}
+                pageSize={gstr2Pagination.pageSize}
+                onPageChange={gstr2Pagination.setPage}
+              />
             </CardContent></Card>
           </TabsContent>
 

@@ -27,6 +27,8 @@ import {
   Plus,
 } from 'lucide-react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface PortalProfile {
   customer: {
@@ -101,6 +103,11 @@ export default function CustomerPortalHomePage() {
     }
     loadAll()
   }, [router])
+
+  const invoicesPagination = usePagination(invoices)
+  const paymentsPagination = usePagination(payments)
+  const statementsPagination = usePagination(statements)
+  const ticketsPagination = usePagination(tickets)
 
   const loadAll = async () => {
     setLoading(true)
@@ -268,7 +275,7 @@ export default function CustomerPortalHomePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {invoices.map((inv) => (
+                      {invoicesPagination.paginatedItems.map((inv) => (
                         <tr key={inv.id} className="border-b last:border-0">
                           <td className="py-3 pr-4 font-medium">{inv.invoice_number}</td>
                           <td className="py-3 pr-4">{formatDate(inv.date)}</td>
@@ -293,6 +300,15 @@ export default function CustomerPortalHomePage() {
                     </tbody>
                   </table>
                 )}
+                {invoices.length > 0 && (
+                  <PaginationControls
+                    page={invoicesPagination.page}
+                    totalPages={invoicesPagination.totalPages}
+                    totalItems={invoicesPagination.totalItems}
+                    pageSize={invoicesPagination.pageSize}
+                    onPageChange={invoicesPagination.setPage}
+                  />
+                )}
               </CardContent>
             </Card>
           </TabsContent>
@@ -316,7 +332,7 @@ export default function CustomerPortalHomePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {payments.map((p) => (
+                      {paymentsPagination.paginatedItems.map((p) => (
                         <tr key={p.id} className="border-b last:border-0">
                           <td className="py-3 pr-4">{p.payment_in_number}</td>
                           <td className="py-3 pr-4">{formatDate(p.date)}</td>
@@ -326,6 +342,15 @@ export default function CustomerPortalHomePage() {
                       ))}
                     </tbody>
                   </table>
+                )}
+                {payments.length > 0 && (
+                  <PaginationControls
+                    page={paymentsPagination.page}
+                    totalPages={paymentsPagination.totalPages}
+                    totalItems={paymentsPagination.totalItems}
+                    pageSize={paymentsPagination.pageSize}
+                    onPageChange={paymentsPagination.setPage}
+                  />
                 )}
               </CardContent>
             </Card>
@@ -361,7 +386,7 @@ export default function CustomerPortalHomePage() {
               <CardContent className="overflow-x-auto">
                 {statements.length === 0 ? (
                   <p className="py-6 text-center text-muted-foreground">
-                    No statements available yet. Ask your supplier to generate one from BillBook.
+                    No statements available yet. Ask your supplier to generate one from TruERP.
                   </p>
                 ) : (
                   <table className="w-full text-sm">
@@ -374,7 +399,7 @@ export default function CustomerPortalHomePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {statements.map((s) => (
+                      {statementsPagination.paginatedItems.map((s) => (
                         <tr key={s.id} className="border-b last:border-0">
                           <td className="py-3 pr-4">{s.statement_number}</td>
                           <td className="py-3 pr-4">
@@ -395,6 +420,15 @@ export default function CustomerPortalHomePage() {
                       ))}
                     </tbody>
                   </table>
+                )}
+                {statements.length > 0 && (
+                  <PaginationControls
+                    page={statementsPagination.page}
+                    totalPages={statementsPagination.totalPages}
+                    totalItems={statementsPagination.totalItems}
+                    pageSize={statementsPagination.pageSize}
+                    onPageChange={statementsPagination.setPage}
+                  />
                 )}
               </CardContent>
             </Card>
@@ -449,7 +483,7 @@ export default function CustomerPortalHomePage() {
                   {tickets.length === 0 ? (
                     <p className="text-muted-foreground">No tickets yet</p>
                   ) : (
-                    tickets.map((t) => (
+                    ticketsPagination.paginatedItems.map((t) => (
                       <div key={t.id} className="rounded-lg border p-4">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="font-medium">
@@ -469,6 +503,15 @@ export default function CustomerPortalHomePage() {
                         <p className="mt-2 text-xs text-muted-foreground">{formatDate(t.created_at)}</p>
                       </div>
                     ))
+                  )}
+                  {tickets.length > 0 && (
+                    <PaginationControls
+                      page={ticketsPagination.page}
+                      totalPages={ticketsPagination.totalPages}
+                      totalItems={ticketsPagination.totalItems}
+                      pageSize={ticketsPagination.pageSize}
+                      onPageChange={ticketsPagination.setPage}
+                    />
                   )}
                 </CardContent>
               </Card>

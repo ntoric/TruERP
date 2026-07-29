@@ -12,9 +12,11 @@ export function exportReportJson(baseName: string, data: unknown) {
 
 export function salesReportCsvRows(data: {
   summary: Record<string, unknown>
-  series: { period: string; sales: number; count: number; avg_invoice: number }[]
-  status_breakdown: { status: string; count: number; amount: number }[]
+  series?: { period: string; sales: number; count: number; avg_invoice: number }[] | null
+  status_breakdown?: { status: string; count: number; amount: number }[] | null
 }) {
+  const series = data.series ?? []
+  const statusBreakdown = data.status_breakdown ?? []
   const rows: (string | number)[][] = [
     ['Section', 'Metric', 'Value'],
     ['Summary', 'total_sales', data.summary.total_sales as number],
@@ -25,25 +27,26 @@ export function salesReportCsvRows(data: {
     ['Summary', 'growth_vs_prior', String(data.summary.growth_vs_prior ?? '')],
     [],
     ['Period', 'Sales', 'Invoice count', 'Avg invoice'],
-    ...data.series.map((r) => [r.period, r.sales, r.count, r.avg_invoice]),
+    ...series.map((r) => [r.period, r.sales, r.count, r.avg_invoice]),
     [],
     ['Status', 'Count', 'Amount'],
-    ...data.status_breakdown.map((s) => [s.status, s.count, s.amount]),
+    ...statusBreakdown.map((s) => [s.status, s.count, s.amount]),
   ]
   return rows
 }
 
 export function revenueReportCsvRows(data: {
   summary: Record<string, unknown>
-  periods: {
+  periods?: {
     period: string
     gross: number
     net: number
     tax: number
     invoice_count: number
     avg_invoice: number
-  }[]
+  }[] | null
 }) {
+  const periods = data.periods ?? []
   return [
     ['Metric', 'Value'],
     ['total_gross', data.summary.total_gross as number],
@@ -53,7 +56,7 @@ export function revenueReportCsvRows(data: {
     ['avg_invoice_value', data.summary.avg_invoice_value as number],
     [],
     ['Period', 'Gross', 'Net', 'Tax', 'Invoices', 'Avg invoice'],
-    ...data.periods.map((p) => [
+    ...periods.map((p) => [
       p.period,
       p.gross,
       p.net,
@@ -66,15 +69,16 @@ export function revenueReportCsvRows(data: {
 
 export function taxReportCsvRows(data: {
   summary: Record<string, unknown>
-  months: {
+  months?: {
     month: string
     cgst: number
     sgst: number
     igst: number
     total_tax: number
     total_value: number
-  }[]
+  }[] | null
 }) {
+  const months = data.months ?? []
   return [
     ['Metric', 'Value'],
     ['total_cgst', data.summary.total_cgst as number],
@@ -85,7 +89,7 @@ export function taxReportCsvRows(data: {
     ['effective_tax_rate', data.summary.effective_tax_rate as number],
     [],
     ['Month', 'Turnover', 'CGST', 'SGST', 'IGST', 'Total tax'],
-    ...data.months.map((m) => [
+    ...months.map((m) => [
       m.month,
       m.total_value,
       m.cgst,
@@ -118,8 +122,8 @@ export function profitLossCsvRows(data: {
 export function outstandingReportCsvRows(data: {
   summary: Record<string, unknown>
   aging?: Record<string, number>
-  by_party: { party_name: string; invoice_count: number; outstanding: number }[]
-  invoices: {
+  by_party?: { party_name: string; invoice_count: number; outstanding: number }[] | null
+  invoices?: {
     invoice_number: string
     party_name: string
     date: string
@@ -130,8 +134,10 @@ export function outstandingReportCsvRows(data: {
     outstanding: number
     days_overdue: number
     aging_bucket: string
-  }[]
+  }[] | null
 }) {
+  const byParty = data.by_party ?? []
+  const invoices = data.invoices ?? []
   return [
     ['Metric', 'Value'],
     ['total_outstanding', data.summary.total_outstanding as number],
@@ -147,7 +153,7 @@ export function outstandingReportCsvRows(data: {
     ['days_90_plus', data.aging?.days_90_plus ?? 0],
     [],
     ['Customer', 'Invoices', 'Outstanding'],
-    ...data.by_party.map((p) => [p.party_name, p.invoice_count, p.outstanding]),
+    ...byParty.map((p) => [p.party_name, p.invoice_count, p.outstanding]),
     [],
     [
       'Invoice',
@@ -161,7 +167,7 @@ export function outstandingReportCsvRows(data: {
       'Days overdue',
       'Bucket',
     ],
-    ...data.invoices.map((i) => [
+    ...invoices.map((i) => [
       i.invoice_number,
       i.party_name,
       i.date,
@@ -178,7 +184,7 @@ export function outstandingReportCsvRows(data: {
 
 export function customerReportCsvRows(data: {
   summary: Record<string, unknown>
-  customers: {
+  customers?: {
     name: string
     phone: string
     email: string
@@ -189,8 +195,9 @@ export function customerReportCsvRows(data: {
     paid_count: number
     avg_invoice_value: number
     last_invoice_date?: string
-  }[]
+  }[] | null
 }) {
+  const customers = data.customers ?? []
   return [
     ['Metric', 'Value'],
     ['customer_count', data.summary.customer_count as number],
@@ -210,7 +217,7 @@ export function customerReportCsvRows(data: {
       'Avg invoice',
       'Last invoice',
     ],
-    ...data.customers.map((c) => [
+    ...customers.map((c) => [
       c.name,
       c.phone,
       c.email,
@@ -228,7 +235,7 @@ export function customerReportCsvRows(data: {
 export function productReportCsvRows(data: {
   source: string
   summary: Record<string, unknown>
-  products: {
+  products?: {
     name: string
     sku: string
     category: string
@@ -237,8 +244,9 @@ export function productReportCsvRows(data: {
     quantity_sold: number
     revenue: number
     share_percent: number
-  }[]
+  }[] | null
 }) {
+  const products = data.products ?? []
   return [
     ['Metric', 'Value'],
     ['source', data.source],
@@ -248,7 +256,7 @@ export function productReportCsvRows(data: {
     ['avg_unit_revenue', data.summary.avg_unit_revenue as number],
     [],
     ['Product', 'SKU', 'Category', 'Unit', 'List price', 'Qty sold', 'Revenue', 'Share %'],
-    ...data.products.map((p) => [
+    ...products.map((p) => [
       p.name,
       p.sku,
       p.category,
@@ -299,8 +307,8 @@ export function paymentsReportCsvRows(data: {
 
 export function inventoryReportCsvRows(data: {
   summary: Record<string, unknown>
-  categories: { category: string; value: number }[]
-  items: {
+  categories?: { category: string; value: number }[] | null
+  items?: {
     product_name: string
     sku: string
     category: string
@@ -315,8 +323,10 @@ export function inventoryReportCsvRows(data: {
     retail_value: number
     is_low_stock: boolean
     is_out_of_stock: boolean
-  }[]
+  }[] | null
 }) {
+  const categories = data.categories ?? []
+  const items = data.items ?? []
   return [
     ['Metric', 'Value'],
     ['total_value', data.summary.total_value as number],
@@ -327,7 +337,7 @@ export function inventoryReportCsvRows(data: {
     ['out_of_stock_count', data.summary.out_of_stock_count as number],
     [],
     ['Category', 'Stock value'],
-    ...data.categories.map((c) => [c.category, c.value]),
+    ...categories.map((c) => [c.category, c.value]),
     [],
     [
       'Product',
@@ -345,7 +355,7 @@ export function inventoryReportCsvRows(data: {
       'Low stock',
       'Out of stock',
     ],
-    ...data.items.map((i) => [
+    ...items.map((i) => [
       i.product_name,
       i.sku,
       i.category,
@@ -405,8 +415,9 @@ export function customReportCsvRows(data: {
   total_amount: number
   total_count: number
   avg_amount: number
-  rows: { label: string; amount: number; count: number }[]
+  rows?: { label: string; amount: number; count: number }[] | null
 }) {
+  const rows = data.rows ?? []
   return [
     ['Metric', 'Value'],
     ['metric', data.metric],
@@ -417,7 +428,7 @@ export function customReportCsvRows(data: {
     ['avg_amount', data.avg_amount],
     [],
     ['Label', 'Amount', 'Count', 'Avg'],
-    ...data.rows.map((r) => [
+    ...rows.map((r) => [
       r.label,
       r.amount,
       r.count,

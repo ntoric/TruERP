@@ -51,6 +51,8 @@ import {
   SlidersHorizontal,
   Download,
 } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 type Period = 'daily' | 'weekly' | 'monthly' | 'yearly'
 
@@ -388,6 +390,22 @@ export default function ReportsPage() {
   const [customLoading, setCustomLoading] = useState(false)
   const [exportingAll, setExportingAll] = useState(false)
   const { toast } = useToast()
+
+  const salesSeriesPagination = usePagination(salesReport?.series ?? [])
+  const salesStatusPagination = usePagination(salesReport?.status_breakdown ?? [])
+  const revenuePeriodsPagination = usePagination(revenueReport?.periods ?? [])
+  const plIncomePagination = usePagination(profitLoss?.income ?? [])
+  const plExpensesPagination = usePagination(profitLoss?.expenses ?? [])
+  const outstandingByPartyPagination = usePagination(outstanding?.by_party ?? [])
+  const outstandingInvoicesPagination = usePagination(outstanding?.invoices ?? [])
+  const customersPagination = usePagination(customerReport?.customers ?? [])
+  const productsPagination = usePagination(productReport?.products ?? [])
+  const taxMonthsPagination = usePagination(taxReport?.months ?? [])
+  const paymentsTimelinePagination = usePagination(payments?.timeline ?? [])
+  const paymentsByModePagination = usePagination(payments?.by_mode ?? [])
+  const inventoryCategoriesPagination = usePagination(inventory?.categories ?? [])
+  const inventoryItemsPagination = usePagination(inventory?.items ?? [])
+  const customRowsPagination = usePagination(customResult?.rows ?? [])
 
   const notifyExported = (label: string) => toast({ title: `${label} exported` })
 
@@ -779,7 +797,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(salesReport?.series || []).map((row) => (
+                      {salesSeriesPagination.paginatedItems.map((row) => (
                         <TableRow key={row.period}>
                           <TableCell>{row.period}</TableCell>
                           <TableCell className="text-right">{formatCurrency(row.sales)}</TableCell>
@@ -792,6 +810,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={salesSeriesPagination.page}
+                    totalPages={salesSeriesPagination.totalPages}
+                    totalItems={salesSeriesPagination.totalItems}
+                    pageSize={salesSeriesPagination.pageSize}
+                    onPageChange={salesSeriesPagination.setPage}
+                  />
                 </ReportPanel>
                 <ReportPanel title="Invoice status mix" description="All invoices regardless of payment status.">
                   <Table>
@@ -803,7 +828,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(salesReport?.status_breakdown || []).map((s) => (
+                      {salesStatusPagination.paginatedItems.map((s) => (
                         <TableRow key={s.status}>
                           <TableCell className="capitalize">{s.status}</TableCell>
                           <TableCell className="text-right">{s.count}</TableCell>
@@ -812,6 +837,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={salesStatusPagination.page}
+                    totalPages={salesStatusPagination.totalPages}
+                    totalItems={salesStatusPagination.totalItems}
+                    pageSize={salesStatusPagination.pageSize}
+                    onPageChange={salesStatusPagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -866,7 +898,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(revenueReport?.periods || []).map((r) => (
+                      {revenuePeriodsPagination.paginatedItems.map((r) => (
                         <TableRow key={r.period}>
                           <TableCell>{r.period}</TableCell>
                           <TableCell className="text-right">{formatCurrency(r.gross)}</TableCell>
@@ -879,6 +911,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={revenuePeriodsPagination.page}
+                    totalPages={revenuePeriodsPagination.totalPages}
+                    totalItems={revenuePeriodsPagination.totalItems}
+                    pageSize={revenuePeriodsPagination.pageSize}
+                    onPageChange={revenuePeriodsPagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -925,7 +964,7 @@ export default function ReportsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(profitLoss?.income || []).map((a) => (
+                        {plIncomePagination.paginatedItems.map((a) => (
                           <TableRow key={a.account_code}>
                             <TableCell>{a.account_code}</TableCell>
                             <TableCell>{a.account_name}</TableCell>
@@ -939,6 +978,13 @@ export default function ReportsPage() {
                         )}
                       </TableBody>
                     </Table>
+                    <PaginationControls
+                      page={plIncomePagination.page}
+                      totalPages={plIncomePagination.totalPages}
+                      totalItems={plIncomePagination.totalItems}
+                      pageSize={plIncomePagination.pageSize}
+                      onPageChange={plIncomePagination.setPage}
+                    />
                   </ReportPanel>
                   <ReportPanel title="Expense accounts">
                     <Table>
@@ -950,7 +996,7 @@ export default function ReportsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(profitLoss?.expenses || []).map((a) => (
+                        {plExpensesPagination.paginatedItems.map((a) => (
                           <TableRow key={a.account_code}>
                             <TableCell>{a.account_code}</TableCell>
                             <TableCell>{a.account_name}</TableCell>
@@ -964,6 +1010,13 @@ export default function ReportsPage() {
                         )}
                       </TableBody>
                     </Table>
+                    <PaginationControls
+                      page={plExpensesPagination.page}
+                      totalPages={plExpensesPagination.totalPages}
+                      totalItems={plExpensesPagination.totalItems}
+                      pageSize={plExpensesPagination.pageSize}
+                      onPageChange={plExpensesPagination.setPage}
+                    />
                   </ReportPanel>
                 </div>
                 <p className="text-sm text-gray-500">
@@ -1017,7 +1070,7 @@ export default function ReportsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {(outstanding?.by_party || []).map((p) => (
+                        {outstandingByPartyPagination.paginatedItems.map((p) => (
                           <TableRow key={p.party_id}>
                             <TableCell>{p.party_name}</TableCell>
                             <TableCell className="text-right">{p.invoice_count}</TableCell>
@@ -1026,6 +1079,13 @@ export default function ReportsPage() {
                         ))}
                       </TableBody>
                     </Table>
+                    <PaginationControls
+                      page={outstandingByPartyPagination.page}
+                      totalPages={outstandingByPartyPagination.totalPages}
+                      totalItems={outstandingByPartyPagination.totalItems}
+                      pageSize={outstandingByPartyPagination.pageSize}
+                      onPageChange={outstandingByPartyPagination.setPage}
+                    />
                   </ReportPanel>
                 </div>
                 <ReportPanel title="Invoice detail" description="Sent and overdue invoices with partial payments.">
@@ -1043,7 +1103,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(outstanding?.invoices || []).map((inv) => (
+                      {outstandingInvoicesPagination.paginatedItems.map((inv) => (
                         <TableRow key={inv.id}>
                           <TableCell>
                             <Link href={`/invoices/view?id=${inv.id}`} className="font-medium text-blue-600 hover:underline">
@@ -1066,6 +1126,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={outstandingInvoicesPagination.page}
+                    totalPages={outstandingInvoicesPagination.totalPages}
+                    totalItems={outstandingInvoicesPagination.totalItems}
+                    pageSize={outstandingInvoicesPagination.pageSize}
+                    onPageChange={outstandingInvoicesPagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -1107,7 +1174,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(customerReport?.customers || []).map((c) => (
+                      {customersPagination.paginatedItems.map((c) => (
                         <TableRow key={c.party_id}>
                           <TableCell className="font-medium">
                             <Link href={`/parties`} className="hover:underline">{c.name}</Link>
@@ -1126,6 +1193,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={customersPagination.page}
+                    totalPages={customersPagination.totalPages}
+                    totalItems={customersPagination.totalItems}
+                    pageSize={customersPagination.pageSize}
+                    onPageChange={customersPagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -1170,7 +1244,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(productReport?.products || []).map((p, i) => (
+                      {productsPagination.paginatedItems.map((p, i) => (
                         <TableRow key={p.product_id || `${p.name}-${i}`}>
                           <TableCell className="font-medium">{p.name}</TableCell>
                           <TableCell>{p.sku || '—'}</TableCell>
@@ -1183,6 +1257,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={productsPagination.page}
+                    totalPages={productsPagination.totalPages}
+                    totalItems={productsPagination.totalItems}
+                    pageSize={productsPagination.pageSize}
+                    onPageChange={productsPagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -1238,7 +1319,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(taxReport.months || []).map((m) => (
+                      {taxMonthsPagination.paginatedItems.map((m) => (
                         <TableRow key={m.month}>
                           <TableCell>{m.month}</TableCell>
                           <TableCell className="text-right">{formatCurrency(m.total_value)}</TableCell>
@@ -1251,6 +1332,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={taxMonthsPagination.page}
+                    totalPages={taxMonthsPagination.totalPages}
+                    totalItems={taxMonthsPagination.totalItems}
+                    pageSize={taxMonthsPagination.pageSize}
+                    onPageChange={taxMonthsPagination.setPage}
+                  />
                   <p className="mt-3 text-sm text-gray-500">
                     GSTR views: <Link href="/gst" className="text-blue-600 hover:underline">GST module</Link>
                   </p>
@@ -1308,7 +1396,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(payments?.timeline || []).map((t) => (
+                      {paymentsTimelinePagination.paginatedItems.map((t) => (
                         <TableRow key={t.period}>
                           <TableCell>{t.period}</TableCell>
                           <TableCell className="text-right">{formatCurrency(t.amount_in)}</TableCell>
@@ -1320,6 +1408,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={paymentsTimelinePagination.page}
+                    totalPages={paymentsTimelinePagination.totalPages}
+                    totalItems={paymentsTimelinePagination.totalItems}
+                    pageSize={paymentsTimelinePagination.pageSize}
+                    onPageChange={paymentsTimelinePagination.setPage}
+                  />
                 </ReportPanel>
                 <ReportPanel title="By payment mode">
                   <Table>
@@ -1333,7 +1428,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(payments?.by_mode || []).map((m, i) => (
+                      {paymentsByModePagination.paginatedItems.map((m, i) => (
                         <TableRow key={`${m.mode}-${m.direction}-${i}`}>
                           <TableCell className="capitalize">{m.mode || 'other'}</TableCell>
                           <TableCell>{m.direction === 'in' ? 'Payment in' : 'Payment out'}</TableCell>
@@ -1346,6 +1441,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={paymentsByModePagination.page}
+                    totalPages={paymentsByModePagination.totalPages}
+                    totalItems={paymentsByModePagination.totalItems}
+                    pageSize={paymentsByModePagination.pageSize}
+                    onPageChange={paymentsByModePagination.setPage}
+                  />
                 </ReportPanel>
               </>
             )}
@@ -1385,7 +1487,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(inventory?.categories || []).map((c) => (
+                      {inventoryCategoriesPagination.paginatedItems.map((c) => (
                         <TableRow key={c.category}>
                           <TableCell>{c.category}</TableCell>
                           <TableCell className="text-right">{formatCurrency(c.value)}</TableCell>
@@ -1396,6 +1498,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={inventoryCategoriesPagination.page}
+                    totalPages={inventoryCategoriesPagination.totalPages}
+                    totalItems={inventoryCategoriesPagination.totalItems}
+                    pageSize={inventoryCategoriesPagination.pageSize}
+                    onPageChange={inventoryCategoriesPagination.setPage}
+                  />
                 </ReportPanel>
                 <ReportPanel title="Stock detail">
                   <Table>
@@ -1412,7 +1521,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {(inventory?.items || []).map((item, i) => (
+                      {inventoryItemsPagination.paginatedItems.map((item, i) => (
                         <TableRow
                           key={`${item.sku}-${i}`}
                           className={item.is_out_of_stock ? 'bg-red-50/40' : item.is_low_stock ? 'bg-amber-50/40' : ''}
@@ -1435,6 +1544,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={inventoryItemsPagination.page}
+                    totalPages={inventoryItemsPagination.totalPages}
+                    totalItems={inventoryItemsPagination.totalItems}
+                    pageSize={inventoryItemsPagination.pageSize}
+                    onPageChange={inventoryItemsPagination.setPage}
+                  />
                   <p className="mt-3 text-sm text-gray-500">
                     Manage stock: <Link href="/inventory" className="text-blue-600 hover:underline">Inventory</Link>
                   </p>
@@ -1512,7 +1628,7 @@ export default function ReportsPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {customResult.rows.map((row) => (
+                      {customRowsPagination.paginatedItems.map((row) => (
                         <TableRow key={row.label}>
                           <TableCell>{row.label}</TableCell>
                           <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
@@ -1525,6 +1641,13 @@ export default function ReportsPage() {
                       ))}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={customRowsPagination.page}
+                    totalPages={customRowsPagination.totalPages}
+                    totalItems={customRowsPagination.totalItems}
+                    pageSize={customRowsPagination.pageSize}
+                    onPageChange={customRowsPagination.setPage}
+                  />
                 </div>
               )}
             </ReportPanel>

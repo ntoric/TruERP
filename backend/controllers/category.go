@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"fmt"
 	"net/http"
 
@@ -169,4 +169,69 @@ func DeleteCategory(c *gin.Context) {
 
 	fmt.Printf("[DEBUG] DeleteCategory - Category deleted successfully: %s\n", id)
 	c.JSON(http.StatusOK, gin.H{"message": "Category deleted successfully"})
+}
+
+func BulkDeleteCategories(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs []uuid.UUID `json:"ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := utils.DB.Where("user_id = ? AND id IN ?", userID, input.IDs).Delete(&models.Category{}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete categories"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Categories deleted successfully"})
+}
+
+func BulkUpdateCategoryStatus(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs      []uuid.UUID `json:"ids" binding:"required"`
+		IsActive bool        `json:"is_active"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var categories []models.Category
+	if err := utils.DB.Where("user_id = ? AND id IN ?", userID, input.IDs).Find(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch categories"})
+		return
+	}
+
+	if len(categories) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No categories found"})
+		return
+	}
+
+	if err := utils.DB.Model(&models.Category{}).
+		Where("user_id = ? AND id IN ?", userID, input.IDs).
+		Update("is_active", input.IsActive).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update categories"})
+		return
+	}
+
+	names := make([]string, 0, len(categories))
+	for _, category := range categories {
+		names = append(names, category.Name)
+	}
+
+	if err := utils.DB.Model(&models.Product{}).
+		Where("user_id = ? AND category IN ?", userID, names).
+		Update("is_active", input.IsActive).Error; err != nil {
+		fmt.Printf("[DEBUG] BulkUpdateCategoryStatus - Failed to update products: %v\n", err)
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Categories updated successfully"})
 }

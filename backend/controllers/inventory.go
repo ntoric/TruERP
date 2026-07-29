@@ -1,8 +1,9 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
+	"encoding/csv"
 	"fmt"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/tealeg/xlsx/v3"
 )
 
 type StockBalance struct {
@@ -1010,4 +1012,261 @@ func GetInventoryItems(c *gin.Context) {
 
 	fmt.Printf("[DEBUG] GetInventoryItems - Found %d items\n", len(items))
 	c.JSON(http.StatusOK, items)
+}
+
+func findProductForBulkStock(userID uuid.UUID, sku, productName, itemCode string) (*models.Product, error) {
+	sku = strings.TrimSpace(sku)
+	productName = strings.TrimSpace(productName)
+	itemCode = strings.TrimSpace(itemCode)
+
+	if sku != "" {
+		var product models.Product
+		if err := utils.DB.Where("user_id = ? AND sku = ?", userID, sku).First(&product).Error; err == nil {
+			return &product, nil
+		}
+	}
+
+	if itemCode != "" {
+		var product models.Product
+		if err := utils.DB.Where("user_id = ? AND item_code = ?", userID, itemCode).First(&product).Error; err == nil {
+			return &product, nil
+		}
+	}
+
+	if productName != "" {
+		var product models.Product
+		if err := utils.DB.Where("user_id = ? AND name = ?", userID, productName).First(&product).Error; err == nil {
+			return &product, nil
+		}
+	}
+
+	return nil, fmt.Errorf("product not found")
+}
+
+func findWarehouseForBulkStock(userID uuid.UUID, warehouseRef string) (*models.Warehouse, error) {
+	warehouseRef = strings.TrimSpace(warehouseRef)
+	if warehouseRef == "" {
+		return nil, fmt.Errorf("warehouse is required")
+	}
+
+	var warehouse models.Warehouse
+	if err := utils.DB.Where(
+		"user_id = ? AND is_active = ? AND (code = ? OR LOWER(name) = LOWER(?))",
+		userID, true, warehouseRef, warehouseRef,
+	).First(&warehouse).Error; err != nil {
+		return nil, fmt.Errorf("warehouse not found")
+	}
+
+	return &warehouse, nil
+}
+
+func processBulkStockRow(
+	userID uuid.UUID,
+	sku, productName, itemCode, warehouseRef, updateMode string,
+	quantity, costPrice float64,
+	batchNo, notes string,
+) error {
+	if sku == "" && productName == "" && itemCode == "" {
+		return fmt.Errorf("SKU, product name, or item code is required")
+	}
+
+	product, err := findProductForBulkStock(userID, sku, productName, itemCode)
+	if err != nil {
+		return err
+	}
+
+	warehouse, err := findWarehouseForBulkStock(userID, warehouseRef)
+	if err != nil {
+		return err
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(updateMode))
+	if mode == "" {
+		mode = "adjust"
+	}
+
+	adjQty := quantity
+	switch mode {
+	case "set":
+		currentQty := 0.0
+		var stock models.InventoryStock
+		if err := utils.DB.Where("user_id = ? AND product_id = ? AND outlet_id = ?", userID, product.ID, warehouse.ID).First(&stock).Error; err == nil {
+			currentQty = stock.Quantity
+		}
+		adjQty = quantity - currentQty
+	case "adjust":
+		if quantity == 0 {
+			return fmt.Errorf("quantity cannot be zero for adjust mode")
+		}
+	default:
+		return fmt.Errorf("invalid update mode %q (use adjust or set)", updateMode)
+	}
+
+	if adjQty == 0 {
+		return nil
+	}
+
+	productID := product.ID
+	entry := models.StockEntry{
+		ID:        uuid.New(),
+		UserID:    userID,
+		ItemName:  product.Name,
+		ProductID: &productID,
+		OutletID:  warehouse.ID,
+		EntryType: "adjustment",
+		Quantity:  adjQty,
+		CostPrice: costPrice,
+		BatchNo:   batchNo,
+		Notes:     notes,
+		EntryDate: time.Now(),
+	}
+
+	if err := utils.DB.Create(&entry).Error; err != nil {
+		return err
+	}
+
+	updateInventoryStock(userID, product.ID, warehouse.ID, "adjustment", adjQty, costPrice)
+	return nil
+}
+
+func BulkUpdateStockCSV(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to open file"})
+		return
+	}
+	defer src.Close()
+
+	reader := csv.NewReader(src)
+	records, err := reader.ReadAll()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read CSV"})
+		return
+	}
+
+	if len(records) < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "CSV file is empty or has no data"})
+		return
+	}
+
+	headers := records[0]
+	var updatedCount int
+	var errors []string
+
+	for i, record := range records[1:] {
+		if len(record) != len(headers) {
+			errors = append(errors, fmt.Sprintf("Row %d: Column count mismatch", i+2))
+			continue
+		}
+
+		sku := getCSVValue(record, headers, "SKU")
+		productName := firstCSVValue(record, headers, "Product Name", "Name")
+		itemCode := firstCSVValue(record, headers, "Item Code", "Itemcode", "Barcode")
+		warehouseRef := firstCSVValue(record, headers, "Warehouse", "Outlet", "Warehouse Name", "Warehouse Code")
+		updateMode := getCSVValue(record, headers, "Update Mode")
+		quantity := parseFloat(getCSVValue(record, headers, "Quantity"))
+		costPrice := parseFloat(firstCSVValue(record, headers, "Cost Price", "Cost"))
+		batchNo := getCSVValue(record, headers, "Batch No")
+		notes := firstCSVValue(record, headers, "Notes", "Reason")
+
+		if err := processBulkStockRow(userID, sku, productName, itemCode, warehouseRef, updateMode, quantity, costPrice, batchNo, notes); err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: %v", i+2, err))
+			continue
+		}
+
+		updatedCount++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"updated": updatedCount,
+		"errors":  errors,
+	})
+}
+
+func BulkUpdateStockExcel(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to open file"})
+		return
+	}
+	defer src.Close()
+
+	xlsxFile, err := xlsx.OpenReaderAt(src, file.Size)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read Excel file"})
+		return
+	}
+
+	sheet := xlsxFile.Sheets[0]
+	if sheet == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Excel file has no sheets"})
+		return
+	}
+
+	if sheet.MaxRow < 2 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Excel file is empty or has no data"})
+		return
+	}
+
+	headers := make(map[int]string)
+	headerRow, err := sheet.Row(0)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read header row"})
+		return
+	}
+	for i := 0; ; i++ {
+		cell := headerRow.GetCell(i)
+		if cell == nil {
+			break
+		}
+		headers[i] = cell.String()
+	}
+
+	var updatedCount int
+	var errors []string
+
+	for i := 1; i <= sheet.MaxRow; i++ {
+		row, err := sheet.Row(i)
+		if err != nil {
+			continue
+		}
+
+		sku := getExcelValue(row, headers, "SKU")
+		productName := firstExcelValue(row, headers, "Product Name", "Name")
+		itemCode := firstExcelValue(row, headers, "Item Code", "Itemcode", "Barcode")
+		warehouseRef := firstExcelValue(row, headers, "Warehouse", "Outlet", "Warehouse Name", "Warehouse Code")
+		updateMode := getExcelValue(row, headers, "Update Mode")
+		quantity := parseFloat(getExcelValue(row, headers, "Quantity"))
+		costPrice := parseFloat(firstExcelValue(row, headers, "Cost Price", "Cost"))
+		batchNo := getExcelValue(row, headers, "Batch No")
+		notes := firstExcelValue(row, headers, "Notes", "Reason")
+
+		if err := processBulkStockRow(userID, sku, productName, itemCode, warehouseRef, updateMode, quantity, costPrice, batchNo, notes); err != nil {
+			errors = append(errors, fmt.Sprintf("Row %d: %v", i+1, err))
+			continue
+		}
+
+		updatedCount++
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"updated": updatedCount,
+		"errors":  errors,
+	})
 }

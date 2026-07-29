@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-var jwtSecret = []byte("billbook-super-secret-key-change-in-production")
+var jwtSecret = []byte("truerp-super-secret-key-change-in-production")
 
 func SetJWTSecret(secret string) {
 	jwtSecret = []byte(secret)

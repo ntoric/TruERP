@@ -1,21 +1,20 @@
 'use client'
 
 import { ReactNode, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import Sidebar from './Sidebar'
 import Header from './Header'
 import { useAuth } from '@/hooks/useAuth'
 
 export default function DashboardLayout({ children, hideNavigation = false }: { children: ReactNode; hideNavigation?: boolean }) {
   const { user, loading } = useAuth()
-  const router = useRouter()
 
   useEffect(() => {
     if (!loading && !user) {
       const next = typeof window !== 'undefined' ? window.location.pathname : '/dashboard'
-      router.replace(`/login?next=${encodeURIComponent(next)}`)
+      // Full navigation is reliable in the desktop WebView; Next router can stall.
+      window.location.href = `/login?next=${encodeURIComponent(next)}`
     }
-  }, [loading, user, router])
+  }, [loading, user])
 
   if (loading || !user) {
     return (

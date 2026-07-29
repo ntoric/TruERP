@@ -12,9 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import ThermalInvoicePreviewSample, {
   type ThermalPreviewBusiness,
 } from '@/components/ThermalInvoicePreviewSample'
-import { Check, Loader2, Printer, Save } from 'lucide-react'
+import { hasNativePrinting, listDesktopPrinters, type DesktopPrinterInfo } from '@/lib/desktopBridge'
+import { Check, Loader2, Printer, RefreshCw, Save } from 'lucide-react'
 
 export interface PrintSettings {
+  invoice_print_mode: 'a4' | 'thermal'
   paper_size: string
   orientation: string
   margin_top: number
@@ -26,9 +28,13 @@ export interface PrintSettings {
   print_footer: boolean
   thermal_print_size: '2inch' | '3inch'
   barcode_print_mode: 'label' | 'a4'
+  thermal_printer_name: string
+  document_printer_name: string
+  auto_print_on_pos: boolean
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintSettings = {
+  invoice_print_mode: 'a4',
   paper_size: 'a4',
   orientation: 'portrait',
   margin_top: 0.5,
@@ -40,25 +46,35 @@ const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   print_footer: true,
   thermal_print_size: '2inch',
   barcode_print_mode: 'a4',
+  thermal_printer_name: '',
+  document_printer_name: '',
+  auto_print_on_pos: true,
 }
 
 function mergePrintSettings(raw: Partial<PrintSettings>): PrintSettings {
   return {
     ...DEFAULT_PRINT_SETTINGS,
     ...raw,
+    invoice_print_mode:
+      raw.invoice_print_mode === 'thermal' ? 'thermal' : DEFAULT_PRINT_SETTINGS.invoice_print_mode,
     thermal_print_size:
       raw.thermal_print_size === '3inch' ? '3inch' : DEFAULT_PRINT_SETTINGS.thermal_print_size,
     barcode_print_mode:
       raw.barcode_print_mode === 'label' ? 'label' : DEFAULT_PRINT_SETTINGS.barcode_print_mode,
+    thermal_printer_name: raw.thermal_printer_name || '',
+    document_printer_name: raw.document_printer_name || '',
+    auto_print_on_pos: raw.auto_print_on_pos !== false,
   }
 }
 
 function ThemeOption({
   label,
+  description,
   selected,
   onSelect,
 }: {
   label: string
+  description?: string
   selected: boolean
   onSelect: () => void
 }) {
@@ -66,18 +82,21 @@ function ThemeOption({
     <button
       type="button"
       onClick={onSelect}
-      className={`relative flex w-full items-center justify-between rounded-lg border-2 px-4 py-3 text-left text-sm font-medium transition-colors ${
+      className={`relative flex w-full flex-col items-start rounded-lg border-2 px-4 py-3 text-left transition-colors ${
         selected
           ? 'border-blue-600 bg-blue-50 text-blue-900'
           : 'border-gray-200 bg-white text-gray-800 hover:border-gray-300'
       }`}
     >
-      {label}
-      {selected ? (
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
-          <Check className="h-3 w-3" />
-        </span>
-      ) : null}
+      <div className="flex w-full items-center justify-between">
+        <span className="text-sm font-medium">{label}</span>
+        {selected ? (
+          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-blue-600 text-white">
+            <Check className="h-3 w-3" />
+          </span>
+        ) : null}
+      </div>
+      {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
     </button>
   )
 }
@@ -90,11 +109,30 @@ export default function PrintSettingsCard() {
   const [message, setMessage] = useState('')
   const [barcodePreviewHtml, setBarcodePreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [printTab, setPrintTab] = useState<'thermal' | 'barcode'>('thermal')
+  const [printTab, setPrintTab] = useState<'mode' | 'thermal' | 'document' | 'barcode'>('mode')
+  const [nativePrinting, setNativePrinting] = useState(false)
+  const [printers, setPrinters] = useState<DesktopPrinterInfo[]>([])
+  const [printersLoading, setPrintersLoading] = useState(false)
 
   const update = <K extends keyof PrintSettings>(key: K, value: PrintSettings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }))
   }
+
+  const refreshPrinters = useCallback(async () => {
+    setPrintersLoading(true)
+    try {
+      const available = await hasNativePrinting()
+      setNativePrinting(available)
+      if (available) {
+        setPrinters(await listDesktopPrinters())
+      }
+    } catch {
+      setNativePrinting(false)
+      setPrinters([])
+    } finally {
+      setPrintersLoading(false)
+    }
+  }, [])
 
   const loadBarcodePreview = useCallback(async (mode: PrintSettings['barcode_print_mode']) => {
     try {
@@ -134,6 +172,7 @@ export default function PrintSettingsCard() {
           await loadBarcodePreview(merged.barcode_print_mode)
           setPreviewLoading(false)
         }
+        await refreshPrinters()
       } catch {
         /* defaults */
       } finally {
@@ -141,7 +180,7 @@ export default function PrintSettingsCard() {
       }
     }
     void load()
-  }, [loadBarcodePreview])
+  }, [loadBarcodePreview, refreshPrinters])
 
   useEffect(() => {
     if (loading) return
@@ -183,6 +222,18 @@ export default function PrintSettingsCard() {
   }
 
   const thermalWidthLabel = settings.thermal_print_size === '3inch' ? '80mm (3 inch)' : '58mm (2 inch)'
+  const printerOptions = [
+    { value: '__default__', label: 'System default printer' },
+    ...printers.map((p) => ({
+      value: p.name,
+      label: p.is_default ? `${p.name} (default)` : p.name,
+    })),
+  ]
+
+  const printerSelectValue = (name: string) => (name ? name : '__default__')
+  const onPrinterChange = (key: 'thermal_printer_name' | 'document_printer_name', value: string) => {
+    update(key, value === '__default__' ? '' : value)
+  }
 
   return (
     <Card>
@@ -202,35 +253,157 @@ export default function PrintSettingsCard() {
         )}
 
         <form onSubmit={handleSave} className="space-y-6">
-          <Tabs value={printTab} onValueChange={(v) => setPrintTab(v as 'thermal' | 'barcode')}>
+          <Tabs value={printTab} onValueChange={(v) => setPrintTab(v as typeof printTab)}>
             <TabsList className="mb-4 h-auto w-full justify-start gap-6 rounded-none border-b bg-transparent p-0">
+              <TabsTrigger
+                value="mode"
+                className="rounded-none border-b-2 border-transparent px-1 pb-2 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                Invoice Printer
+              </TabsTrigger>
               <TabsTrigger
                 value="thermal"
                 className="rounded-none border-b-2 border-transparent px-1 pb-2 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
               >
-                Thermal Printer
+                Thermal
+              </TabsTrigger>
+              <TabsTrigger
+                value="document"
+                className="rounded-none border-b-2 border-transparent px-1 pb-2 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
+              >
+                A4 / PDF
               </TabsTrigger>
               <TabsTrigger
                 value="barcode"
                 className="rounded-none border-b-2 border-transparent px-1 pb-2 data-[state=active]:border-blue-600 data-[state=active]:bg-transparent data-[state=active]:shadow-none"
               >
-                Barcode Printer
+                Barcode
               </TabsTrigger>
             </TabsList>
+
+            <TabsContent value="mode" className="mt-0 space-y-6">
+              <div>
+                <p className="mb-3 text-sm font-semibold text-gray-900">
+                  Default printer type for invoices &amp; POS
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <ThemeOption
+                    label="A4 / Normal printer"
+                    description="Full tax invoice on A4, Letter, or Legal paper"
+                    selected={settings.invoice_print_mode === 'a4'}
+                    onSelect={() => update('invoice_print_mode', 'a4')}
+                  />
+                  <ThemeOption
+                    label="Thermal printer"
+                    description="Compact receipt for 58mm / 80mm thermal printers"
+                    selected={settings.invoice_print_mode === 'thermal'}
+                    onSelect={() => update('invoice_print_mode', 'thermal')}
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                <div>
+                  <Label htmlFor="auto_print_on_pos">Auto-print after POS sale</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Uses the default printer type above when a sale completes
+                  </p>
+                </div>
+                <Switch
+                  id="auto_print_on_pos"
+                  checked={settings.auto_print_on_pos}
+                  onCheckedChange={(checked) => update('auto_print_on_pos', checked)}
+                />
+              </div>
+
+              {nativePrinting ? (
+                <div className="space-y-4 rounded-lg border bg-gray-50 p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900">Desktop printers</p>
+                      <p className="text-xs text-muted-foreground">
+                        Optional: send jobs directly to a named OS printer (silent when possible)
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={printersLoading}
+                      onClick={() => void refreshPrinters()}
+                    >
+                      {printersLoading ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label>Thermal printer</Label>
+                      <Select
+                        value={printerSelectValue(settings.thermal_printer_name)}
+                        onValueChange={(v) => onPrinterChange('thermal_printer_name', v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="System default" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {printerOptions.map((p) => (
+                            <SelectItem key={p.value} value={p.value}>
+                              {p.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>A4 / document printer</Label>
+                      <Select
+                        value={printerSelectValue(settings.document_printer_name)}
+                        onValueChange={(v) => onPrinterChange('document_printer_name', v)}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="System default" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {printerOptions.map((p) => (
+                            <SelectItem key={p.value} value={p.value}>
+                              {p.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  {printers.length === 0 ? (
+                    <p className="text-xs text-muted-foreground">
+                      No printers detected. Install a printer in system settings, then refresh.
+                    </p>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed px-4 py-3 text-xs text-muted-foreground">
+                  Running in browser: print uses the system print dialog. In the TruERP desktop app you
+                  can pick specific thermal and A4 printers here.
+                </div>
+              )}
+            </TabsContent>
 
             <TabsContent value="thermal" className="mt-0">
               <div className="grid gap-6 lg:grid-cols-[minmax(240px,280px)_1fr]">
                 <div className="space-y-6 rounded-lg bg-gray-50 p-4">
                   <div>
-                    <p className="mb-3 text-sm font-semibold text-gray-900">Select your Invoice theme</p>
+                    <p className="mb-3 text-sm font-semibold text-gray-900">Thermal paper width</p>
                     <div className="space-y-2">
                       <ThemeOption
-                        label="2 Inch"
+                        label="2 Inch (58mm)"
                         selected={settings.thermal_print_size === '2inch'}
                         onSelect={() => update('thermal_print_size', '2inch')}
                       />
                       <ThemeOption
-                        label="3 Inch"
+                        label="3 Inch (80mm)"
                         selected={settings.thermal_print_size === '3inch'}
                         onSelect={() => update('thermal_print_size', '3inch')}
                       />
@@ -259,8 +432,7 @@ export default function PrintSettingsCard() {
 
                 <div className="min-w-0">
                   <p className="mb-3 text-sm text-muted-foreground">
-                    This is a preview of the thermal print of your invoice. Sample line items and totals
-                    are shown for layout only.
+                    Preview of the thermal receipt layout. Sample line items are for layout only.
                   </p>
                   <div className="flex justify-center overflow-auto rounded-lg border bg-gray-100 p-4 lg:justify-start">
                     <ThermalInvoicePreviewSample
@@ -273,65 +445,11 @@ export default function PrintSettingsCard() {
               </div>
             </TabsContent>
 
-            <TabsContent value="barcode" className="mt-0">
-              <div className="grid gap-6 lg:grid-cols-[minmax(240px,280px)_1fr]">
-                <div className="space-y-4 rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm font-semibold text-gray-900">Barcode print mode</p>
-                  <div className="space-y-2">
-                    <ThemeOption
-                      label="Label Print"
-                      selected={settings.barcode_print_mode === 'label'}
-                      onSelect={() => update('barcode_print_mode', 'label')}
-                    />
-                    <ThemeOption
-                      label="A4 Print"
-                      selected={settings.barcode_print_mode === 'a4'}
-                      onSelect={() => update('barcode_print_mode', 'a4')}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    A4 layout uses label size and grid from Business → Label Printing Settings.
-                  </p>
-                </div>
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-700">
-                      {settings.barcode_print_mode === 'label' ? 'Label preview' : 'A4 sheet preview'}
-                    </span>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      disabled={previewLoading}
-                      onClick={() => {
-                        setPreviewLoading(true)
-                        void loadBarcodePreview(settings.barcode_print_mode).finally(() =>
-                          setPreviewLoading(false)
-                        )
-                      }}
-                    >
-                      {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
-                    </Button>
-                  </div>
-                  {barcodePreviewHtml ? (
-                    <iframe
-                      title="Barcode print preview"
-                      srcDoc={barcodePreviewHtml}
-                      className="h-[420px] w-full rounded border bg-white"
-                    />
-                  ) : (
-                    <p className="text-sm text-muted-foreground">Preview unavailable</p>
-                  )}
-                </div>
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <details className="rounded-lg border px-4 py-3">
-            <summary className="cursor-pointer text-sm font-semibold text-gray-900">
-              Document printing (PDF / A4)
-            </summary>
-            <div className="mt-4 space-y-4">
+            <TabsContent value="document" className="mt-0 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Paper size, margins, and header/footer apply when printing invoices on a normal A4
+                printer or saving as PDF.
+              </p>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="paper_size">Paper Size</Label>
@@ -418,7 +536,7 @@ export default function PrintSettingsCard() {
               </div>
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
-                  <Label htmlFor="print_header">Print Header</Label>
+                  <Label htmlFor="print_header">Print Header / Logo</Label>
                   <Switch
                     id="print_header"
                     checked={settings.print_header}
@@ -434,8 +552,61 @@ export default function PrintSettingsCard() {
                   />
                 </div>
               </div>
-            </div>
-          </details>
+            </TabsContent>
+
+            <TabsContent value="barcode" className="mt-0">
+              <div className="grid gap-6 lg:grid-cols-[minmax(240px,280px)_1fr]">
+                <div className="space-y-4 rounded-lg bg-gray-50 p-4">
+                  <p className="text-sm font-semibold text-gray-900">Barcode print mode</p>
+                  <div className="space-y-2">
+                    <ThemeOption
+                      label="Label Print"
+                      selected={settings.barcode_print_mode === 'label'}
+                      onSelect={() => update('barcode_print_mode', 'label')}
+                    />
+                    <ThemeOption
+                      label="A4 Print"
+                      selected={settings.barcode_print_mode === 'a4'}
+                      onSelect={() => update('barcode_print_mode', 'a4')}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    A4 layout uses label size and grid from Business → Label Printing Settings.
+                  </p>
+                </div>
+                <div>
+                  <div className="mb-2 flex items-center justify-between">
+                    <span className="text-sm font-medium text-gray-700">
+                      {settings.barcode_print_mode === 'label' ? 'Label preview' : 'A4 sheet preview'}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={previewLoading}
+                      onClick={() => {
+                        setPreviewLoading(true)
+                        void loadBarcodePreview(settings.barcode_print_mode).finally(() =>
+                          setPreviewLoading(false)
+                        )
+                      }}
+                    >
+                      {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}
+                    </Button>
+                  </div>
+                  {barcodePreviewHtml ? (
+                    <iframe
+                      title="Barcode print preview"
+                      srcDoc={barcodePreviewHtml}
+                      className="h-[420px] w-full rounded border bg-white"
+                    />
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Preview unavailable</p>
+                  )}
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
 
           <Button type="submit" disabled={saving}>
             {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}

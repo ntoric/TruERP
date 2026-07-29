@@ -7,8 +7,8 @@ import { Toaster } from '@/components/ui/toaster'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'MyBillBook - GST Billing Software',
-  description: 'Best GST Billing Software for Small Businesses in India',
+  title: 'TruERP - GST Billing Software',
+  description: 'Best GST Billing and ERP Software for Small Businesses in India',
 }
 
 export default function RootLayout({

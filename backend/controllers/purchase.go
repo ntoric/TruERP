@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -390,20 +390,20 @@ func CreatePurchaseBill(c *gin.Context) {
 		Status             string     `json:"status"`
 		Notes              string     `json:"notes"`
 		Items              []struct {
-			ProductID   *uuid.UUID `json:"product_id"`
-			ItemCode     string     `json:"item_code"`
-			Description string     `json:"description" binding:"required"`
-			Quantity    float64    `json:"quantity" binding:"required,gt=0"`
-			Unit        string     `json:"unit"`
-			UnitPrice   float64    `json:"unit_price" binding:"required"`
-			Discount    float64    `json:"discount"`
-			TaxRate     float64    `json:"tax_rate"`
-			MRP         float64    `json:"mrp"`
-			SalePrice   float64    `json:"sale_price"`
-			HSNCode     string     `json:"hsn_code"`
-			BatchNo     string     `json:"batch_no"`
-			MfgDate     *time.Time `json:"mfg_date"`
-			ExpDate     *time.Time `json:"exp_date"`
+			ProductID   *uuid.UUID          `json:"product_id"`
+			ItemCode    string              `json:"item_code"`
+			Description string              `json:"description" binding:"required"`
+			Quantity    models.FlexibleFloat `json:"quantity" binding:"required"`
+			Unit        string              `json:"unit"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			MRP         models.FlexibleFloat `json:"mrp"`
+			SalePrice   models.FlexibleFloat `json:"sale_price"`
+			HSNCode     string              `json:"hsn_code"`
+			BatchNo     string              `json:"batch_no"`
+			MfgDate     *time.Time          `json:"mfg_date"`
+			ExpDate     *time.Time          `json:"exp_date"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
@@ -448,27 +448,36 @@ func CreatePurchaseBill(c *gin.Context) {
 
 	var subTotal, taxTotal float64
 	for _, item := range input.Items {
-		itemTotal := item.UnitPrice * item.Quantity
-		itemDiscount := itemTotal * (item.Discount / 100)
+		qty := item.Quantity.Float64()
+		unitPrice := item.UnitPrice.Float64()
+		discount := item.Discount.Float64()
+		taxRate := item.TaxRate.Float64()
+		if qty <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Item quantity must be greater than 0"})
+			return
+		}
+
+		itemTotal := unitPrice * qty
+		itemDiscount := itemTotal * (discount / 100)
 		taxable := itemTotal - itemDiscount
-		taxAmount := taxable * (item.TaxRate / 100)
+		taxAmount := taxable * (taxRate / 100)
 		total := taxable + taxAmount
 
 		bill.Items = append(bill.Items, models.PurchaseBillItem{
 			ID:          uuid.New(),
 			BillID:      bill.ID,
 			ProductID:   item.ProductID,
-			ItemCode:     item.ItemCode,
+			ItemCode:    item.ItemCode,
 			Description: item.Description,
-			Quantity:    item.Quantity,
+			Quantity:    qty,
 			Unit:        item.Unit,
-			UnitPrice:   item.UnitPrice,
-			Discount:    item.Discount,
-			TaxRate:     item.TaxRate,
+			UnitPrice:   unitPrice,
+			Discount:    discount,
+			TaxRate:     taxRate,
 			TaxAmount:   taxAmount,
 			Total:       total,
-			MRP:         item.MRP,
-			SalePrice:   item.SalePrice,
+			MRP:         item.MRP.Float64(),
+			SalePrice:   item.SalePrice.Float64(),
 			HSNCode:     item.HSNCode,
 			BatchNo:     item.BatchNo,
 			MfgDate:     item.MfgDate,
@@ -539,20 +548,20 @@ func UpdatePurchaseBill(c *gin.Context) {
 		Status          string    `json:"status"`
 		Notes           string    `json:"notes"`
 		Items           []struct {
-			ProductID   *uuid.UUID `json:"product_id"`
-			ItemCode     string     `json:"item_code"`
-			Description string     `json:"description"`
-			Quantity    float64    `json:"quantity"`
-			Unit        string     `json:"unit"`
-			UnitPrice   float64    `json:"unit_price"`
-			Discount    float64    `json:"discount"`
-			TaxRate     float64    `json:"tax_rate"`
-			MRP         float64    `json:"mrp"`
-			SalePrice   float64    `json:"sale_price"`
-			HSNCode     string     `json:"hsn_code"`
-			BatchNo     string     `json:"batch_no"`
-			MfgDate     *time.Time `json:"mfg_date"`
-			ExpDate     *time.Time `json:"exp_date"`
+			ProductID   *uuid.UUID           `json:"product_id"`
+			ItemCode    string               `json:"item_code"`
+			Description string               `json:"description"`
+			Quantity    models.FlexibleFloat `json:"quantity"`
+			Unit        string               `json:"unit"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			MRP         models.FlexibleFloat `json:"mrp"`
+			SalePrice   models.FlexibleFloat `json:"sale_price"`
+			HSNCode     string               `json:"hsn_code"`
+			BatchNo     string               `json:"batch_no"`
+			MfgDate     *time.Time           `json:"mfg_date"`
+			ExpDate     *time.Time           `json:"exp_date"`
 		} `json:"items"`
 	}
 
@@ -592,28 +601,38 @@ func UpdatePurchaseBill(c *gin.Context) {
 	utils.DB.Where("bill_id = ?", bill.ID).Delete(&models.PurchaseBillItem{})
 
 	var subTotal, taxTotal float64
+	bill.Items = nil
 	for _, item := range input.Items {
-		itemTotal := item.UnitPrice * item.Quantity
-		itemDiscount := itemTotal * (item.Discount / 100)
+		qty := item.Quantity.Float64()
+		unitPrice := item.UnitPrice.Float64()
+		discount := item.Discount.Float64()
+		taxRate := item.TaxRate.Float64()
+		if qty <= 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Item quantity must be greater than 0"})
+			return
+		}
+
+		itemTotal := unitPrice * qty
+		itemDiscount := itemTotal * (discount / 100)
 		taxable := itemTotal - itemDiscount
-		taxAmount := taxable * (item.TaxRate / 100)
+		taxAmount := taxable * (taxRate / 100)
 		total := taxable + taxAmount
 
 		bill.Items = append(bill.Items, models.PurchaseBillItem{
 			ID:          uuid.New(),
 			BillID:      bill.ID,
 			ProductID:   item.ProductID,
-			ItemCode:     item.ItemCode,
+			ItemCode:    item.ItemCode,
 			Description: item.Description,
-			Quantity:    item.Quantity,
+			Quantity:    qty,
 			Unit:        item.Unit,
-			UnitPrice:   item.UnitPrice,
-			Discount:    item.Discount,
-			TaxRate:     item.TaxRate,
+			UnitPrice:   unitPrice,
+			Discount:    discount,
+			TaxRate:     taxRate,
 			TaxAmount:   taxAmount,
 			Total:       total,
-			MRP:         item.MRP,
-			SalePrice:   item.SalePrice,
+			MRP:         item.MRP.Float64(),
+			SalePrice:   item.SalePrice.Float64(),
 			HSNCode:     item.HSNCode,
 			BatchNo:     item.BatchNo,
 			MfgDate:     item.MfgDate,

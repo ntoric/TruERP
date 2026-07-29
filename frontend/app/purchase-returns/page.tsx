@@ -7,13 +7,23 @@ import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, Search, MoreVertical, Edit, Trash2, CheckCircle } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { Plus, Search, MoreVertical, Edit, Trash2, CheckCircle, Download } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface PurchaseReturn {
   id: string
   return_number: string
-  vendor: { name: string }
+  party?: { name: string }
+  vendor?: { name: string }
   purchase_bill?: { bill_number: string }
   date: string
   amount: number
@@ -27,7 +37,6 @@ export default function PurchaseReturnsPage() {
   const [filter, setFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [actionMenu, setActionMenu] = useState<string | null>(null)
 
   useEffect(() => {
     fetchReturns()
@@ -55,9 +64,34 @@ export default function PurchaseReturnsPage() {
 
   const filteredReturns = returns.filter(ret =>
     ret.return_number.toLowerCase().includes(search.toLowerCase()) ||
+    ret.party?.name?.toLowerCase().includes(search.toLowerCase()) ||
     ret.vendor?.name?.toLowerCase().includes(search.toLowerCase()) ||
     ret.purchase_bill?.bill_number?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const getVendorName = (ret: PurchaseReturn) =>
+    ret.party?.name || ret.vendor?.name || 'N/A'
+
+  const handleExport = () => {
+    const rows: (string | number)[][] = [
+      ['Date', 'Purchase Return #', 'Vendor Name', 'Bill #', 'Amount', 'Status'],
+      ...filteredReturns.map((ret) => [
+        formatDate(ret.date),
+        ret.return_number,
+        getVendorName(ret),
+        ret.purchase_bill?.bill_number || '',
+        ret.amount,
+        ret.status,
+      ]),
+    ]
+    downloadCsv(`purchase_returns_${accountingExportDateStamp()}.csv`, rows)
+  }
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredReturns)
+
+  useEffect(() => {
+    resetPage()
+  }, [search, filter, dateFrom, dateTo])
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
@@ -77,7 +111,6 @@ export default function PurchaseReturnsPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   const handleDeleteReturn = async (id: string) => {
@@ -90,7 +123,6 @@ export default function PurchaseReturnsPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   return (
@@ -98,9 +130,19 @@ export default function PurchaseReturnsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">Purchase Returns</h1>
-          <Link href="/purchase-returns/create">
-            <Button><Plus className="mr-2 h-4 w-4" /> New Purchase Return</Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleExport}
+              disabled={loading || filteredReturns.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export
+            </Button>
+            <Link href="/purchase-returns/create">
+              <Button><Plus className="mr-2 h-4 w-4" /> New Purchase Return</Button>
+            </Link>
+          </div>
         </div>
 
         <Card>
@@ -159,7 +201,7 @@ export default function PurchaseReturnsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredReturns.map((ret) => (
+                    {paginatedItems.map((ret) => (
                       <tr key={ret.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 text-gray-500">{formatDate(ret.date)}</td>
                         <td className="py-3">
@@ -167,46 +209,39 @@ export default function PurchaseReturnsPage() {
                             {ret.return_number}
                           </Link>
                         </td>
-                        <td className="py-3 text-gray-600">{ret.vendor?.name || 'N/A'}</td>
+                        <td className="py-3 text-gray-600">{getVendorName(ret)}</td>
                         <td className="py-3 text-gray-500">{ret.purchase_bill?.bill_number || '-'}</td>
                         <td className="py-3 font-medium text-gray-900">{formatCurrency(ret.amount)}</td>
                         <td className="py-3">{getStatusBadge(ret.status)}</td>
                         <td className="py-3">
-                          <div className="relative">
-                            <button
-                              onClick={() => setActionMenu(actionMenu === ret.id ? null : ret.id)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <MoreVertical className="h-4 w-4 text-gray-500" />
-                            </button>
-                            {actionMenu === ret.id && (
-                              <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-md border bg-white shadow-lg">
-                                <div className="py-1">
-                                  <Link
-                                    href={`/purchase-returns/create?id=${ret.id}`}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    onClick={() => setActionMenu(null)}
-                                  >
-                                    <Edit className="h-4 w-4" /> Edit
-                                  </Link>
-                                  {ret.status === 'draft' && (
-                                    <button
-                                      onClick={() => handleProcessReturn(ret.id)}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      <CheckCircle className="h-4 w-4" /> Process
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteReturn(ret.id)}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-gray-100"
-                                  >
-                                    <Trash2 className="h-4 w-4" /> Delete
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link href={`/purchase-returns/create?id=${ret.id}`} className="flex items-center">
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                              {ret.status === 'draft' && (
+                                <DropdownMenuItem onClick={() => handleProcessReturn(ret.id)}>
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Process
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteReturn(ret.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
@@ -220,6 +255,15 @@ export default function PurchaseReturnsPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

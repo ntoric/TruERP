@@ -5,7 +5,8 @@ import { apiFetch } from '@/hooks/useAuth'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Printer, X, Eye } from 'lucide-react'
+import { printDocument } from '@/lib/printDocument'
+import { Printer, X, Eye, Loader2 } from 'lucide-react'
 
 interface ThermalPrintModalProps {
   isOpen: boolean
@@ -26,10 +27,13 @@ export default function ThermalPrintModal({
   const [printContent, setPrintContent] = useState<string>('')
   const [printWidth, setPrintWidth] = useState<number>(58)
   const [loading, setLoading] = useState(false)
+  const [printing, setPrinting] = useState(false)
   const [previewMode, setPreviewMode] = useState(false)
+  const [error, setError] = useState('')
 
   useEffect(() => {
     if (!isOpen) return
+    setError('')
     const loadDefaultSize = async () => {
       try {
         const res = await apiFetch('/settings/print')
@@ -48,6 +52,7 @@ export default function ThermalPrintModal({
 
   const handleGenerate = async () => {
     setLoading(true)
+    setError('')
     try {
       const res = await apiFetch('/printer/thermal', {
         method: 'POST',
@@ -63,45 +68,33 @@ export default function ThermalPrintModal({
         setPrintContent(data.content)
         setPrintWidth(data.width)
         setPreviewMode(true)
+      } else {
+        const data = await res.json().catch(() => ({}))
+        setError(data.error || 'Failed to generate thermal print')
       }
     } catch (err) {
       console.error('Failed to generate thermal print:', err)
+      setError('Failed to generate thermal print')
     } finally {
       setLoading(false)
     }
   }
 
-  const handlePrint = () => {
-    if (!printContent) return
-
-    const printWindow = window.open('', '_blank')
-    if (printWindow) {
-      printWindow.document.write(`
-        <html>
-        <head>
-          <title>Print - ${documentNumber}</title>
-          <style>
-            body {
-              font-family: 'Courier New', monospace;
-              font-size: 12px;
-              margin: 0;
-              padding: 10px;
-              white-space: pre;
-              line-height: 1.2;
-            }
-            @media print {
-              body {
-                margin: 0;
-                padding: 0;
-              }
-            }
-          </style>
-        </head>
-        <body>${printContent.replace(/\n/g, '<br>')}</body>
-        </html>
-      `)
-      printWindow.document.close()
-      printWindow.print()
+  const handlePrint = async () => {
+    setPrinting(true)
+    setError('')
+    try {
+      await printDocument({
+        documentType,
+        documentId,
+        mode: 'thermal',
+        printSize,
+      })
+    } catch (err) {
+      console.error('Thermal print failed:', err)
+      setError(err instanceof Error ? err.message : 'Print failed')
+    } finally {
+      setPrinting(false)
     }
   }
 
@@ -120,6 +113,9 @@ export default function ThermalPrintModal({
           </Button>
         </CardHeader>
         <CardContent className="space-y-4">
+          {error ? (
+            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">{error}</div>
+          ) : null}
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <label className="text-sm font-medium text-gray-700 mb-1 block">Print Size</label>
@@ -147,8 +143,12 @@ export default function ThermalPrintModal({
                     <Eye className="h-4 w-4 mr-2" />
                     Hide Preview
                   </Button>
-                  <Button size="sm" onClick={handlePrint}>
-                    <Printer className="h-4 w-4 mr-2" />
+                  <Button size="sm" onClick={() => void handlePrint()} disabled={printing}>
+                    {printing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Printer className="h-4 w-4 mr-2" />
+                    )}
                     Print
                   </Button>
                 </div>
@@ -165,6 +165,10 @@ export default function ThermalPrintModal({
               >
                 {printContent}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Document: {documentNumber}. On desktop, print goes to the thermal printer configured in
+                Settings when available.
+              </p>
             </div>
           )}
         </CardContent>

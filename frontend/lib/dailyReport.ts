@@ -69,7 +69,7 @@ export function buildDailyReportShareText(report: DailyReport): string {
     `GST Collected: ${formatCurrency(report.gst_collected)}`,
     `Net Cash Flow: ${formatCurrency(report.net_cash_flow)}`,
     '',
-    'Generated from BillBook'
+    'Generated from TruERP'
   )
 
   return lines.join('\n')

@@ -9,8 +9,16 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, CreditCard } from 'lucide-react'
+import { Plus, CreditCard, MoreVertical, Trash2, Search } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Payment {
   id: string
@@ -51,11 +59,54 @@ export default function PaymentsPage() {
     date: new Date().toISOString().split('T')[0],
     notes: ''
   })
+  const [selectedPayments, setSelectedPayments] = useState<Set<string>>(new Set())
+  const [search, setSearch] = useState('')
+  const [partyFilter, setPartyFilter] = useState('all')
+  const [modeFilter, setModeFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   useEffect(() => {
     fetchPayments()
     fetchParties()
   }, [])
+
+  const getPartyName = (payment: Payment) => {
+    if (payment.party) return payment.party.name
+    if (payment.customer) return payment.customer.name
+    return '-'
+  }
+
+  const filteredPayments = payments.filter((payment) => {
+    const query = search.toLowerCase()
+    const partyName = getPartyName(payment).toLowerCase()
+    const paymentDate = payment.date.split('T')[0]
+
+    const matchesSearch =
+      !search ||
+      partyName.includes(query) ||
+      payment.payment_in_number?.toLowerCase().includes(query) ||
+      payment.reference?.toLowerCase().includes(query) ||
+      payment.notes?.toLowerCase().includes(query) ||
+      payment.id.toLowerCase().includes(query)
+
+    const matchesParty =
+      partyFilter === 'all' ||
+      payment.party?.id === partyFilter ||
+      payment.customer?.id === partyFilter
+    const matchesMode = modeFilter === 'all' || payment.mode === modeFilter
+    const matchesDateFrom = !dateFrom || paymentDate >= dateFrom
+    const matchesDateTo = !dateTo || paymentDate <= dateTo
+
+    return matchesSearch && matchesParty && matchesMode && matchesDateFrom && matchesDateTo
+  })
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredPayments)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedPayments(new Set())
+  }, [search, partyFilter, modeFilter, dateFrom, dateTo])
 
   const fetchPayments = async () => {
     try {
@@ -124,10 +175,59 @@ export default function PaymentsPage() {
     return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[mode] || 'bg-gray-100 text-gray-700'}`}>{mode.replace('_', ' ')}</span>
   }
 
-  const getPartyName = (payment: Payment) => {
-    if (payment.party) return payment.party.name
-    if (payment.customer) return payment.customer.name
-    return '-'
+  const handleDeletePayment = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this payment?')) return
+    try {
+      const res = await apiFetch(`/payments/${id}`, { method: 'DELETE' })
+      if (res.ok) fetchPayments()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const clearFilters = () => {
+    setSearch('')
+    setPartyFilter('all')
+    setModeFilter('all')
+    setDateFrom('')
+    setDateTo('')
+  }
+
+  const hasActiveFilters =
+    search !== '' ||
+    partyFilter !== 'all' ||
+    modeFilter !== 'all' ||
+    dateFrom !== '' ||
+    dateTo !== ''
+
+  const toggleSelectPayment = (id: string) => {
+    setSelectedPayments(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllPayments = () => {
+    if (selectedPayments.size === filteredPayments.length) {
+      setSelectedPayments(new Set())
+    } else {
+      setSelectedPayments(new Set(filteredPayments.map(p => p.id)))
+    }
+  }
+
+  const handleBulkDeletePayments = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedPayments.size} payment(s)?`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedPayments).map(id => apiFetch(`/payments/${id}`, { method: 'DELETE' }))
+      )
+      setSelectedPayments(new Set())
+      fetchPayments()
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   return (
@@ -237,8 +337,64 @@ export default function PaymentsPage() {
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Payment In History</CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle className="mb-4">Payment In History</CardTitle>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Input
+                  placeholder="Search payments..."
+                  className="pl-10"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select value={partyFilter} onValueChange={setPartyFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Party" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Parties</SelectItem>
+                  {parties.map((party) => (
+                    <SelectItem key={party.id} value={party.id}>
+                      {party.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={modeFilter} onValueChange={setModeFilter}>
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder="Payment mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="upi">UPI</SelectItem>
+                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                  <SelectItem value="card">Card</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="date"
+                className="h-10 w-auto"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                aria-label="From date"
+              />
+              <Input
+                type="date"
+                className="h-10 w-auto"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                aria-label="To date"
+              />
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -247,9 +403,27 @@ export default function PaymentsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {selectedPayments.size > 0 && (
+                  <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
+                    <span className="text-sm text-gray-600">{selectedPayments.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeletePayments}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-gray-500">
+                      <th className="pb-3 pr-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={filteredPayments.length > 0 && selectedPayments.size === filteredPayments.length}
+                          onChange={toggleSelectAllPayments}
+                        />
+                      </th>
                       <th className="pb-3 font-medium">Date</th>
                       <th className="pb-3 font-medium">Payment ID</th>
                       <th className="pb-3 font-medium">Party Name</th>
@@ -258,11 +432,20 @@ export default function PaymentsPage() {
                       <th className="pb-3 font-medium">Payment Mode</th>
                       <th className="pb-3 font-medium">Payment In Number</th>
                       <th className="pb-3 font-medium">Notes</th>
+                      <th className="pb-3 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {payments.map((p) => (
+                    {paginatedItems.map((p) => (
                       <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={selectedPayments.has(p.id)}
+                            onChange={() => toggleSelectPayment(p.id)}
+                          />
+                        </td>
                         <td className="py-3 text-gray-600">{formatDate(p.date)}</td>
                         <td className="py-3 text-gray-600 font-mono text-xs">{p.id.slice(0, 8)}...</td>
                         <td className="py-3 font-medium text-gray-900">{getPartyName(p)}</td>
@@ -271,18 +454,45 @@ export default function PaymentsPage() {
                         <td className="py-3">{getModeIcon(p.mode)}</td>
                         <td className="py-3 text-gray-600">{p.payment_in_number || '-'}</td>
                         <td className="py-3 text-gray-600">{p.notes || '-'}</td>
+                        <td className="py-3">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => handleDeletePayment(p.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </td>
                       </tr>
                     ))}
-                    {payments.length === 0 && (
+                    {filteredPayments.length === 0 && (
                       <tr>
-                        <td colSpan={8} className="py-8 text-center text-gray-500">
-                          No payments recorded yet
+                        <td colSpan={10} className="py-8 text-center text-gray-500">
+                          {hasActiveFilters ? 'No payments match your filters' : 'No payments recorded yet'}
                         </td>
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

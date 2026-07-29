@@ -7,18 +7,44 @@ import { apiFetch } from '@/hooks/useAuth'
 export default function InvoicePDFPage() {
   const params = useParams()
   const id = params.id as string
-  const [htmlContent, setHtmlContent] = useState('')
+  const [pdfUrl, setPdfUrl] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
     if (!id) return
+    let objectUrl = ''
+    let cancelled = false
+
     apiFetch(`/invoices/${id}/pdf`)
       .then(async (res) => {
-        if (res.ok) setHtmlContent(await res.text())
-        else setError('Failed to load invoice')
+        if (!res.ok) throw new Error('Failed to load invoice PDF')
+        const blob = await res.blob()
+        if (cancelled) return
+        objectUrl = URL.createObjectURL(blob)
+        setPdfUrl(objectUrl)
       })
-      .catch(() => setError('Failed to load invoice'))
+      .catch(() => {
+        if (!cancelled) setError('Failed to load invoice')
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [id])
+
+  useEffect(() => {
+    if (!pdfUrl) return
+    // Auto-print once the PDF page is ready.
+    const timer = setTimeout(() => {
+      try {
+        window.print()
+      } catch {
+        /* ignore */
+      }
+    }, 400)
+    return () => clearTimeout(timer)
+  }, [pdfUrl])
 
   if (error) {
     return (
@@ -27,12 +53,19 @@ export default function InvoicePDFPage() {
       </div>
     )
   }
-  if (!htmlContent) {
+  if (!pdfUrl) {
     return (
       <div className="flex h-screen items-center justify-center">
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
       </div>
     )
   }
-  return <div dangerouslySetInnerHTML={{ __html: htmlContent }} />
+
+  return (
+    <iframe
+      title="Invoice PDF"
+      src={pdfUrl}
+      className="h-screen w-screen border-0"
+    />
+  )
 }

@@ -16,8 +16,19 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { formatCurrency } from '@/lib/utils'
-import { Plus, Search, Phone, ArrowUp, ArrowDown, Trash2, Edit, MoreVertical } from 'lucide-react'
+import { formatCurrency, cn, formatDate } from '@/lib/utils'
+import { mergePartyCategories } from '@/lib/partyCategories'
+import {
+  EMPTY_PARTY_FORM,
+  firstValidationMessage,
+  validatePartyForm,
+} from '@/lib/partyValidation'
+import { FieldError } from '@/components/ui/field-error'
+import { useFormErrors } from '@/hooks/useFormErrors'
+import { Plus, Search, Phone, ArrowUp, ArrowDown, Trash2, Edit, MoreVertical, Download } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Party {
   id: string
@@ -37,6 +48,8 @@ interface Party {
   tan: string
   pan: string
   notes: string
+  created_at?: string
+  updated_at?: string
 }
 
 interface PartyStats {
@@ -46,6 +59,13 @@ interface PartyStats {
 }
 
 export default function PartiesPage() {
+  const {
+    fieldErrors,
+    setFieldErrors,
+    clearErrors,
+    clearFieldError,
+    showErrorToast,
+  } = useFormErrors()
   const [parties, setParties] = useState<Party[]>([])
   const [stats, setStats] = useState<PartyStats>({ total_parties: 0, to_collect: 0, to_pay: 0 })
   const [loading, setLoading] = useState(true)
@@ -61,23 +81,22 @@ export default function PartiesPage() {
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [partyToDelete, setPartyToDelete] = useState<string | null>(null)
   const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false)
-  const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    category: '',
-    party_type: 'customer',
-    opening_balance: 0,
-    credit_limit: 0,
-    gstin: '',
-    address: '',
-    city: '',
-    state: '',
-    pincode: '',
-    tan: '',
-    pan: '',
-    notes: ''
-  })
+  const [formData, setFormData] = useState({ ...EMPTY_PARTY_FORM })
+
+  const updateFormField = <K extends keyof typeof formData>(field: K, value: (typeof formData)[K]) => {
+    clearFieldError(field)
+    setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
+  const resetCreateForm = () => {
+    clearErrors()
+    setFormData({ ...EMPTY_PARTY_FORM })
+  }
+
+  const handleCreateModalChange = (open: boolean) => {
+    setIsCreateModalOpen(open)
+    if (!open) resetCreateForm()
+  }
 
   useEffect(() => {
     fetchParties()
@@ -114,7 +133,59 @@ export default function PartiesPage() {
     return matchesSearch && matchesCategory
   })
 
-  const categories = Array.from(new Set(parties.map(p => p.category).filter(Boolean)))
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredParties)
+
+  useEffect(() => {
+    resetPage()
+  }, [search, categoryFilter])
+
+  const categories = mergePartyCategories(parties.map((p) => p.category))
+
+  const handleExport = () => {
+    const rows: (string | number)[][] = [
+      [
+        'Name',
+        'Category',
+        'Mobile',
+        'Email',
+        'Party Type',
+        'Balance',
+        'Credit Limit',
+        'Loyalty Points',
+        'GSTIN',
+        'PAN',
+        'TAN',
+        'City',
+        'State',
+        'Pincode',
+        'Address',
+        'Notes',
+        'Created',
+        'Last Updated',
+      ],
+      ...filteredParties.map((p) => [
+        p.name,
+        p.category || '',
+        p.phone || '',
+        p.email || '',
+        p.party_type === 'customer' ? 'Customer' : 'Vendor',
+        p.balance,
+        p.credit_limit,
+        p.party_type === 'customer' ? p.loyalty_points ?? 0 : '',
+        p.gstin || '',
+        p.pan || '',
+        p.tan || '',
+        p.city || '',
+        p.state || '',
+        p.pincode || '',
+        p.address || '',
+        p.notes || '',
+        p.created_at ? formatDate(p.created_at) : '',
+        p.updated_at ? formatDate(p.updated_at) : '',
+      ]),
+    ]
+    downloadCsv(`parties_${accountingExportDateStamp()}.csv`, rows)
+  }
 
   const handleSelectParty = (id: string) => {
     const newSelected = new Set(selectedParties)
@@ -182,24 +253,41 @@ export default function PartiesPage() {
   }
 
   const handleCreateParty = async () => {
+    const errors = validatePartyForm(formData)
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      showErrorToast(firstValidationMessage(errors) || 'Please fix the highlighted fields')
+      return
+    }
+
     try {
+      const payload = {
+        ...formData,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        gstin: formData.gstin.trim().toUpperCase(),
+        pan: formData.pan.trim().toUpperCase(),
+        tan: formData.tan.trim().toUpperCase(),
+        pincode: formData.pincode.trim(),
+      }
       const res = await apiFetch('/parties', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload)
       })
       if (res.ok) {
         setIsCreateModalOpen(false)
-        setFormData({
-          name: '', phone: '', email: '', category: '', party_type: 'customer',
-          opening_balance: 0, credit_limit: 0, gstin: '', address: '', city: '',
-          state: '', pincode: '', tan: '', pan: '', notes: ''
-        })
+        resetCreateForm()
         fetchParties()
         fetchStats()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        showErrorToast(data.error || 'Failed to create party')
       }
     } catch (err) {
       console.error(err)
+      showErrorToast('Failed to create party')
     }
   }
 
@@ -236,11 +324,7 @@ export default function PartiesPage() {
       if (res.ok) {
         setIsEditModalOpen(false)
         setEditingParty(null)
-        setFormData({
-          name: '', phone: '', email: '', category: '', party_type: 'customer',
-          opening_balance: 0, credit_limit: 0, gstin: '', address: '', city: '',
-          state: '', pincode: '', tan: '', pan: '', notes: ''
-        })
+        resetCreateForm()
         fetchParties()
         fetchStats()
       }
@@ -274,7 +358,11 @@ export default function PartiesPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">Parties</h1>
-          <Dialog open={isCreateModalOpen} onOpenChange={setIsCreateModalOpen}>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" onClick={handleExport} disabled={loading || filteredParties.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
+            <Dialog open={isCreateModalOpen} onOpenChange={handleCreateModalChange}>
             <DialogTrigger asChild>
               <Button><Plus className="mr-2 h-4 w-4" /> Create Party</Button>
             </DialogTrigger>
@@ -284,100 +372,167 @@ export default function PartiesPage() {
               </DialogHeader>
               <div className="grid gap-4 py-4">
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="name">Name *</Label>
-                    <Input id="name" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+                    <Input
+                      id="name"
+                      value={formData.name}
+                      onChange={(e) => updateFormField('name', e.target.value)}
+                      className={cn(fieldErrors.name && 'border-red-500')}
+                    />
+                    <FieldError message={fieldErrors.name} />
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="phone">Mobile</Label>
-                    <Input id="phone" value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })} />
+                    <Input
+                      id="phone"
+                      value={formData.phone}
+                      onChange={(e) => updateFormField('phone', e.target.value)}
+                      className={cn(fieldErrors.phone && 'border-red-500')}
+                      placeholder="10-digit mobile number"
+                    />
+                    <FieldError message={fieldErrors.phone} />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="email">Email</Label>
-                    <Input id="email" type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} />
+                    <Input
+                      id="email"
+                      type="email"
+                      value={formData.email}
+                      onChange={(e) => updateFormField('email', e.target.value)}
+                      className={cn(fieldErrors.email && 'border-red-500')}
+                    />
+                    <FieldError message={fieldErrors.email} />
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="category">Category</Label>
                     <Select
                       value={formData.category || undefined}
-                      onValueChange={v => setFormData({ ...formData, category: v })}
+                      onValueChange={(v) => updateFormField('category', v)}
                     >
                       <SelectTrigger id="category">
                         <SelectValue placeholder="Select category" />
                       </SelectTrigger>
                       <SelectContent>
-                        {categories.map(cat => (
+                        {categories.map((cat) => (
                           <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                         ))}
                       </SelectContent>
                     </Select>
                   </div>
                 </div>
-                <div>
+                <div className="space-y-1">
                   <Label htmlFor="party_type">Party Type *</Label>
-                  <Select value={formData.party_type} onValueChange={v => setFormData({ ...formData, party_type: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
+                  <Select value={formData.party_type} onValueChange={(v) => updateFormField('party_type', v)}>
+                    <SelectTrigger className={cn(fieldErrors.party_type && 'border-red-500')}>
+                      <SelectValue />
+                    </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="customer">Customer</SelectItem>
                       <SelectItem value="vendor">Vendor</SelectItem>
                     </SelectContent>
                   </Select>
+                  <FieldError message={fieldErrors.party_type} />
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="opening_balance">Opening Balance</Label>
-                    <Input id="opening_balance" type="number" value={formData.opening_balance} onChange={e => setFormData({ ...formData, opening_balance: parseFloat(e.target.value) || 0 })} />
+                    <Input
+                      id="opening_balance"
+                      type="number"
+                      value={formData.opening_balance}
+                      onChange={(e) => updateFormField('opening_balance', parseFloat(e.target.value) || 0)}
+                      className={cn(fieldErrors.opening_balance && 'border-red-500')}
+                    />
+                    <FieldError message={fieldErrors.opening_balance} />
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="credit_limit">Credit Limit</Label>
-                    <Input id="credit_limit" type="number" value={formData.credit_limit} onChange={e => setFormData({ ...formData, credit_limit: parseFloat(e.target.value) || 0 })} />
+                    <Input
+                      id="credit_limit"
+                      type="number"
+                      min={0}
+                      value={formData.credit_limit}
+                      onChange={(e) => updateFormField('credit_limit', parseFloat(e.target.value) || 0)}
+                      className={cn(fieldErrors.credit_limit && 'border-red-500')}
+                    />
+                    <FieldError message={fieldErrors.credit_limit} />
                   </div>
                 </div>
-                <div>
+                <div className="space-y-1">
                   <Label htmlFor="gstin">GSTIN</Label>
-                  <Input id="gstin" value={formData.gstin} onChange={e => setFormData({ ...formData, gstin: e.target.value })} />
+                  <Input
+                    id="gstin"
+                    value={formData.gstin}
+                    onChange={(e) => updateFormField('gstin', e.target.value.toUpperCase())}
+                    className={cn(fieldErrors.gstin && 'border-red-500')}
+                    placeholder="15-character GSTIN"
+                  />
+                  <FieldError message={fieldErrors.gstin} />
                 </div>
                 <div>
                   <Label htmlFor="address">Address</Label>
-                  <Input id="address" value={formData.address} onChange={e => setFormData({ ...formData, address: e.target.value })} />
+                  <Input id="address" value={formData.address} onChange={(e) => updateFormField('address', e.target.value)} />
                 </div>
                 <div className="grid grid-cols-3 gap-4">
                   <div>
                     <Label htmlFor="city">City</Label>
-                    <Input id="city" value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} />
+                    <Input id="city" value={formData.city} onChange={(e) => updateFormField('city', e.target.value)} />
                   </div>
                   <div>
                     <Label htmlFor="state">State</Label>
-                    <Input id="state" value={formData.state} onChange={e => setFormData({ ...formData, state: e.target.value })} />
+                    <Input id="state" value={formData.state} onChange={(e) => updateFormField('state', e.target.value)} />
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="pincode">Pincode</Label>
-                    <Input id="pincode" value={formData.pincode} onChange={e => setFormData({ ...formData, pincode: e.target.value })} />
+                    <Input
+                      id="pincode"
+                      value={formData.pincode}
+                      onChange={(e) => updateFormField('pincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      className={cn(fieldErrors.pincode && 'border-red-500')}
+                      placeholder="6-digit pincode"
+                    />
+                    <FieldError message={fieldErrors.pincode} />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="tan">TAN</Label>
-                    <Input id="tan" value={formData.tan} onChange={e => setFormData({ ...formData, tan: e.target.value })} />
+                    <Input
+                      id="tan"
+                      value={formData.tan}
+                      onChange={(e) => updateFormField('tan', e.target.value.toUpperCase())}
+                      className={cn(fieldErrors.tan && 'border-red-500')}
+                      placeholder="ABCD12345E"
+                    />
+                    <FieldError message={fieldErrors.tan} />
                   </div>
-                  <div>
+                  <div className="space-y-1">
                     <Label htmlFor="pan">PAN</Label>
-                    <Input id="pan" value={formData.pan} onChange={e => setFormData({ ...formData, pan: e.target.value })} />
+                    <Input
+                      id="pan"
+                      value={formData.pan}
+                      onChange={(e) => updateFormField('pan', e.target.value.toUpperCase())}
+                      className={cn(fieldErrors.pan && 'border-red-500')}
+                      placeholder="ABCDE1234F"
+                    />
+                    <FieldError message={fieldErrors.pan} />
                   </div>
                 </div>
                 <div>
                   <Label htmlFor="notes">Notes</Label>
-                  <Input id="notes" value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} />
+                  <Input id="notes" value={formData.notes} onChange={(e) => updateFormField('notes', e.target.value)} />
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsCreateModalOpen(false)}>Cancel</Button>
+                <Button variant="outline" onClick={() => handleCreateModalChange(false)}>Cancel</Button>
                 <Button onClick={handleCreateParty}>Create Party</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
+          </div>
 
           <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
             <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -613,11 +768,13 @@ export default function PartiesPage() {
                       <th className="pb-3 font-medium">Party Type</th>
                       <th className="pb-3 font-medium">Loyalty Pts</th>
                       <th className="pb-3 font-medium">Balance</th>
+                      <th className="pb-3 font-medium">Created</th>
+                      <th className="pb-3 font-medium">Last Updated</th>
                       <th className="pb-3 font-medium">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredParties.map((p) => (
+                    {paginatedItems.map((p) => (
                       <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3">
                           <Checkbox checked={selectedParties.has(p.id)} onCheckedChange={() => handleSelectParty(p.id)} />
@@ -658,6 +815,12 @@ export default function PartiesPage() {
                             )}
                           </div>
                         </td>
+                        <td className="py-3 whitespace-nowrap text-gray-600">
+                          {p.created_at ? formatDate(p.created_at) : '—'}
+                        </td>
+                        <td className="py-3 whitespace-nowrap text-gray-600">
+                          {p.updated_at ? formatDate(p.updated_at) : '—'}
+                        </td>
                         <td className="py-3">
                           <DropdownMenu>
                             <DropdownMenuTrigger asChild>
@@ -681,7 +844,7 @@ export default function PartiesPage() {
                     ))}
                     {filteredParties.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-gray-500">
+                        <td colSpan={10} className="py-8 text-center text-gray-500">
                           No parties found
                         </td>
                       </tr>
@@ -689,6 +852,15 @@ export default function PartiesPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

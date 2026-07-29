@@ -1,7 +1,7 @@
 package controllers
 
 import (
-	"billbook/models"
+	"truerp/models"
 	"fmt"
 	"time"
 

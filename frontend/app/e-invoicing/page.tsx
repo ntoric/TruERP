@@ -11,6 +11,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { FileDigit, FileCheck, XCircle, Truck, Search, RefreshCw } from 'lucide-react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 export default function EInvoicingPage() {
   const { user, loading: authLoading } = useAuth()
@@ -28,6 +30,9 @@ export default function EInvoicingPage() {
   })
 
   useEffect(() => { if (!authLoading && user) { fetchInvoices(); fetchHistory() } }, [authLoading, user])
+
+  const eInvoiceHistoryPagination = usePagination(eInvoiceHistory)
+  const ewayBillHistoryPagination = usePagination(ewayBillHistory)
 
   const fetchInvoices = async () => {
     try {
@@ -274,7 +279,7 @@ export default function EInvoicingPage() {
                   <Table>
                     <TableHeader><TableRow><TableHead>IRN</TableHead><TableHead>Invoice</TableHead><TableHead>Status</TableHead><TableHead>Generated At</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {eInvoiceHistory.map((item: any, i: number) => (
+                      {eInvoiceHistoryPagination.paginatedItems.map((item: any, i: number) => (
                         <TableRow key={i}>
                           <TableCell className="font-mono text-sm">{item.irn}</TableCell>
                           <TableCell>{item.invoice_number}</TableCell>
@@ -285,6 +290,13 @@ export default function EInvoicingPage() {
                       {eInvoiceHistory.length === 0 && <TableRow><TableCell colSpan={4} className="text-center py-8 text-gray-500">No e-invoice history</TableCell></TableRow>}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={eInvoiceHistoryPagination.page}
+                    totalPages={eInvoiceHistoryPagination.totalPages}
+                    totalItems={eInvoiceHistoryPagination.totalItems}
+                    pageSize={eInvoiceHistoryPagination.pageSize}
+                    onPageChange={eInvoiceHistoryPagination.setPage}
+                  />
                 </CardContent>
               </Card>
 
@@ -294,7 +306,7 @@ export default function EInvoicingPage() {
                   <Table>
                     <TableHeader><TableRow><TableHead>E-Way Bill No</TableHead><TableHead>Invoice</TableHead><TableHead>Status</TableHead><TableHead>Valid Until</TableHead><TableHead>Actions</TableHead></TableRow></TableHeader>
                     <TableBody>
-                      {ewayBillHistory.map((item: any, i: number) => (
+                      {ewayBillHistoryPagination.paginatedItems.map((item: any, i: number) => (
                         <TableRow key={i}>
                           <TableCell className="font-mono text-sm">{item.ewb_number}</TableCell>
                           <TableCell>{item.invoice_number}</TableCell>
@@ -312,6 +324,13 @@ export default function EInvoicingPage() {
                       {ewayBillHistory.length === 0 && <TableRow><TableCell colSpan={5} className="text-center py-8 text-gray-500">No e-way bill history</TableCell></TableRow>}
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={ewayBillHistoryPagination.page}
+                    totalPages={ewayBillHistoryPagination.totalPages}
+                    totalItems={ewayBillHistoryPagination.totalItems}
+                    pageSize={ewayBillHistoryPagination.pageSize}
+                    onPageChange={ewayBillHistoryPagination.setPage}
+                  />
                 </CardContent>
               </Card>
             </div>

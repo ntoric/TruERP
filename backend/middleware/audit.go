@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"billbook/controllers"
+	"truerp/controllers"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )

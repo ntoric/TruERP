@@ -6,13 +6,21 @@ import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, Search, PlusCircle, Loader2, Printer as ThermalPrinter } from 'lucide-react'
+import { Plus, Search, PlusCircle, Loader2, Printer as ThermalPrinter, MoreVertical, Trash2, Download } from 'lucide-react'
 import ThermalPrintModal from '@/components/ThermalPrintModal'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Expense {
   id: string
@@ -44,6 +52,7 @@ export default function ExpensesPage() {
   const [creatingCategory, setCreatingCategory] = useState(false)
   const [thermalPrintOpen, setThermalPrintOpen] = useState(false)
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null)
+  const [selectedExpenses, setSelectedExpenses] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchExpenses()
@@ -103,7 +112,83 @@ export default function ExpensesPage() {
 
   const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0)
 
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(expenses)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedExpenses(new Set())
+  }, [search, categoryFilter, dateFrom, dateTo])
+
   const uniqueCategories = Array.from(new Set(expenses.map(e => e.category)))
+
+  const toggleSelectExpense = (id: string) => {
+    setSelectedExpenses(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllExpenses = () => {
+    if (selectedExpenses.size === expenses.length) {
+      setSelectedExpenses(new Set())
+    } else {
+      setSelectedExpenses(new Set(expenses.map(e => e.id)))
+    }
+  }
+
+  const handleDeleteExpense = async (id: string) => {
+    if (!confirm('Are you sure you want to delete this expense?')) return
+    try {
+      const res = await apiFetch(`/expenses/${id}`, { method: 'DELETE' })
+      if (res.ok) {
+        fetchExpenses()
+      } else {
+        notifyError('Failed to delete expense')
+      }
+    } catch (err) {
+      notifyError('An error occurred')
+    }
+  }
+
+  const handleBulkExportExpenses = () => {
+    const selected = expenses.filter(e => selectedExpenses.has(e.id))
+    const headers = ['Date', 'Expense Number', 'Party Name', 'Category', 'Amount']
+    const rows = selected.map(expense => [
+      formatDate(expense.date),
+      expense.expense_number,
+      expense.vendor || '-',
+      expense.category,
+      formatCurrency(expense.amount),
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'selected-expenses.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleBulkDeleteExpenses = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedExpenses.size} expense(s)?`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedExpenses).map(id => apiFetch(`/expenses/${id}`, { method: 'DELETE' }))
+      )
+      setSelectedExpenses(new Set())
+      fetchExpenses()
+    } catch (err) {
+      notifyError('An error occurred')
+    }
+  }
+
+  const openThermalPrint = (expense: Expense) => {
+    setSelectedExpense(expense)
+    setThermalPrintOpen(true)
+  }
 
   return (
     <DashboardLayout>
@@ -196,9 +281,30 @@ export default function ExpensesPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {selectedExpenses.size > 0 && (
+                  <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
+                    <span className="text-sm text-gray-600">{selectedExpenses.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportExpenses}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteExpenses}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-gray-500">
+                      <th className="pb-3 pr-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={expenses.length > 0 && selectedExpenses.size === expenses.length}
+                          onChange={toggleSelectAllExpenses}
+                        />
+                      </th>
                       <th className="pb-3 font-medium">Date</th>
                       <th className="pb-3 font-medium">Expense Number</th>
                       <th className="pb-3 font-medium">Party Name</th>
@@ -208,8 +314,16 @@ export default function ExpensesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {expenses.map((e) => (
+                    {paginatedItems.map((e) => (
                       <tr key={e.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={selectedExpenses.has(e.id)}
+                            onChange={() => toggleSelectExpense(e.id)}
+                          />
+                        </td>
                         <td className="py-3 text-gray-600">{formatDate(e.date)}</td>
                         <td className="py-3 font-medium text-gray-900">{e.expense_number}</td>
                         <td className="py-3 text-gray-600">{e.vendor || '-'}</td>
@@ -220,19 +334,32 @@ export default function ExpensesPage() {
                         </td>
                         <td className="py-3 font-medium text-gray-900">{formatCurrency(e.amount)}</td>
                         <td className="py-3">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => { setSelectedExpense(e); setThermalPrintOpen(true) }}
-                          >
-                            <ThermalPrinter className="h-4 w-4" />
-                          </Button>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openThermalPrint(e)}>
+                                <ThermalPrinter className="mr-2 h-4 w-4" />
+                                Print
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteExpense(e.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
                     {expenses.length === 0 && (
                       <tr>
-                        <td colSpan={6} className="py-8 text-center text-gray-500">
+                        <td colSpan={7} className="py-8 text-center text-gray-500">
                           No expenses recorded yet
                         </td>
                       </tr>
@@ -240,6 +367,15 @@ export default function ExpensesPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

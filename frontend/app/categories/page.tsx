@@ -22,12 +22,21 @@ import {
   DialogTitle,
   DialogFooter,
 } from '@/components/ui/dialog'
-import { Plus, Pencil, Trash2, FileText, Power } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Plus, Pencil, Trash2, FileText, Power, MoreVertical, Download } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
 import { Checkbox } from '@/components/ui/checkbox'
 import { notifySuccess } from '@/lib/notify'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
-import { cn } from '@/lib/utils'
+import { cn, formatDate } from '@/lib/utils'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Category {
   id: string
@@ -35,6 +44,7 @@ interface Category {
   description: string
   is_active: boolean
   created_at: string
+  updated_at: string
 }
 
 export default function CategoriesPage() {
@@ -54,6 +64,10 @@ export default function CategoriesPage() {
   const [editingCategory, setEditingCategory] = useState<Category | null>(null)
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
   const [categoryToDelete, setCategoryToDelete] = useState<string | null>(null)
+  const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false)
+  const [isBulkStatusConfirmOpen, setIsBulkStatusConfirmOpen] = useState(false)
+  const [bulkStatusAction, setBulkStatusAction] = useState<'enable' | 'disable'>('disable')
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
   const [confirmAction, setConfirmAction] = useState<'disable' | null>(null)
   const [confirmCategoryId, setConfirmCategoryId] = useState<string | null>(null)
@@ -63,6 +77,8 @@ export default function CategoriesPage() {
     if (!authLoading && user) fetchCategories()
   }, [authLoading, user])
   useEffect(() => { if (showDraftsModal && user) fetchDrafts() }, [showDraftsModal, user])
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(categories)
 
   const fetchCategories = async () => {
     try {
@@ -197,6 +213,87 @@ export default function CategoriesPage() {
     setConfirmCategoryId(null)
   }
 
+  const handleExport = () => {
+    const exportList =
+      selectedCategories.size > 0
+        ? categories.filter((cat) => selectedCategories.has(cat.id))
+        : categories
+    const rows: (string | number)[][] = [
+      ['Name', 'Description', 'Status', 'Created', 'Last Modified'],
+      ...exportList.map((cat) => [
+        cat.name,
+        cat.description || '',
+        cat.is_active ? 'Active' : 'Inactive',
+        cat.created_at ? formatDate(cat.created_at) : '',
+        cat.updated_at ? formatDate(cat.updated_at) : '',
+      ]),
+    ]
+    downloadCsv(`categories_${accountingExportDateStamp()}.csv`, rows)
+  }
+
+  const handleSelectCategory = (id: string) => {
+    const next = new Set(selectedCategories)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedCategories(next)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedCategories.size === categories.length) {
+      setSelectedCategories(new Set())
+    } else {
+      setSelectedCategories(new Set(categories.map((cat) => cat.id)))
+    }
+  }
+
+  const handleBulkDelete = () => {
+    if (selectedCategories.size === 0) return
+    setIsBulkDeleteConfirmOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
+    try {
+      const res = await apiFetch('/categories/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedCategories) }),
+      })
+      if (res.ok) {
+        setSelectedCategories(new Set())
+        setIsBulkDeleteConfirmOpen(false)
+        fetchCategories()
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkStatus = (action: 'enable' | 'disable') => {
+    if (selectedCategories.size === 0) return
+    setBulkStatusAction(action)
+    setIsBulkStatusConfirmOpen(true)
+  }
+
+  const confirmBulkStatus = async () => {
+    try {
+      const res = await apiFetch('/categories/bulk/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: Array.from(selectedCategories),
+          is_active: bulkStatusAction === 'enable',
+        }),
+      })
+      if (res.ok) {
+        setSelectedCategories(new Set())
+        setIsBulkStatusConfirmOpen(false)
+        fetchCategories()
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   if (authLoading || loading) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -211,6 +308,9 @@ export default function CategoriesPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Categories</h1>
           <div className="flex gap-2">
+            <Button variant="outline" onClick={handleExport} disabled={categories.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
             <Button variant="outline" onClick={() => setShowDraftsModal(true)}>
               <FileText className="mr-2 h-4 w-4" /> Drafts
             </Button>
@@ -221,19 +321,47 @@ export default function CategoriesPage() {
         </div>
 
         <Card>
+          {selectedCategories.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+              <span className="text-sm text-gray-600">{selectedCategories.size} selected</span>
+              <Button variant="outline" size="sm" onClick={() => handleBulkStatus('enable')}>
+                <Power className="mr-2 h-4 w-4" /> Enable
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleBulkStatus('disable')}>
+                <Power className="mr-2 h-4 w-4" /> Disable
+              </Button>
+              <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+                <Trash2 className="mr-2 h-4 w-4" /> Delete
+              </Button>
+            </div>
+          )}
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={selectedCategories.size === categories.length && categories.length > 0}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Description</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Created</TableHead>
+                  <TableHead>Last Modified</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {categories.map((cat) => (
+                {paginatedItems.map((cat) => (
                   <TableRow key={cat.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedCategories.has(cat.id)}
+                        onCheckedChange={() => handleSelectCategory(cat.id)}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium">{cat.name}</TableCell>
                     <TableCell>{cat.description}</TableCell>
                     <TableCell>
@@ -241,21 +369,49 @@ export default function CategoriesPage() {
                         {cat.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </TableCell>
+                    <TableCell className="whitespace-nowrap text-gray-600">
+                      {cat.created_at ? formatDate(cat.created_at) : '—'}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-gray-600">
+                      {cat.updated_at ? formatDate(cat.updated_at) : '—'}
+                    </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleEdit(cat)}><Pencil className="h-4 w-4" /></Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleToggleActive(cat.id, cat.is_active)}>
-                        <Power className="h-4 w-4 mr-2" />
-                        {cat.is_active ? 'Disable' : 'Enable'}
-                      </Button>
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(cat.id)} className="text-red-600"><Trash2 className="h-4 w-4" /></Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(cat)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleToggleActive(cat.id, cat.is_active)}>
+                            <Power className="mr-2 h-4 w-4" />
+                            {cat.is_active ? 'Disable' : 'Enable'}
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDelete(cat.id)} className="text-red-600">
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
                 {categories.length === 0 && (
-                  <TableRow><TableCell colSpan={4} className="text-center py-8 text-gray-500">No categories found</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-500">No categories found</TableCell></TableRow>
                 )}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
 
@@ -340,6 +496,42 @@ export default function CategoriesPage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
               <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm Bulk Delete</DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Are you sure you want to delete {selectedCategories.size} categories? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmBulkDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkStatusConfirmOpen} onOpenChange={setIsBulkStatusConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {bulkStatusAction === 'enable' ? 'Enable Categories' : 'Disable Categories'}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              {bulkStatusAction === 'enable'
+                ? `Enable ${selectedCategories.size} selected categories and their products?`
+                : `Disable ${selectedCategories.size} selected categories and their products?`}
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkStatusConfirmOpen(false)}>Cancel</Button>
+              <Button onClick={confirmBulkStatus}>
+                {bulkStatusAction === 'enable' ? 'Enable' : 'Disable'}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

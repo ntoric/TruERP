@@ -6,6 +6,7 @@ import { useBankAccounts } from '@/hooks/useBankAccounts'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -21,7 +22,9 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import JSZip from 'jszip'
-import { Plus, Trash2, Info, BookOpen, CheckCircle, Eye, Download } from 'lucide-react'
+import { Plus, Trash2, Info, BookOpen, CheckCircle, Eye, Download, MoreVertical } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Account {
   id: string
@@ -169,6 +172,18 @@ export default function AccountingPage() {
   } | null>(null)
   const [reconciliations, setReconciliations] = useState<BankReconciliation[]>([])
 
+  const accountsPagination = usePagination(accounts)
+  const journalPagination = usePagination(journalEntries)
+  const ledgerPagination = usePagination(ledgerEntries)
+  const generalLedgerPagination = usePagination(generalLedger?.entries ?? [])
+  const trialBalancePagination = usePagination(trialBalance)
+  const plIncomePagination = usePagination(profitLoss?.income ?? [])
+  const plExpensesPagination = usePagination(profitLoss?.expenses ?? [])
+  const bsAssetsPagination = usePagination(balanceSheet?.assets ?? [])
+  const bsLiabilitiesPagination = usePagination(balanceSheet?.liabilities ?? [])
+  const bsEquityPagination = usePagination(balanceSheet?.equity ?? [])
+  const reconciliationsPagination = usePagination(reconciliations)
+
   const [loading, setLoading] = useState(true)
   const [accountDialogOpen, setAccountDialogOpen] = useState(false)
   const [journalDialogOpen, setJournalDialogOpen] = useState(false)
@@ -194,6 +209,9 @@ export default function AccountingPage() {
   const [glAccountId, setGlAccountId] = useState('')
   const [glFromDate, setGlFromDate] = useState('')
   const [glToDate, setGlToDate] = useState('')
+  const [selectedAccounts, setSelectedAccounts] = useState<Set<string>>(new Set())
+  const [selectedJournals, setSelectedJournals] = useState<Set<string>>(new Set())
+  const [selectedReconciliations, setSelectedReconciliations] = useState<Set<string>>(new Set())
 
   const journalLineTotals = useMemo(() => {
     let debit = 0
@@ -387,6 +405,153 @@ export default function AccountingPage() {
   const handleCompleteReconciliation = async (id: string) => {
     const res = await apiFetch(`/accounting/bank-reconciliation/${id}/complete`, { method: 'PUT' })
     if (res.ok) await refreshAll()
+  }
+
+  const toggleSelectAccount = (id: string) => {
+    setSelectedAccounts(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllAccounts = () => {
+    if (selectedAccounts.size === accounts.length) {
+      setSelectedAccounts(new Set())
+    } else {
+      setSelectedAccounts(new Set(accounts.map(a => a.id)))
+    }
+  }
+
+  const handleBulkDeleteAccounts = async () => {
+    const eligible = accounts.filter(a => selectedAccounts.has(a.id) && !a.is_default)
+    if (eligible.length === 0) return
+    if (!confirm(`Delete ${eligible.length} account(s)?`)) return
+    try {
+      await Promise.all(
+        eligible.map(a => apiFetch(`/accounting/accounts/${a.id}`, { method: 'DELETE' }))
+      )
+      setSelectedAccounts(new Set())
+      await refreshAll()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkExportAccounts = () => {
+    const selected = accounts.filter(a => selectedAccounts.has(a.id))
+    downloadCsv(`selected-accounts-${exportStamp}.csv`, [
+      ['Code', 'Name', 'Type', 'Balance'],
+      ...selected.map(a => [a.code, a.name, a.account_type, a.balance]),
+    ])
+    notifyExported('Selected accounts')
+  }
+
+  const toggleSelectJournal = (id: string) => {
+    setSelectedJournals(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllJournals = () => {
+    if (selectedJournals.size === journalEntries.length) {
+      setSelectedJournals(new Set())
+    } else {
+      setSelectedJournals(new Set(journalEntries.map(j => j.id)))
+    }
+  }
+
+  const handleBulkPostJournals = async () => {
+    const eligible = journalEntries.filter(j => selectedJournals.has(j.id) && j.status === 'draft')
+    if (eligible.length === 0) return
+    try {
+      await Promise.all(
+        eligible.map(j => apiFetch(`/accounting/journal/${j.id}/post`, { method: 'POST' }))
+      )
+      setSelectedJournals(new Set())
+      await refreshAll()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkDeleteJournals = async () => {
+    const eligible = journalEntries.filter(j => selectedJournals.has(j.id) && j.status === 'draft')
+    if (eligible.length === 0) return
+    if (!confirm(`Delete ${eligible.length} draft journal entr${eligible.length === 1 ? 'y' : 'ies'}?`)) return
+    try {
+      await Promise.all(
+        eligible.map(j => apiFetch(`/accounting/journal/${j.id}`, { method: 'DELETE' }))
+      )
+      setSelectedJournals(new Set())
+      await refreshAll()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkExportJournals = () => {
+    const selected = journalEntries.filter(j => selectedJournals.has(j.id))
+    const rows: (string | number)[][] = [
+      ['Entry Number', 'Entry Date', 'Description', 'Status', 'Debit', 'Credit'],
+    ]
+    for (const j of selected) {
+      rows.push([j.entry_number, j.entry_date, j.description, j.status, j.total_debit, j.total_credit])
+    }
+    downloadCsv(`selected-journal-entries-${exportStamp}.csv`, rows)
+    notifyExported('Selected journal entries')
+  }
+
+  const toggleSelectReconciliation = (id: string) => {
+    setSelectedReconciliations(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllReconciliations = () => {
+    if (selectedReconciliations.size === reconciliations.length) {
+      setSelectedReconciliations(new Set())
+    } else {
+      setSelectedReconciliations(new Set(reconciliations.map(r => r.id)))
+    }
+  }
+
+  const handleBulkCompleteReconciliations = async () => {
+    const eligible = reconciliations.filter(r => selectedReconciliations.has(r.id) && r.status === 'draft')
+    if (eligible.length === 0) return
+    try {
+      await Promise.all(
+        eligible.map(r => apiFetch(`/accounting/bank-reconciliation/${r.id}/complete`, { method: 'PUT' }))
+      )
+      setSelectedReconciliations(new Set())
+      await refreshAll()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkExportReconciliations = () => {
+    const selected = reconciliations.filter(r => selectedReconciliations.has(r.id))
+    downloadCsv(`selected-bank-reconciliation-${exportStamp}.csv`, [
+      ['Statement Date', 'Bank Account', 'Statement Balance', 'Book Balance', 'Difference', 'Status', 'Notes'],
+      ...selected.map(r => [
+        r.statement_date,
+        bankAccountName(r.bank_account_id),
+        r.statement_balance,
+        r.book_balance,
+        r.difference,
+        r.status,
+        r.notes,
+      ]),
+    ])
+    notifyExported('Selected reconciliations')
   }
 
   const getTypeColor = (type: string) => {
@@ -688,9 +853,28 @@ export default function AccountingPage() {
                 />
               </CardHeader>
               <CardContent className="p-0">
+                {selectedAccounts.size > 0 && (
+                  <div className="flex items-center gap-2 border-b bg-gray-50 px-4 py-2">
+                    <span className="text-sm text-gray-600">{selectedAccounts.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportAccounts}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteAccounts}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={accounts.length > 0 && selectedAccounts.size === accounts.length}
+                          onCheckedChange={toggleSelectAllAccounts}
+                        />
+                      </TableHead>
                       <TableHead>Code</TableHead>
                       <TableHead>Account Name</TableHead>
                       <TableHead>Type</TableHead>
@@ -699,8 +883,14 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {accounts.map((a) => (
+                    {accountsPagination.paginatedItems.map((a) => (
                       <TableRow key={a.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedAccounts.has(a.id)}
+                            onCheckedChange={() => toggleSelectAccount(a.id)}
+                          />
+                        </TableCell>
                         <TableCell className="font-mono text-sm">{a.code}</TableCell>
                         <TableCell className="font-medium">{a.name}</TableCell>
                         <TableCell>
@@ -708,26 +898,47 @@ export default function AccountingPage() {
                         </TableCell>
                         <TableCell className="text-right">{formatCurrency(a.balance)}</TableCell>
                         <TableCell className="text-right">
-                          <Button variant="ghost" size="sm" onClick={() => setGlAccountId(a.id)}>
-                            Ledger
-                          </Button>
-                          {!a.is_default && (
-                            <Button variant="ghost" size="sm" onClick={() => handleDeleteAccount(a.id)} className="text-red-600">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setGlAccountId(a.id)}>
+                                <BookOpen className="mr-2 h-4 w-4" />
+                                View Ledger
+                              </DropdownMenuItem>
+                              {!a.is_default && (
+                                <DropdownMenuItem
+                                  onClick={() => handleDeleteAccount(a.id)}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))}
                     {accounts.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={5} className="py-8 text-center text-gray-500">
+                        <TableCell colSpan={6} className="py-8 text-center text-gray-500">
                           No accounts
                         </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={accountsPagination.page}
+                  totalPages={accountsPagination.totalPages}
+                  totalItems={accountsPagination.totalItems}
+                  pageSize={accountsPagination.pageSize}
+                  onPageChange={accountsPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -748,9 +959,31 @@ export default function AccountingPage() {
                 />
               </CardHeader>
               <CardContent className="p-0">
+                {selectedJournals.size > 0 && (
+                  <div className="flex items-center gap-2 border-b bg-gray-50 px-4 py-2">
+                    <span className="text-sm text-gray-600">{selectedJournals.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportJournals}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleBulkPostJournals}>
+                        <CheckCircle className="mr-1 h-3.5 w-3.5" /> Post
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteJournals}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={journalEntries.length > 0 && selectedJournals.size === journalEntries.length}
+                          onCheckedChange={toggleSelectAllJournals}
+                        />
+                      </TableHead>
                       <TableHead>Entry #</TableHead>
                       <TableHead>Date</TableHead>
                       <TableHead>Description</TableHead>
@@ -761,8 +994,14 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {journalEntries.map((j) => (
+                    {journalPagination.paginatedItems.map((j) => (
                       <TableRow key={j.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedJournals.has(j.id)}
+                            onCheckedChange={() => toggleSelectJournal(j.id)}
+                          />
+                        </TableCell>
                         <TableCell className="font-mono text-sm">{j.entry_number}</TableCell>
                         <TableCell>{formatDate(j.entry_date)}</TableCell>
                         <TableCell>{j.description}</TableCell>
@@ -773,32 +1012,54 @@ export default function AccountingPage() {
                             {j.status}
                           </span>
                         </TableCell>
-                        <TableCell className="space-x-1 text-right">
-                          <Button variant="ghost" size="sm" onClick={() => openJournalDetail(j.id)}>
-                            <Eye className="h-4 w-4" />
-                          </Button>
-                          {j.status === 'draft' && (
-                            <>
-                              <Button variant="ghost" size="sm" onClick={() => handlePostJournal(j.id)}>
-                                Post
+                        <TableCell className="text-right">
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
                               </Button>
-                              <Button variant="ghost" size="sm" className="text-red-600" onClick={() => handleDeleteJournal(j.id)}>
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
-                            </>
-                          )}
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => openJournalDetail(j.id)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                View
+                              </DropdownMenuItem>
+                              {j.status === 'draft' && (
+                                <>
+                                  <DropdownMenuItem onClick={() => handlePostJournal(j.id)}>
+                                    <CheckCircle className="mr-2 h-4 w-4" />
+                                    Post
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={() => handleDeleteJournal(j.id)}
+                                    className="text-red-600"
+                                  >
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                  </DropdownMenuItem>
+                                </>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))}
                     {journalEntries.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                        <TableCell colSpan={8} className="py-8 text-center text-gray-500">
                           No journal entries yet
                         </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={journalPagination.page}
+                  totalPages={journalPagination.totalPages}
+                  totalItems={journalPagination.totalItems}
+                  pageSize={journalPagination.pageSize}
+                  onPageChange={journalPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -854,7 +1115,7 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {ledgerEntries.map((row) => (
+                    {ledgerPagination.paginatedItems.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{formatDate(row.transaction_date)}</TableCell>
                         <TableCell>{row.account?.name || '—'}</TableCell>
@@ -875,6 +1136,13 @@ export default function AccountingPage() {
                     )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={ledgerPagination.page}
+                  totalPages={ledgerPagination.totalPages}
+                  totalItems={ledgerPagination.totalItems}
+                  pageSize={ledgerPagination.pageSize}
+                  onPageChange={ledgerPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -943,7 +1211,7 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {generalLedger?.entries.map((row) => (
+                    {generalLedgerPagination.paginatedItems.map((row) => (
                       <TableRow key={row.id}>
                         <TableCell>{formatDate(row.transaction_date)}</TableCell>
                         <TableCell className="font-mono text-xs">{row.reference_number || '—'}</TableCell>
@@ -969,6 +1237,13 @@ export default function AccountingPage() {
                     )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={generalLedgerPagination.page}
+                  totalPages={generalLedgerPagination.totalPages}
+                  totalItems={generalLedgerPagination.totalItems}
+                  pageSize={generalLedgerPagination.pageSize}
+                  onPageChange={generalLedgerPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -1012,7 +1287,7 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {trialBalance.map((row) => (
+                    {trialBalancePagination.paginatedItems.map((row) => (
                       <TableRow key={row.account_id}>
                         <TableCell className="font-mono text-sm">{row.account_code}</TableCell>
                         <TableCell>{row.account_name}</TableCell>
@@ -1028,6 +1303,13 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={trialBalancePagination.page}
+                  totalPages={trialBalancePagination.totalPages}
+                  totalItems={trialBalancePagination.totalItems}
+                  pageSize={trialBalancePagination.pageSize}
+                  onPageChange={trialBalancePagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -1053,7 +1335,7 @@ export default function AccountingPage() {
                 <CardContent className="space-y-2 p-0">
                   <Table>
                     <TableBody>
-                      {(profitLoss?.income || []).map((row) => (
+                      {(plIncomePagination.paginatedItems).map((row) => (
                         <TableRow key={row.account_id}>
                           <TableCell>{row.account_name}</TableCell>
                           <TableCell className="text-right text-green-600">{formatCurrency(row.amount)}</TableCell>
@@ -1065,6 +1347,13 @@ export default function AccountingPage() {
                       </TableRow>
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={plIncomePagination.page}
+                    totalPages={plIncomePagination.totalPages}
+                    totalItems={plIncomePagination.totalItems}
+                    pageSize={plIncomePagination.pageSize}
+                    onPageChange={plIncomePagination.setPage}
+                  />
                 </CardContent>
               </Card>
               <Card>
@@ -1074,7 +1363,7 @@ export default function AccountingPage() {
                 <CardContent className="p-0">
                   <Table>
                     <TableBody>
-                      {(profitLoss?.expenses || []).map((row) => (
+                      {(plExpensesPagination.paginatedItems).map((row) => (
                         <TableRow key={row.account_id}>
                           <TableCell>{row.account_name}</TableCell>
                           <TableCell className="text-right text-orange-600">{formatCurrency(row.amount)}</TableCell>
@@ -1086,6 +1375,13 @@ export default function AccountingPage() {
                       </TableRow>
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={plExpensesPagination.page}
+                    totalPages={plExpensesPagination.totalPages}
+                    totalItems={plExpensesPagination.totalItems}
+                    pageSize={plExpensesPagination.pageSize}
+                    onPageChange={plExpensesPagination.setPage}
+                  />
                 </CardContent>
               </Card>
             </div>
@@ -1120,7 +1416,7 @@ export default function AccountingPage() {
                 <CardContent className="p-0">
                   <Table>
                     <TableBody>
-                      {(balanceSheet?.assets || []).map((row, i) => (
+                      {(bsAssetsPagination.paginatedItems).map((row, i) => (
                         <TableRow key={i}>
                           <TableCell>{row.account_name}</TableCell>
                           <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
@@ -1132,6 +1428,13 @@ export default function AccountingPage() {
                       </TableRow>
                     </TableBody>
                   </Table>
+                  <PaginationControls
+                    page={bsAssetsPagination.page}
+                    totalPages={bsAssetsPagination.totalPages}
+                    totalItems={bsAssetsPagination.totalItems}
+                    pageSize={bsAssetsPagination.pageSize}
+                    onPageChange={bsAssetsPagination.setPage}
+                  />
                 </CardContent>
               </Card>
               <div className="space-y-6">
@@ -1142,7 +1445,7 @@ export default function AccountingPage() {
                   <CardContent className="p-0">
                     <Table>
                       <TableBody>
-                        {(balanceSheet?.liabilities || []).map((row, i) => (
+                        {(bsLiabilitiesPagination.paginatedItems).map((row, i) => (
                           <TableRow key={i}>
                             <TableCell>{row.account_name}</TableCell>
                             <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
@@ -1154,6 +1457,13 @@ export default function AccountingPage() {
                         </TableRow>
                       </TableBody>
                     </Table>
+                    <PaginationControls
+                      page={bsLiabilitiesPagination.page}
+                      totalPages={bsLiabilitiesPagination.totalPages}
+                      totalItems={bsLiabilitiesPagination.totalItems}
+                      pageSize={bsLiabilitiesPagination.pageSize}
+                      onPageChange={bsLiabilitiesPagination.setPage}
+                    />
                   </CardContent>
                 </Card>
                 <Card>
@@ -1163,7 +1473,7 @@ export default function AccountingPage() {
                   <CardContent className="p-0">
                     <Table>
                       <TableBody>
-                        {(balanceSheet?.equity || []).map((row, i) => (
+                        {(bsEquityPagination.paginatedItems).map((row, i) => (
                           <TableRow key={i}>
                             <TableCell>{row.account_name}</TableCell>
                             <TableCell className="text-right">{formatCurrency(row.amount)}</TableCell>
@@ -1175,6 +1485,13 @@ export default function AccountingPage() {
                         </TableRow>
                       </TableBody>
                     </Table>
+                    <PaginationControls
+                      page={bsEquityPagination.page}
+                      totalPages={bsEquityPagination.totalPages}
+                      totalItems={bsEquityPagination.totalItems}
+                      pageSize={bsEquityPagination.pageSize}
+                      onPageChange={bsEquityPagination.setPage}
+                    />
                   </CardContent>
                 </Card>
               </div>
@@ -1207,9 +1524,28 @@ export default function AccountingPage() {
             </div>
             <Card>
               <CardContent className="p-0">
+                {selectedReconciliations.size > 0 && (
+                  <div className="flex items-center gap-2 border-b bg-gray-50 px-4 py-2">
+                    <span className="text-sm text-gray-600">{selectedReconciliations.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportReconciliations}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleBulkCompleteReconciliations}>
+                        <CheckCircle className="mr-1 h-3.5 w-3.5" /> Mark Reconciled
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <Table>
                   <TableHeader>
                     <TableRow>
+                      <TableHead className="w-10">
+                        <Checkbox
+                          checked={reconciliations.length > 0 && selectedReconciliations.size === reconciliations.length}
+                          onCheckedChange={toggleSelectAllReconciliations}
+                        />
+                      </TableHead>
                       <TableHead>Statement date</TableHead>
                       <TableHead>Bank account</TableHead>
                       <TableHead className="text-right">Statement balance</TableHead>
@@ -1220,8 +1556,14 @@ export default function AccountingPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {reconciliations.map((r) => (
+                    {reconciliationsPagination.paginatedItems.map((r) => (
                       <TableRow key={r.id}>
+                        <TableCell>
+                          <Checkbox
+                            checked={selectedReconciliations.has(r.id)}
+                            onCheckedChange={() => toggleSelectReconciliation(r.id)}
+                          />
+                        </TableCell>
                         <TableCell>{formatDate(r.statement_date)}</TableCell>
                         <TableCell>{bankAccountName(r.bank_account_id)}</TableCell>
                         <TableCell className="text-right">{formatCurrency(r.statement_balance)}</TableCell>
@@ -1235,23 +1577,40 @@ export default function AccountingPage() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right">
-                          {r.status === 'draft' && (
-                            <Button variant="ghost" size="sm" onClick={() => handleCompleteReconciliation(r.id)}>
-                              <CheckCircle className="mr-1 h-4 w-4" /> Mark reconciled
-                            </Button>
-                          )}
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              {r.status === 'draft' && (
+                                <DropdownMenuItem onClick={() => handleCompleteReconciliation(r.id)}>
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Mark Reconciled
+                                </DropdownMenuItem>
+                              )}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </TableCell>
                       </TableRow>
                     ))}
                     {reconciliations.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={7} className="py-8 text-center text-gray-500">
+                        <TableCell colSpan={8} className="py-8 text-center text-gray-500">
                           No bank reconciliations yet
                         </TableCell>
                       </TableRow>
                     )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={reconciliationsPagination.page}
+                  totalPages={reconciliationsPagination.totalPages}
+                  totalItems={reconciliationsPagination.totalItems}
+                  pageSize={reconciliationsPagination.pageSize}
+                  onPageChange={reconciliationsPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>

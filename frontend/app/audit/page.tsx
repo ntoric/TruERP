@@ -9,6 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge'
 import { Search, Filter, Download, Trash2, Settings, Archive, BarChart3, Activity, Users, Clock } from 'lucide-react'
 import { notifySuccess } from '@/lib/notify'
+import { DEFAULT_PAGE_SIZE } from '@/hooks/usePagination'
 
 interface AuditLog {
   id: string
@@ -72,7 +73,7 @@ export default function AuditDashboard() {
       const token = localStorage.getItem('token')
       const params = new URLSearchParams({
         page: page.toString(),
-        per_page: '50',
+        per_page: DEFAULT_PAGE_SIZE.toString(),
       })
       
       if (search) params.append('search', search)
@@ -430,7 +431,7 @@ export default function AuditDashboard() {
           {/* Pagination */}
           <div className="flex items-center justify-between mt-4">
             <div className="text-sm text-muted-foreground">
-              Page {page} of {Math.ceil(total / 50)}
+              Page {page} of {Math.ceil(total / DEFAULT_PAGE_SIZE)}
             </div>
             <div className="flex gap-2">
               <Button
@@ -445,7 +446,7 @@ export default function AuditDashboard() {
                 variant="outline"
                 size="sm"
                 onClick={() => setPage(p => p + 1)}
-                disabled={page >= Math.ceil(total / 50)}
+                disabled={page >= Math.ceil(total / DEFAULT_PAGE_SIZE)}
               >
                 Next
               </Button>

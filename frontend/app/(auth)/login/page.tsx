@@ -11,13 +11,17 @@ import { IndianRupee, Loader2 } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
 import { cn } from '@/lib/utils'
+import {
+  firstValidationMessage,
+  validateLoginForm,
+} from '@/lib/authValidation'
 
 export default function LoginPage() {
   const { login } = useAuth()
   const {
     fieldErrors,
+    setFieldErrors,
     clearFieldError,
-    setError: setFieldError,
     showErrorToast,
   } = useFormErrors()
   const [email, setEmail] = useState('')
@@ -30,22 +34,15 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    let valid = true
-    if (!email.trim()) {
-      setFieldError('email', 'Email is required')
-      valid = false
-    }
-    if (!password) {
-      setFieldError('password', 'Password is required')
-      valid = false
-    }
-    if (!valid) {
-      showErrorToast('Please fill in all required fields')
+    const errors = validateLoginForm({ email, password, totpCode, needs2fa })
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      showErrorToast(firstValidationMessage(errors) || 'Please fix the highlighted fields')
       return
     }
     setLoading(true)
     try {
-      await login(email, password, needs2fa ? totpCode : undefined)
+      await login(email.trim(), password, needs2fa ? totpCode.trim() : undefined)
       const params = new URLSearchParams(window.location.search)
       const next = params.get('next')
       const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard'
@@ -73,7 +70,7 @@ export default function LoginPage() {
             </div>
           </div>
           <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
-          <CardDescription>Login to your BillBook account</CardDescription>
+          <CardDescription>Login to your TruERP account</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
@@ -99,7 +96,12 @@ export default function LoginPage() {
               <FieldError message={fieldErrors.email} />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="password">Password</Label>
+                <Link href="/forgot-password" className="text-sm text-blue-600 hover:underline">
+                  Forgot password?
+                </Link>
+              </div>
               <Input
                 id="password"
                 type="password"
@@ -122,9 +124,15 @@ export default function LoginPage() {
                   inputMode="numeric"
                   placeholder="123456"
                   value={totpCode}
-                  onChange={(e) => setTotpCode(e.target.value)}
+                  onChange={(e) => {
+                    clearFieldError('totpCode')
+                    setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                  }}
+                  className={cn(fieldErrors.totpCode && 'border-red-500')}
+                  maxLength={6}
                   required
                 />
+                <FieldError message={fieldErrors.totpCode} />
               </div>
             )}
           </CardContent>

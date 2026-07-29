@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { cn, formatCurrency } from '@/lib/utils'
+import { exclusiveUnitPrice, limitDecimalInput, parseItemNumber, parseMoney } from '@/lib/numbers'
 import { Plus, Trash2, Loader2, Save, Search, Barcode, X, Edit2, Package, FileText, Gift, Scale } from 'lucide-react'
 import BarcodeScanner from '@/components/ui/BarcodeScanner'
 import { notifyError, notifySuccess } from '@/lib/notify'
@@ -69,6 +70,17 @@ interface InvoiceItem {
   total: number
   sale_price_with_tax: boolean
 }
+
+const ITEM_NUMBER_FIELDS: (keyof InvoiceItem)[] = [
+  'quantity',
+  'unit_price',
+  'discount',
+  'tax_rate',
+  'cgst',
+  'sgst',
+  'igst',
+  'total',
+]
 
 export default function CreateInvoicePage() {
   const router = useRouter()
@@ -278,40 +290,48 @@ export default function CreateInvoicePage() {
       }
     }
 
-    const basePrice = product.sale_price_with_tax
-      ? product.sale_price / (1 + product.tax_rate / 100)
-      : product.sale_price
     const newItem: InvoiceItem = {
       product_id: product.id,
       description: product.name,
       hsn_code: product.hsn_code || '',
-      quantity,
-      unit_price: basePrice,
+      quantity: parseItemNumber(quantity, 1),
+      unit_price: exclusiveUnitPrice(
+        product.sale_price,
+        product.tax_rate,
+        product.sale_price_with_tax
+      ),
       discount: 0,
-      tax_rate: product.tax_rate,
+      tax_rate: parseItemNumber(product.tax_rate, 18),
       unit: product.unit,
       cgst: 0,
       sgst: 0,
       igst: 0,
       total: 0,
-      sale_price_with_tax: product.sale_price_with_tax ?? true
+      sale_price_with_tax: product.sale_price_with_tax ?? false,
     }
     setItems((prev) => {
       const next = [...prev, newItem]
       const index = next.length - 1
-      const qty = Number(next[index].quantity) || 0
-      const price = Number(next[index].unit_price) || 0
-      const disc = Number(next[index].discount) || 0
-      const tax = Number(next[index].tax_rate) || 0
+      const qty = parseItemNumber(next[index].quantity)
+      const price = parseMoney(next[index].unit_price)
+      const disc = parseItemNumber(next[index].discount)
+      const tax = parseItemNumber(next[index].tax_rate)
       const itemTotal = qty * price
       const itemDiscount = itemTotal * (disc / 100)
       const taxable = itemTotal - itemDiscount
       const itemTax = taxable * (tax / 100)
+      next[index].quantity = qty
+      next[index].unit_price = price
+      next[index].discount = disc
+      next[index].tax_rate = tax
       if (isInterState) {
         next[index].igst = itemTax
+        next[index].cgst = 0
+        next[index].sgst = 0
       } else {
         next[index].cgst = itemTax / 2
         next[index].sgst = itemTax / 2
+        next[index].igst = 0
       }
       next[index].total = taxable + next[index].cgst + next[index].sgst + next[index].igst
       return next
@@ -452,33 +472,49 @@ export default function CreateInvoicePage() {
     setSignature('')
   }
 
-  const updateItem = (index: number, field: keyof InvoiceItem, value: any) => {
+  const updateItem = (index: number, field: keyof InvoiceItem, value: unknown) => {
     if (field === 'description') clearFieldError('items')
     const newItems = [...items]
-    newItems[index] = { ...newItems[index], [field]: value }
+    if (field === 'unit_price') {
+      // Keep at most 2 decimal places for unit price
+      const limited = limitDecimalInput(String(value ?? ''), 2)
+      newItems[index] = { ...newItems[index], unit_price: parseMoney(limited) }
+    } else if (ITEM_NUMBER_FIELDS.includes(field)) {
+      newItems[index] = { ...newItems[index], [field]: parseItemNumber(value) }
+    } else {
+      newItems[index] = { ...newItems[index], [field]: value as InvoiceItem[typeof field] }
+    }
 
     if (field === 'product_id') {
       const product = products.find(p => p.id === value)
       if (product) {
         newItems[index].description = product.name
-        newItems[index].unit_price = product.sale_price_with_tax
-          ? product.sale_price / (1 + product.tax_rate / 100)
-          : product.sale_price
-        newItems[index].tax_rate = product.tax_rate
+        newItems[index].unit_price = exclusiveUnitPrice(
+          product.sale_price,
+          product.tax_rate,
+          product.sale_price_with_tax
+        )
+        newItems[index].tax_rate = parseItemNumber(product.tax_rate, 18)
         newItems[index].unit = product.unit
+        newItems[index].sale_price_with_tax = product.sale_price_with_tax ?? false
       }
     }
 
     // Recalculate totals - always tax on top of unit_price
-    const qty = Number(newItems[index].quantity) || 0
-    const price = Number(newItems[index].unit_price) || 0
-    const disc = Number(newItems[index].discount) || 0
-    const tax = Number(newItems[index].tax_rate) || 0
+    const qty = parseItemNumber(newItems[index].quantity)
+    const price = parseMoney(newItems[index].unit_price)
+    const disc = parseItemNumber(newItems[index].discount)
+    const tax = parseItemNumber(newItems[index].tax_rate)
 
     const itemTotal = qty * price
     const itemDiscount = itemTotal * (disc / 100)
     const taxable = itemTotal - itemDiscount
     const itemTax = taxable * (tax / 100)
+
+    newItems[index].quantity = qty
+    newItems[index].unit_price = price
+    newItems[index].discount = disc
+    newItems[index].tax_rate = tax
 
     if (isInterState) {
       newItems[index].igst = itemTax
@@ -664,18 +700,19 @@ export default function CreateInvoicePage() {
         method,
         body: JSON.stringify({
           invoice_number: invoiceNumber,
+          party_id: partyId,
           customer_id: partyId,
           date: new Date(date).toISOString(),
           due_date: dueDate ? new Date(dueDate).toISOString() : null,
-          payment_terms: paymentTerms,
+          payment_terms: Number(paymentTerms) || 0,
           status: amountPaid >= totalAmount ? 'paid' : 'sent',
           is_inter_state: isInterState,
           payment_mode: paymentMode,
-          amount_paid: Math.min(amountPaid, totalAmount),
+          amount_paid: parseMoney(Math.min(amountPaid, totalAmount)),
           notes,
           terms,
-          invoice_discount: invoiceDiscount,
-          additional_charges: additionalCharges,
+          invoice_discount: parseMoney(invoiceDiscount),
+          additional_charges: parseMoney(additionalCharges),
           ...( !editId && loyaltyPointsToRedeem > 0
             ? { loyalty_points_redeemed: loyaltyPointsToRedeem }
             : {}),
@@ -683,10 +720,10 @@ export default function CreateInvoicePage() {
             product_id: item.product_id || undefined,
             description: item.description,
             hsn_code: item.hsn_code,
-            quantity: item.quantity,
-            unit_price: item.unit_price,
-            discount: item.discount,
-            tax_rate: item.tax_rate,
+            quantity: Number(parseItemNumber(item.quantity, 1)),
+            unit_price: parseMoney(item.unit_price),
+            discount: parseItemNumber(item.discount),
+            tax_rate: parseItemNumber(item.tax_rate),
             unit: item.unit,
           })),
           custom_fields: customFieldValues,
@@ -989,8 +1026,10 @@ export default function CreateInvoicePage() {
                             type="number"
                             min="0"
                             step="0.01"
+                            inputMode="decimal"
                             value={item.unit_price}
-                            onChange={(e) => updateItem(index, 'unit_price', e.target.value)}
+                            onChange={(e) => updateItem(index, 'unit_price', limitDecimalInput(e.target.value, 2))}
+                            onBlur={() => updateItem(index, 'unit_price', parseMoney(item.unit_price))}
                             className="h-8 w-24 text-right"
                             required
                           />

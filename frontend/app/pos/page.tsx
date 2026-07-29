@@ -21,6 +21,7 @@ import WeighingScalePanel from '@/components/WeighingScalePanel'
 import { isWeightBasedUnit } from '@/lib/weighingScale'
 import { resolveScaleBarcodeForPos } from '@/lib/weighingScaleBarcode'
 import BarcodeScanner from '@/components/ui/BarcodeScanner'
+import { fetchPrintSettings, printDocument } from '@/lib/printDocument'
 
 interface Product {
   id: string
@@ -651,8 +652,26 @@ export default function POSPage() {
       })
 
       if (res.ok) {
+        const created = await res.json().catch(() => null)
         await completeSaleLocally()
         notifySuccess('Sale completed successfully')
+        const invoiceId = created?.id as string | undefined
+        if (invoiceId) {
+          try {
+            const printSettings = await fetchPrintSettings()
+            if (printSettings.auto_print_on_pos) {
+              await printDocument({
+                documentType: 'invoice',
+                documentId: invoiceId,
+                mode: printSettings.invoice_print_mode,
+                printSize: printSettings.thermal_print_size,
+              })
+            }
+          } catch (printErr) {
+            console.warn('POS auto-print failed:', printErr)
+            notifyError('Sale saved, but printing failed. Check Print Settings.')
+          }
+        }
         return
       }
 

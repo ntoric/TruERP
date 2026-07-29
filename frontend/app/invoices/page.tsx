@@ -1,14 +1,26 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, Search, FileText, ArrowUpRight, Download, MoreVertical, Edit, X, Trash2, Eye, Printer } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { notifyError, notifySuccess } from '@/lib/notify'
+import { Plus, Search, FileText, Download, MoreVertical, Edit, X, Trash2, Eye, Printer, Upload } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Invoice {
   id: string
@@ -28,6 +40,30 @@ interface InvoiceStats {
   cancelled: number
 }
 
+const INVOICE_IMPORT_HEADERS = [
+  'Invoice Number',
+  'Date',
+  'Party Name',
+  'Due Date',
+  'Status',
+  'Payment Mode',
+  'Amount Paid',
+  'Is Inter State',
+  'Notes',
+  'Item Description',
+  'Quantity',
+  'Unit',
+  'Unit Price',
+  'Discount %',
+  'Tax Rate %',
+]
+
+const INVOICE_IMPORT_SAMPLE_ROWS: (string | number)[][] = [
+  ['INV-001', '2026-06-07', 'Acme Corp', '2026-07-07', 'sent', 'cash', 0, 'false', '', 'Widget A', 2, 'pcs', 500, 0, 18],
+  ['INV-001', '2026-06-07', 'Acme Corp', '2026-07-07', 'sent', 'cash', 0, 'false', '', 'Widget B', 1, 'pcs', 300, 5, 18],
+  ['', '2026-06-08', 'Test Customer', '', 'draft', '', 0, 'false', '', 'Consulting Service', 1, 'hrs', 5000, 0, 18],
+]
+
 export default function InvoicesPage() {
   const [invoices, setInvoices] = useState<Invoice[]>([])
   const [stats, setStats] = useState<InvoiceStats>({ total_sales: 0, paid: 0, unpaid: 0, cancelled: 0 })
@@ -36,10 +72,16 @@ export default function InvoicesPage() {
   const [filter, setFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [actionMenu, setActionMenu] = useState<string | null>(null)
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [previewData, setPreviewData] = useState<any>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importedCount, setImportedCount] = useState<number | null>(null)
+  const [importErrors, setImportErrors] = useState<string[]>([])
+  const importFileRef = useRef<HTMLInputElement>(null)
+  const [selectedInvoices, setSelectedInvoices] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchInvoices()
@@ -92,6 +134,13 @@ export default function InvoicesPage() {
     partyLabel(inv).toLowerCase().includes(search.toLowerCase())
   )
 
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredInvoices)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedInvoices(new Set())
+  }, [search, filter, dateFrom, dateTo])
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
       paid: 'bg-green-100 text-green-700',
@@ -133,6 +182,70 @@ export default function InvoicesPage() {
     a.click()
   }
 
+  const handleDownloadImportTemplate = () => {
+    downloadCsv(`sales_invoices_import_template_${accountingExportDateStamp()}.csv`, [
+      INVOICE_IMPORT_HEADERS,
+      ...INVOICE_IMPORT_SAMPLE_ROWS,
+    ])
+  }
+
+  const resetImportDialog = () => {
+    setImportFile(null)
+    setImportedCount(null)
+    setImportErrors([])
+    if (importFileRef.current) importFileRef.current.value = ''
+  }
+
+  const handleImportDialogChange = (open: boolean) => {
+    setShowImportDialog(open)
+    if (!open) resetImportDialog()
+  }
+
+  const handleImportInvoices = async () => {
+    if (!importFile) {
+      notifyError('Please select a CSV file to import')
+      return
+    }
+
+    setImporting(true)
+    setImportedCount(null)
+    setImportErrors([])
+
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+
+      const res = await apiFetch('/invoices/import/csv', { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (res.ok) {
+        const count = data.imported ?? 0
+        const errors: string[] = data.errors ?? []
+        setImportedCount(count)
+        setImportErrors(errors)
+
+        if (count > 0) {
+          fetchInvoices()
+          fetchStats()
+          notifySuccess(`Successfully imported ${count} invoice${count === 1 ? '' : 's'}`)
+        }
+
+        if (count === 0 && errors.length > 0) {
+          notifyError('No invoices were imported. Please review the errors below.')
+        } else if (errors.length > 0) {
+          notifyError(`${errors.length} invoice${errors.length === 1 ? '' : 's'} could not be imported`)
+        }
+      } else {
+        notifyError(data.error || 'Import failed')
+      }
+    } catch (err) {
+      console.error(err)
+      notifyError('Import failed')
+    } finally {
+      setImporting(false)
+    }
+  }
+
   const handleCancelInvoice = async (id: string) => {
     try {
       const res = await apiFetch(`/invoices/${id}/status`, {
@@ -147,7 +260,6 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   const handleDeleteInvoice = async (id: string) => {
@@ -161,7 +273,6 @@ export default function InvoicesPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   const fetchPreview = async (id: string) => {
@@ -183,6 +294,81 @@ export default function InvoicesPage() {
     setPreviewData(null)
   }
 
+  const toggleSelectInvoice = (id: string) => {
+    setSelectedInvoices(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllInvoices = () => {
+    if (selectedInvoices.size === filteredInvoices.length) {
+      setSelectedInvoices(new Set())
+    } else {
+      setSelectedInvoices(new Set(filteredInvoices.map(inv => inv.id)))
+    }
+  }
+
+  const handleBulkExportInvoices = () => {
+    const selected = filteredInvoices.filter(inv => selectedInvoices.has(inv.id))
+    const headers = ['Date', 'Invoice #', 'Party Name', 'Due In', 'Amount', 'Status']
+    const rows = selected.map(inv => [
+      formatDate(inv.date),
+      inv.invoice_number,
+      partyLabel(inv),
+      getDueIn(inv.due_date),
+      formatCurrency(inv.total_amount),
+      inv.status
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'selected-invoices.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleBulkCancelInvoices = async () => {
+    const eligible = filteredInvoices.filter(
+      inv => selectedInvoices.has(inv.id) && inv.status !== 'cancelled' && inv.status !== 'paid'
+    )
+    if (eligible.length === 0) return
+    try {
+      await Promise.all(
+        eligible.map(inv =>
+          apiFetch(`/invoices/${inv.id}/status`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'cancelled', note: 'Bulk cancelled from invoice list' })
+          })
+        )
+      )
+      setSelectedInvoices(new Set())
+      fetchInvoices()
+      fetchStats()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkDeleteInvoices = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedInvoices.size} invoice(s)?`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedInvoices).map(id => apiFetch(`/invoices/${id}`, { method: 'DELETE' }))
+      )
+      setSelectedInvoices(new Set())
+      fetchInvoices()
+      fetchStats()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -192,6 +378,9 @@ export default function InvoicesPage() {
             <Link href="/invoices/templates">
               <Button variant="outline"><FileText className="mr-2 h-4 w-4" /> Templates</Button>
             </Link>
+            <Button variant="outline" onClick={() => setShowImportDialog(true)}>
+              <Upload className="mr-2 h-4 w-4" /> Bulk Import
+            </Button>
             <Button variant="outline" onClick={handleExport}>
               <Download className="mr-2 h-4 w-4" /> Export
             </Button>
@@ -283,9 +472,33 @@ export default function InvoicesPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {selectedInvoices.size > 0 && (
+                  <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
+                    <span className="text-sm text-gray-600">{selectedInvoices.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportInvoices}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleBulkCancelInvoices}>
+                        Cancel
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteInvoices}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-gray-500">
+                      <th className="pb-3 pr-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={filteredInvoices.length > 0 && selectedInvoices.size === filteredInvoices.length}
+                          onChange={toggleSelectAllInvoices}
+                        />
+                      </th>
                       <th className="pb-3 font-medium">Date</th>
                       <th className="pb-3 font-medium">Invoice #</th>
                       <th className="pb-3 font-medium">Party Name</th>
@@ -296,8 +509,16 @@ export default function InvoicesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredInvoices.map((inv) => (
+                    {paginatedItems.map((inv) => (
                       <tr key={inv.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={selectedInvoices.has(inv.id)}
+                            onChange={() => toggleSelectInvoice(inv.id)}
+                          />
+                        </td>
                         <td className="py-3 text-gray-500">{formatDate(inv.date)}</td>
                         <td className="py-3">
                           <button
@@ -312,53 +533,44 @@ export default function InvoicesPage() {
                         <td className="py-3 font-medium text-gray-900">{formatCurrency(inv.total_amount)}</td>
                         <td className="py-3">{getStatusBadge(inv.status)}</td>
                         <td className="py-3">
-                          <div className="relative">
-                            <button
-                              onClick={() => setActionMenu(actionMenu === inv.id ? null : inv.id)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <MoreVertical className="h-4 w-4 text-gray-500" />
-                            </button>
-                            {actionMenu === inv.id && (
-                              <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-md border bg-white shadow-lg">
-                                <div className="py-1">
-                                  <button
-                                    onClick={() => { setPreviewId(inv.id); setActionMenu(null) }}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                  >
-                                    <Eye className="h-4 w-4" /> Preview
-                                  </button>
-                                  <Link
-                                    href={`/invoices/create?id=${inv.id}`}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    onClick={() => setActionMenu(null)}
-                                  >
-                                    <Edit className="h-4 w-4" /> Edit
-                                  </Link>
-                                  {inv.status !== 'cancelled' && inv.status !== 'paid' && (
-                                    <button
-                                      onClick={() => handleCancelInvoice(inv.id)}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      <X className="h-4 w-4" /> Cancel
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteInvoice(inv.id)}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-gray-100"
-                                  >
-                                    <Trash2 className="h-4 w-4" /> Delete
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onClick={() => setPreviewId(inv.id)}>
+                                <Eye className="mr-2 h-4 w-4" />
+                                Preview
+                              </DropdownMenuItem>
+                              <DropdownMenuItem asChild>
+                                <Link href={`/invoices/create?id=${inv.id}`} className="flex items-center">
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                              {inv.status !== 'cancelled' && inv.status !== 'paid' && (
+                                <DropdownMenuItem onClick={() => handleCancelInvoice(inv.id)}>
+                                  <X className="mr-2 h-4 w-4" />
+                                  Cancel
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteInvoice(inv.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
                     {filteredInvoices.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-gray-500">
+                        <td colSpan={8} className="py-8 text-center text-gray-500">
                           No invoices found
                         </td>
                       </tr>
@@ -366,6 +578,15 @@ export default function InvoicesPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>
@@ -555,6 +776,54 @@ export default function InvoicesPage() {
             </div>
           </div>
         )}
+
+      <Dialog open={showImportDialog} onOpenChange={handleImportDialogChange}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Bulk Import Sales Invoices</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Upload a CSV file to import sales invoices. Use the same invoice number on multiple rows to add multiple line items to one invoice. Party names must already exist in your contacts.
+            </p>
+            <Button variant="outline" onClick={handleDownloadImportTemplate} className="gap-2 w-full sm:w-auto">
+              <Download className="h-4 w-4" />
+              Download Import Template
+            </Button>
+            <div className="space-y-2">
+              <Label htmlFor="invoice_import_file">Import file</Label>
+              <Input
+                id="invoice_import_file"
+                ref={importFileRef}
+                type="file"
+                accept=".csv"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500">Selected: {importFile.name}</p>
+              )}
+            </div>
+            {importedCount !== null && (
+              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+                Imported {importedCount} invoice{importedCount === 1 ? '' : 's'} successfully.
+              </div>
+            )}
+            {importErrors.length > 0 && (
+              <div className="max-h-40 space-y-1 overflow-y-auto rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                {importErrors.map((error, index) => (
+                  <p key={`${error}-${index}`}>{error}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleImportDialogChange(false)}>Cancel</Button>
+            <Button onClick={handleImportInvoices} disabled={importing || !importFile}>
+              {importing ? 'Importing...' : 'Import Invoices'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
     </DashboardLayout>
   )

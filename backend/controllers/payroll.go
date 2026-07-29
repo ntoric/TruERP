@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"fmt"
 	"net/http"
 	"time"
@@ -251,6 +251,57 @@ func DeletePayroll(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Payroll deleted successfully"})
+}
+
+func BulkDeletePayrolls(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs []uuid.UUID `json:"ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := utils.DB.Where("user_id = ? AND id IN ?", userID, input.IDs).Delete(&models.Payroll{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete payrolls"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Payrolls deleted successfully",
+		"deleted": result.RowsAffected,
+	})
+}
+
+func BulkUpdatePayrollStatus(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs    []uuid.UUID `json:"ids" binding:"required"`
+		Status string      `json:"status" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := utils.DB.Model(&models.Payroll{}).
+		Where("user_id = ? AND id IN ?", userID, input.IDs).
+		Update("status", input.Status)
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update payroll status"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Payroll status updated successfully",
+		"updated": result.RowsAffected,
+	})
 }
 
 func GetPayrollStats(c *gin.Context) {

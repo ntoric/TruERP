@@ -1,6 +1,7 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,10 +10,22 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
+import { SearchableSelect } from '@/components/ui/searchable-select'
 import BarcodeScanner from '@/components/ui/BarcodeScanner'
-import { Warehouse, ArrowDownLeft, ArrowUpRight, RotateCcw, Plus, Search, Truck, AlertTriangle, Barcode } from 'lucide-react'
+import { Warehouse, ArrowDownLeft, ArrowUpRight, RotateCcw, Plus, Search, Truck, AlertTriangle, Barcode, Upload, Download, CalendarRange } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { notifyError, notifySuccess } from '@/lib/notify'
+import {
+  DATE_PERIOD_OPTIONS,
+  DatePeriod,
+  formatDateRangeLabel,
+  getDateRangeForPeriod,
+  isDateWithinRange,
+} from '@/lib/dateFilter'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface StockBalance {
   product_id: string
@@ -76,7 +89,32 @@ interface LowStockAlert {
   outlet_name: string
 }
 
+const STOCK_BULK_UPDATE_HEADERS = [
+  'SKU',
+  'Product Name',
+  'Item Code',
+  'Warehouse',
+  'Update Mode',
+  'Quantity',
+  'Cost Price',
+  'Batch No',
+  'Notes',
+]
+
+const STOCK_BULK_UPDATE_SAMPLE_ROW: (string | number)[] = [
+  'SKU001',
+  'Sample Product',
+  'ITEM001',
+  'Main Warehouse',
+  'set',
+  100,
+  50,
+  'BATCH001',
+  'Bulk stock update',
+]
+
 export default function InventoryPage() {
+  const router = useRouter()
   const { user, loading: authLoading } = useAuth()
   const [balance, setBalance] = useState<StockBalance[]>([])
   const [entries, setEntries] = useState<StockEntry[]>([])
@@ -106,6 +144,7 @@ export default function InventoryPage() {
     reason: ''
   })
   const [newEntry, setNewEntry] = useState({
+    selected_item_id: '',
     item_name: '',
     product_id: '',
     outlet_id: '',
@@ -119,16 +158,59 @@ export default function InventoryPage() {
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
   const [isEditingBarcode, setIsEditingBarcode] = useState(false)
   const [adjustStock, setAdjustStock] = useState({
+    selected_item_id: '',
     item_name: '',
     product_id: '',
     outlet_id: '',
     quantity: 0,
     reason: ''
   })
+  const [showBulkStockUpdateDialog, setShowBulkStockUpdateDialog] = useState(false)
+  const [bulkStockUpdateFile, setBulkStockUpdateFile] = useState<File | null>(null)
+  const [bulkStockUpdating, setBulkStockUpdating] = useState(false)
+  const [bulkStockUpdatedCount, setBulkStockUpdatedCount] = useState<number | null>(null)
+  const [bulkStockUpdateErrors, setBulkStockUpdateErrors] = useState<string[]>([])
+  const bulkStockUpdateFileRef = useRef<HTMLInputElement>(null)
+  const [activeTab, setActiveTab] = useState('balance')
+  const [datePeriod, setDatePeriod] = useState<DatePeriod>('month')
+  const [customFromDate, setCustomFromDate] = useState('')
+  const [customToDate, setCustomToDate] = useState('')
+
+  const dateRange = useMemo(
+    () => getDateRangeForPeriod(datePeriod, customFromDate, customToDate),
+    [datePeriod, customFromDate, customToDate]
+  )
+  const dateRangeLabel = useMemo(() => formatDateRangeLabel(dateRange), [dateRange])
+  const isDateFilterActive = datePeriod !== 'all' && (datePeriod !== 'custom' || Boolean(customFromDate || customToDate))
+
+  const filteredEntries = useMemo(
+    () => entries.filter((entry) => isDateWithinRange(entry.entry_date, dateRange.from, dateRange.to)),
+    [entries, dateRange]
+  )
+  const filteredTransfers = useMemo(
+    () => transfers.filter((transfer) => isDateWithinRange(transfer.created_at, dateRange.from, dateRange.to)),
+    [transfers, dateRange]
+  )
+  const filteredStocks = useMemo(
+    () => stocks.filter((stock) => isDateWithinRange(stock.last_updated, dateRange.from, dateRange.to)),
+    [stocks, dateRange]
+  )
 
   useEffect(() => { if (!authLoading && user) fetchData() }, [authLoading, user])
   useEffect(() => { if (!authLoading && user) fetchInventoryItems() }, [authLoading, user])
   useEffect(() => { if (!authLoading && user) fetchWarehouses() }, [authLoading, user])
+
+  const lowStockPagination = usePagination(lowStockAlerts)
+  const balancePagination = usePagination(balance)
+  const entriesPagination = usePagination(filteredEntries)
+  const transfersPagination = usePagination(filteredTransfers)
+  const stocksPagination = usePagination(filteredStocks)
+
+  useEffect(() => {
+    entriesPagination.resetPage()
+    transfersPagination.resetPage()
+    stocksPagination.resetPage()
+  }, [datePeriod, customFromDate, customToDate])
 
   const fetchData = async () => {
     try {
@@ -168,7 +250,42 @@ export default function InventoryPage() {
     } catch (err) { console.error(err) }
   }
 
+  const handleSelectInventoryItem = (itemId: string, target: 'entry' | 'adjust') => {
+    const selectedItem = inventoryItems.find((item) => item.id === itemId)
+    const update = {
+      selected_item_id: itemId,
+      item_name: selectedItem?.name || '',
+      product_id: selectedItem?.type === 'product' ? selectedItem.id : '',
+    }
+    if (target === 'entry') {
+      setNewEntry((prev) => ({ ...prev, ...update }))
+    } else {
+      setAdjustStock((prev) => ({ ...prev, ...update }))
+    }
+  }
+
+  const handleOpenCreateProductForm = () => {
+    setShowCreateEntryModal(false)
+    setShowAdjustStockModal(false)
+    router.push('/products/create')
+  }
+
+  const handleOpenCreateWarehouseForm = () => {
+    setShowCreateEntryModal(false)
+    setShowAdjustStockModal(false)
+    router.push('/warehouses/create')
+  }
+
   const handleCreateEntry = async () => {
+    if (!newEntry.selected_item_id || !newEntry.item_name.trim()) {
+      notifyError('Please select an item')
+      return
+    }
+    if (!newEntry.outlet_id) {
+      notifyError('Please select a warehouse')
+      return
+    }
+
     try {
       const res = await apiFetch('/inventory/entries', {
         method: 'POST',
@@ -181,6 +298,7 @@ export default function InventoryPage() {
       if (res.ok) {
         setShowCreateEntryModal(false)
         setNewEntry({
+          selected_item_id: '',
           item_name: '',
           product_id: '',
           outlet_id: '',
@@ -192,6 +310,10 @@ export default function InventoryPage() {
           notes: ''
         })
         fetchData()
+        notifySuccess('Stock entry created')
+      } else {
+        const err = await res.json().catch(() => ({}))
+        notifyError(err.error || 'Failed to create stock entry')
       }
     } catch (err) { console.error(err) }
   }
@@ -206,12 +328,13 @@ export default function InventoryPage() {
         
         if (stockMatches.length > 0) {
           const stockMatch = stockMatches[0]
-          setNewEntry({
-            ...newEntry,
+          setNewEntry((prev) => ({
+            ...prev,
             item_name: stockMatch.product_name,
             product_id: stockMatch.product_id,
+            selected_item_id: stockMatch.product_id,
             item_code: stockMatch.item_code || code,
-          })
+          }))
         }
       }
     } catch (err) {
@@ -240,6 +363,7 @@ export default function InventoryPage() {
       if (res.ok) {
         setShowAdjustStockModal(false)
         setAdjustStock({
+          selected_item_id: '',
           item_name: '',
           product_id: '',
           outlet_id: '',
@@ -249,6 +373,73 @@ export default function InventoryPage() {
         fetchData()
       }
     } catch (err) { console.error(err) }
+  }
+
+  const handleDownloadBulkStockUpdateTemplate = () => {
+    downloadCsv(`stock_bulk_update_template_${accountingExportDateStamp()}.csv`, [
+      STOCK_BULK_UPDATE_HEADERS,
+      STOCK_BULK_UPDATE_SAMPLE_ROW,
+    ])
+  }
+
+  const resetBulkStockUpdateDialog = () => {
+    setBulkStockUpdateFile(null)
+    setBulkStockUpdatedCount(null)
+    setBulkStockUpdateErrors([])
+    if (bulkStockUpdateFileRef.current) bulkStockUpdateFileRef.current.value = ''
+  }
+
+  const handleBulkStockUpdateDialogChange = (open: boolean) => {
+    setShowBulkStockUpdateDialog(open)
+    if (!open) resetBulkStockUpdateDialog()
+  }
+
+  const handleBulkStockUpdate = async () => {
+    if (!bulkStockUpdateFile) {
+      notifyError('Please select a CSV or Excel file to upload')
+      return
+    }
+
+    setBulkStockUpdating(true)
+    setBulkStockUpdatedCount(null)
+    setBulkStockUpdateErrors([])
+
+    try {
+      const formData = new FormData()
+      formData.append('file', bulkStockUpdateFile)
+      const fileName = bulkStockUpdateFile.name.toLowerCase()
+      const endpoint = fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
+        ? '/inventory/stocks/bulk-update/excel'
+        : '/inventory/stocks/bulk-update/csv'
+
+      const res = await apiFetch(endpoint, { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (res.ok) {
+        const count = data.updated ?? 0
+        const errors: string[] = data.errors ?? []
+        setBulkStockUpdatedCount(count)
+        setBulkStockUpdateErrors(errors)
+
+        if (count > 0) {
+          fetchData()
+          notifySuccess(`Successfully updated stock for ${count} row${count === 1 ? '' : 's'}`)
+        }
+
+        if (count === 0 && errors.length > 0) {
+          notifyError('No stock rows were updated. Please review the errors below.')
+        } else if (errors.length > 0) {
+          notifyError(`${errors.length} row${errors.length === 1 ? '' : 's'} could not be updated`)
+        }
+      } else {
+        notifyError(data.error || 'Bulk stock update failed')
+      }
+    } catch (err) {
+      console.error(err)
+      notifyError('Bulk stock update failed')
+    } finally {
+      setBulkStockUpdating(false)
+    }
   }
 
   const handleEditEntry = (entry: StockEntry) => {
@@ -372,6 +563,10 @@ export default function InventoryPage() {
             <p className="text-gray-500">Track stock levels, movements, and transfers</p>
           </div>
           <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setShowBulkStockUpdateDialog(true)} className="gap-2">
+              <Upload className="h-4 w-4" />
+              Bulk Stock Update
+            </Button>
             <Dialog open={showCreateEntryModal} onOpenChange={setShowCreateEntryModal}>
               <DialogTrigger asChild>
                 <Button>
@@ -386,46 +581,35 @@ export default function InventoryPage() {
                 <div className="space-y-4">
                   <div>
                     <Label>Item Name</Label>
-                    <Select
-                      value={newEntry.item_name}
-                      onValueChange={(value) => {
-                        const selectedItem = inventoryItems.find(item => item.id === value)
-                        setNewEntry({
-                          ...newEntry,
-                          item_name: selectedItem?.name || value,
-                          product_id: selectedItem?.type === 'product' ? selectedItem.id : ''
-                        })
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select item" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name} {item.sku && `(${item.sku})`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={newEntry.selected_item_id}
+                      onValueChange={(value) => handleSelectInventoryItem(value, 'entry')}
+                      options={inventoryItems.map((item) => ({
+                        value: item.id,
+                        label: item.sku ? `${item.name} (${item.sku})` : item.name,
+                      }))}
+                      placeholder="Select item"
+                      searchPlaceholder="Search items..."
+                      emptyMessage="No items found"
+                      onAddNew={handleOpenCreateProductForm}
+                      addNewLabel="Add New Item"
+                    />
                   </div>
                   <div>
                     <Label>Outlet / Warehouse</Label>
-                    <Select
+                    <SearchableSelect
                       value={newEntry.outlet_id}
-                      onValueChange={(value) => setNewEntry({ ...newEntry, outlet_id: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select outlet" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((wh) => (
-                          <SelectItem key={wh.id} value={wh.id}>
-                            {wh.name} ({wh.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onValueChange={(value) => setNewEntry((prev) => ({ ...prev, outlet_id: value }))}
+                      options={warehouses.map((wh) => ({
+                        value: wh.id,
+                        label: `${wh.name} (${wh.code})`,
+                      }))}
+                      placeholder="Select outlet"
+                      searchPlaceholder="Search warehouses..."
+                      emptyMessage="No warehouses found"
+                      onAddNew={handleOpenCreateWarehouseForm}
+                      addNewLabel="Add New Warehouse"
+                    />
                   </div>
                   <div>
                     <Label>Entry Type</Label>
@@ -508,46 +692,35 @@ export default function InventoryPage() {
                 <div className="space-y-4">
                   <div>
                     <Label>Item Name</Label>
-                    <Select
-                      value={adjustStock.item_name}
-                      onValueChange={(value) => {
-                        const selectedItem = inventoryItems.find(item => item.id === value)
-                        setAdjustStock({
-                          ...adjustStock,
-                          item_name: selectedItem?.name || value,
-                          product_id: selectedItem?.type === 'product' ? selectedItem.id : ''
-                        })
-                      }}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select item" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {inventoryItems.map((item) => (
-                          <SelectItem key={item.id} value={item.id}>
-                            {item.name} {item.sku && `(${item.sku})`}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={adjustStock.selected_item_id}
+                      onValueChange={(value) => handleSelectInventoryItem(value, 'adjust')}
+                      options={inventoryItems.map((item) => ({
+                        value: item.id,
+                        label: item.sku ? `${item.name} (${item.sku})` : item.name,
+                      }))}
+                      placeholder="Select item"
+                      searchPlaceholder="Search items..."
+                      emptyMessage="No items found"
+                      onAddNew={handleOpenCreateProductForm}
+                      addNewLabel="Add New Item"
+                    />
                   </div>
                   <div>
                     <Label>Outlet / Warehouse</Label>
-                    <Select
+                    <SearchableSelect
                       value={adjustStock.outlet_id}
-                      onValueChange={(value) => setAdjustStock({ ...adjustStock, outlet_id: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select outlet" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {warehouses.map((wh) => (
-                          <SelectItem key={wh.id} value={wh.id}>
-                            {wh.name} ({wh.code})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      onValueChange={(value) => setAdjustStock((prev) => ({ ...prev, outlet_id: value }))}
+                      options={warehouses.map((wh) => ({
+                        value: wh.id,
+                        label: `${wh.name} (${wh.code})`,
+                      }))}
+                      placeholder="Select outlet"
+                      searchPlaceholder="Search warehouses..."
+                      emptyMessage="No warehouses found"
+                      onAddNew={handleOpenCreateWarehouseForm}
+                      addNewLabel="Add New Warehouse"
+                    />
                   </div>
                   <div>
                     <Label>Quantity (+/-)</Label>
@@ -822,22 +995,95 @@ export default function InventoryPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {lowStockAlerts.map((alert) => (
-                    <TableRow key={`${alert.product_id}-${alert.outlet_id}`}>
-                      <TableCell className="font-medium">{alert.product_name}</TableCell>
-                      <TableCell>{alert.sku}</TableCell>
-                      <TableCell className="text-red-600 font-medium">{alert.current_stock}</TableCell>
-                      <TableCell>{alert.min_stock}</TableCell>
-                      <TableCell>{alert.outlet_name || alert.outlet_id}</TableCell>
+                  {lowStockPagination.paginatedItems.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={5} className="py-8 text-center text-gray-500">
+                        No low stock alerts
+                      </TableCell>
                     </TableRow>
-                  ))}
+                  ) : (
+                    lowStockPagination.paginatedItems.map((alert) => (
+                      <TableRow key={`${alert.product_id}-${alert.outlet_id}`}>
+                        <TableCell className="font-medium">{alert.product_name}</TableCell>
+                        <TableCell>{alert.sku}</TableCell>
+                        <TableCell className="text-red-600 font-medium">{alert.current_stock}</TableCell>
+                        <TableCell>{alert.min_stock}</TableCell>
+                        <TableCell>{alert.outlet_name || alert.outlet_id}</TableCell>
+                      </TableRow>
+                    ))
+                  )}
                 </TableBody>
               </Table>
+              <PaginationControls
+                page={lowStockPagination.page}
+                totalPages={lowStockPagination.totalPages}
+                totalItems={lowStockPagination.totalItems}
+                pageSize={lowStockPagination.pageSize}
+                onPageChange={lowStockPagination.setPage}
+              />
             </CardContent>
           </Card>
         )}
 
-        <Tabs defaultValue="balance">
+        <Card>
+          <CardContent className="pt-6">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+              <div className="space-y-2">
+                <Label htmlFor="inventory_date_period">Period</Label>
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                  <div className="flex items-center gap-2">
+                    <CalendarRange className="h-4 w-4 text-gray-500" />
+                    <Select
+                      value={datePeriod}
+                      onValueChange={(value) => setDatePeriod(value as DatePeriod)}
+                    >
+                      <SelectTrigger id="inventory_date_period" className="w-[180px]">
+                        <SelectValue placeholder="Select period" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {DATE_PERIOD_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {datePeriod === 'custom' && (
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                      <Input
+                        type="date"
+                        value={customFromDate}
+                        onChange={(e) => setCustomFromDate(e.target.value)}
+                        className="w-full sm:w-auto"
+                        aria-label="From date"
+                      />
+                      <span className="hidden text-sm text-gray-400 sm:inline">to</span>
+                      <Input
+                        type="date"
+                        value={customToDate}
+                        onChange={(e) => setCustomToDate(e.target.value)}
+                        className="w-full sm:w-auto"
+                        aria-label="To date"
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="text-sm text-gray-500">
+                {isDateFilterActive ? (
+                  <p>
+                    Showing <span className="font-medium text-gray-700">{dateRangeLabel}</span> on Stock Entries, Transfers, and Inventory Stocks.
+                  </p>
+                ) : (
+                  <p>Stock Balance and Low Stock Alerts always show current data.</p>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList>
             <TabsTrigger value="balance">Stock Balance</TabsTrigger>
             <TabsTrigger value="entries">Stock Entries</TabsTrigger>
@@ -863,18 +1109,33 @@ export default function InventoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {balance.map((item) => (
-                      <TableRow key={`${item.product_id}-${item.outlet_id}`}>
-                        <TableCell className="font-medium">{item.product_name}</TableCell>
-                        <TableCell>{item.sku}</TableCell>
-                        <TableCell>{item.stock_qty}</TableCell>
-                        <TableCell>₹{item.cost_price.toFixed(2)}</TableCell>
-                        <TableCell>₹{item.value.toFixed(2)}</TableCell>
-                        <TableCell>{item.outlet_name || item.outlet_id}</TableCell>
+                    {balancePagination.paginatedItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-gray-500">
+                          No stock balance records
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      balancePagination.paginatedItems.map((item) => (
+                        <TableRow key={`${item.product_id}-${item.outlet_id}`}>
+                          <TableCell className="font-medium">{item.product_name}</TableCell>
+                          <TableCell>{item.sku}</TableCell>
+                          <TableCell>{item.stock_qty}</TableCell>
+                          <TableCell>₹{item.cost_price.toFixed(2)}</TableCell>
+                          <TableCell>₹{item.value.toFixed(2)}</TableCell>
+                          <TableCell>{item.outlet_name || item.outlet_id}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={balancePagination.page}
+                  totalPages={balancePagination.totalPages}
+                  totalItems={balancePagination.totalItems}
+                  pageSize={balancePagination.pageSize}
+                  onPageChange={balancePagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -883,6 +1144,11 @@ export default function InventoryPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Stock Entries</CardTitle>
+                {isDateFilterActive && (
+                  <p className="text-sm text-gray-500">
+                    Filtered by {dateRangeLabel} · {filteredEntries.length} of {entries.length} entries
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 <Table>
@@ -901,39 +1167,56 @@ export default function InventoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {entries.map((entry) => (
-                      <TableRow key={entry.id}>
-                        <TableCell className="font-medium">
-                          {entry.product?.name || entry.item_name}
-                          {entry.product?.sku && <span className="text-gray-500 text-xs ml-2">({entry.product.sku})</span>}
-                        </TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getEntryTypeColor(entry.entry_type)}`}>
-                            {entry.entry_type}
-                          </span>
-                        </TableCell>
-                        <TableCell className={entry.quantity < 0 ? 'text-red-600' : 'text-green-600'}>
-                          {entry.quantity}
-                        </TableCell>
-                        <TableCell>₹{entry.cost_price.toFixed(2)}</TableCell>
-                        <TableCell>{entry.batch_no || '-'}</TableCell>
-                        <TableCell>{entry.item_code || '-'}</TableCell>
-                        <TableCell>{entry.outlet_name || entry.outlet_id}</TableCell>
-                        <TableCell>{new Date(entry.entry_date).toLocaleDateString()}</TableCell>
-                        <TableCell>{entry.notes || '-'}</TableCell>
-                        <TableCell>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleEditEntry(entry)}
-                          >
-                            Edit
-                          </Button>
+                    {entriesPagination.paginatedItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={10} className="py-8 text-center text-gray-500">
+                          {entries.length === 0
+                            ? 'No stock entries found'
+                            : 'No stock entries found for the selected period'}
                         </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      entriesPagination.paginatedItems.map((entry) => (
+                        <TableRow key={entry.id}>
+                          <TableCell className="font-medium">
+                            {entry.product?.name || entry.item_name}
+                            {entry.product?.sku && <span className="text-gray-500 text-xs ml-2">({entry.product.sku})</span>}
+                          </TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getEntryTypeColor(entry.entry_type)}`}>
+                              {entry.entry_type}
+                            </span>
+                          </TableCell>
+                          <TableCell className={entry.quantity < 0 ? 'text-red-600' : 'text-green-600'}>
+                            {entry.quantity}
+                          </TableCell>
+                          <TableCell>₹{entry.cost_price.toFixed(2)}</TableCell>
+                          <TableCell>{entry.batch_no || '-'}</TableCell>
+                          <TableCell>{entry.item_code || '-'}</TableCell>
+                          <TableCell>{entry.outlet_name || entry.outlet_id}</TableCell>
+                          <TableCell>{new Date(entry.entry_date).toLocaleDateString()}</TableCell>
+                          <TableCell>{entry.notes || '-'}</TableCell>
+                          <TableCell>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEditEntry(entry)}
+                            >
+                              Edit
+                            </Button>
+                          </TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={entriesPagination.page}
+                  totalPages={entriesPagination.totalPages}
+                  totalItems={entriesPagination.totalItems}
+                  pageSize={entriesPagination.pageSize}
+                  onPageChange={entriesPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -942,6 +1225,11 @@ export default function InventoryPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Stock Transfers</CardTitle>
+                {isDateFilterActive && (
+                  <p className="text-sm text-gray-500">
+                    Filtered by {dateRangeLabel} · {filteredTransfers.length} of {transfers.length} transfers
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 <Table>
@@ -956,22 +1244,39 @@ export default function InventoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {transfers.map((transfer) => (
-                      <TableRow key={transfer.id}>
-                        <TableCell>{transfer.from_outlet_id || '-'}</TableCell>
-                        <TableCell>{transfer.to_outlet_id}</TableCell>
-                        <TableCell>
-                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getTransferStatusColor(transfer.status)}`}>
-                            {transfer.status}
-                          </span>
+                    {transfersPagination.paginatedItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={6} className="py-8 text-center text-gray-500">
+                          {transfers.length === 0
+                            ? 'No stock transfers found'
+                            : 'No stock transfers found for the selected period'}
                         </TableCell>
-                        <TableCell>{transfer.total_items}</TableCell>
-                        <TableCell>{transfer.total_quantity}</TableCell>
-                        <TableCell>{new Date(transfer.created_at).toLocaleDateString()}</TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      transfersPagination.paginatedItems.map((transfer) => (
+                        <TableRow key={transfer.id}>
+                          <TableCell>{transfer.from_outlet_id || '-'}</TableCell>
+                          <TableCell>{transfer.to_outlet_id}</TableCell>
+                          <TableCell>
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium ${getTransferStatusColor(transfer.status)}`}>
+                              {transfer.status}
+                            </span>
+                          </TableCell>
+                          <TableCell>{transfer.total_items}</TableCell>
+                          <TableCell>{transfer.total_quantity}</TableCell>
+                          <TableCell>{new Date(transfer.created_at).toLocaleDateString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={transfersPagination.page}
+                  totalPages={transfersPagination.totalPages}
+                  totalItems={transfersPagination.totalItems}
+                  pageSize={transfersPagination.pageSize}
+                  onPageChange={transfersPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -980,6 +1285,11 @@ export default function InventoryPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Inventory Stocks</CardTitle>
+                {isDateFilterActive && (
+                  <p className="text-sm text-gray-500">
+                    Filtered by last updated · {dateRangeLabel} · {filteredStocks.length} of {stocks.length} records
+                  </p>
+                )}
               </CardHeader>
               <CardContent>
                 <Table>
@@ -996,25 +1306,90 @@ export default function InventoryPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {stocks.map((stock) => (
-                      <TableRow key={stock.id}>
-                        <TableCell className="font-medium">{stock.product?.name || '-'}</TableCell>
-                        <TableCell>{stock.product?.sku || '-'}</TableCell>
-                        <TableCell>{stock.quantity}</TableCell>
-                        <TableCell>{stock.reserved_qty}</TableCell>
-                        <TableCell className="font-medium text-green-600">{stock.available_qty}</TableCell>
-                        <TableCell>₹{stock.average_cost.toFixed(2)}</TableCell>
-                        <TableCell>{stock.outlet_name || stock.outlet_id}</TableCell>
-                        <TableCell>{new Date(stock.last_updated).toLocaleDateString()}</TableCell>
+                    {stocksPagination.paginatedItems.length === 0 ? (
+                      <TableRow>
+                        <TableCell colSpan={8} className="py-8 text-center text-gray-500">
+                          {stocks.length === 0
+                            ? 'No inventory stock records'
+                            : 'No inventory stock records updated in the selected period'}
+                        </TableCell>
                       </TableRow>
-                    ))}
+                    ) : (
+                      stocksPagination.paginatedItems.map((stock) => (
+                        <TableRow key={stock.id}>
+                          <TableCell className="font-medium">{stock.product?.name || '-'}</TableCell>
+                          <TableCell>{stock.product?.sku || '-'}</TableCell>
+                          <TableCell>{stock.quantity}</TableCell>
+                          <TableCell>{stock.reserved_qty}</TableCell>
+                          <TableCell className="font-medium text-green-600">{stock.available_qty}</TableCell>
+                          <TableCell>₹{stock.average_cost.toFixed(2)}</TableCell>
+                          <TableCell>{stock.outlet_name || stock.outlet_id}</TableCell>
+                          <TableCell>{new Date(stock.last_updated).toLocaleDateString()}</TableCell>
+                        </TableRow>
+                      ))
+                    )}
                   </TableBody>
                 </Table>
+                <PaginationControls
+                  page={stocksPagination.page}
+                  totalPages={stocksPagination.totalPages}
+                  totalItems={stocksPagination.totalItems}
+                  pageSize={stocksPagination.pageSize}
+                  onPageChange={stocksPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
         </Tabs>
       </div>
+
+      <Dialog open={showBulkStockUpdateDialog} onOpenChange={handleBulkStockUpdateDialogChange}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Bulk Stock Update</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Upload a CSV or Excel file to update stock in bulk. Use <strong>set</strong> to set absolute quantity, or <strong>adjust</strong> to add or subtract stock. Identify products by SKU, product name, or item code.
+            </p>
+            <Button variant="outline" onClick={handleDownloadBulkStockUpdateTemplate} className="gap-2 w-full sm:w-auto">
+              <Download className="h-4 w-4" />
+              Download Stock Update Template
+            </Button>
+            <div className="space-y-2">
+              <Label htmlFor="bulk_stock_update_file">Update file</Label>
+              <Input
+                id="bulk_stock_update_file"
+                ref={bulkStockUpdateFileRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={(e) => setBulkStockUpdateFile(e.target.files?.[0] ?? null)}
+              />
+              {bulkStockUpdateFile && (
+                <p className="text-sm text-gray-500">Selected: {bulkStockUpdateFile.name}</p>
+              )}
+            </div>
+            {bulkStockUpdatedCount !== null && (
+              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+                Updated stock for {bulkStockUpdatedCount} row{bulkStockUpdatedCount === 1 ? '' : 's'} successfully.
+              </div>
+            )}
+            {bulkStockUpdateErrors.length > 0 && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 max-h-40 overflow-y-auto space-y-1">
+                {bulkStockUpdateErrors.map((error, index) => (
+                  <p key={`${error}-${index}`}>{error}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleBulkStockUpdateDialogChange(false)}>Cancel</Button>
+            <Button onClick={handleBulkStockUpdate} disabled={bulkStockUpdating || !bulkStockUpdateFile}>
+              {bulkStockUpdating ? 'Updating...' : 'Update Stock'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       
       <BarcodeScanner
         open={showBarcodeScanner}

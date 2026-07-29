@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"crypto/rand"
 	"encoding/base32"
 	"net/http"
@@ -218,7 +218,7 @@ func GetActivityLogs(c *gin.Context) {
 }
 
 func buildOtpAuthURL(email, secret string) string {
-	issuer := "BillBook"
+	issuer := "TruERP"
 	label := url.PathEscape(issuer + ":" + email)
 	q := url.Values{}
 	q.Set("secret", secret)

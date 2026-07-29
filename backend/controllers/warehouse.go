@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -176,6 +176,64 @@ func DeleteWarehouse(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Warehouse deleted successfully"})
+}
+
+func BulkDeleteWarehouses(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs []uuid.UUID `json:"ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := utils.DB.Where("user_id = ? AND id IN ? AND is_default = ?", userID, input.IDs, false).Delete(&models.Warehouse{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete warehouses"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Warehouses deleted successfully",
+		"deleted": result.RowsAffected,
+	})
+}
+
+func BulkUpdateWarehouseStatus(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs      []uuid.UUID `json:"ids" binding:"required"`
+		IsActive bool        `json:"is_active"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	var warehouses []models.Warehouse
+	if err := utils.DB.Where("user_id = ? AND id IN ?", userID, input.IDs).Find(&warehouses).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch warehouses"})
+		return
+	}
+
+	if len(warehouses) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No warehouses found"})
+		return
+	}
+
+	if err := utils.DB.Model(&models.Warehouse{}).
+		Where("user_id = ? AND id IN ?", userID, input.IDs).
+		Update("is_active", input.IsActive).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update warehouses"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Warehouses updated successfully"})
 }
 
 func GetWarehouseStock(c *gin.Context) {

@@ -13,6 +13,12 @@ import { ArrowLeft, Loader2, Save } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
 import { cn } from '@/lib/utils'
+import { mergePartyCategories } from '@/lib/partyCategories'
+import {
+  EMPTY_PARTY_FORM,
+  firstValidationMessage,
+  validatePartyForm,
+} from '@/lib/partyValidation'
 
 export default function CreatePartyPage() {
   const router = useRouter()
@@ -20,36 +26,22 @@ export default function CreatePartyPage() {
   const typeParam = searchParams.get('type') || 'customer'
   const {
     fieldErrors,
+    setFieldErrors,
     clearFieldError,
-    setError,
     handleApiError,
     showErrorToast,
   } = useFormErrors()
-  
-  const [loading, setLoading] = useState(false)
+
   const [saving, setSaving] = useState(false)
   const [partyCategories, setPartyCategories] = useState<string[]>([])
   const [formData, setFormData] = useState({
-    name: '',
-    phone: '',
-    email: '',
-    category: '',
+    ...EMPTY_PARTY_FORM,
     party_type: typeParam,
-    opening_balance: 0,
-    credit_limit: 0,
-    gstin: '',
-    address: '',
-    city: '',
-    state: '',
-    pincode: '',
-    tan: '',
-    pan: '',
-    notes: ''
   })
 
   useEffect(() => {
     if (typeParam) {
-      setFormData(prev => ({ ...prev, party_type: typeParam }))
+      setFormData((prev) => ({ ...prev, party_type: typeParam }))
     }
   }, [typeParam])
 
@@ -60,7 +52,9 @@ export default function CreatePartyPage() {
         if (res.ok) {
           const data = await res.json()
           setPartyCategories(
-            Array.from(new Set(data.map((p: { category?: string }) => p.category).filter(Boolean))) as string[]
+            mergePartyCategories(
+              data.map((p: { category?: string }) => p.category).filter(Boolean) as string[]
+            )
           )
         }
       } catch {
@@ -70,31 +64,43 @@ export default function CreatePartyPage() {
     loadCategories()
   }, [])
 
+  const updateField = <K extends keyof typeof formData>(field: K, value: (typeof formData)[K]) => {
+    clearFieldError(field)
+    setFormData((prev) => ({ ...prev, [field]: value }))
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!formData.name) {
-      setError('name', 'Name is required')
-      showErrorToast('Name is required')
+    const errors = validatePartyForm(formData)
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      showErrorToast(firstValidationMessage(errors) || 'Please fix the highlighted fields')
       return
     }
-    if (!formData.party_type) {
-      setError('party_type', 'Party type is required')
-      showErrorToast('Party type is required')
-      return
-    }
+
     setSaving(true)
     try {
+      const payload = {
+        ...formData,
+        name: formData.name.trim(),
+        email: formData.email.trim(),
+        phone: formData.phone.trim(),
+        gstin: formData.gstin.trim().toUpperCase(),
+        pan: formData.pan.trim().toUpperCase(),
+        tan: formData.tan.trim().toUpperCase(),
+        pincode: formData.pincode.trim(),
+      }
       const res = await apiFetch('/parties', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData)
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         router.push('/parties')
       } else {
         await handleApiError(res)
       }
-    } catch (err) {
+    } catch {
       showErrorToast('An error occurred')
     } finally {
       setSaving(false)
@@ -121,59 +127,59 @@ export default function CreatePartyPage() {
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="name">Name *</Label>
-                <Input 
-                  id="name" 
-                  value={formData.name} 
-                  onChange={e => {
-                    clearFieldError('name')
-                    setFormData({ ...formData, name: e.target.value })
-                  }} 
+                <Input
+                  id="name"
+                  value={formData.name}
+                  onChange={(e) => updateField('name', e.target.value)}
                   className={cn(fieldErrors.name && 'border-red-500')}
-                  required
                 />
                 <FieldError message={fieldErrors.name} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="phone">Mobile</Label>
-                <Input 
-                  id="phone" 
-                  value={formData.phone} 
-                  onChange={e => setFormData({ ...formData, phone: e.target.value })} 
+                <Input
+                  id="phone"
+                  value={formData.phone}
+                  onChange={(e) => updateField('phone', e.target.value)}
+                  className={cn(fieldErrors.phone && 'border-red-500')}
+                  placeholder="10-digit mobile number"
                 />
+                <FieldError message={fieldErrors.phone} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
-                <Input 
-                  id="email" 
-                  type="email" 
-                  value={formData.email} 
-                  onChange={e => setFormData({ ...formData, email: e.target.value })} 
+                <Input
+                  id="email"
+                  type="email"
+                  value={formData.email}
+                  onChange={(e) => updateField('email', e.target.value)}
+                  className={cn(fieldErrors.email && 'border-red-500')}
                 />
+                <FieldError message={fieldErrors.email} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="category">Category</Label>
                 <Select
                   value={formData.category || undefined}
-                  onValueChange={v => setFormData({ ...formData, category: v })}
+                  onValueChange={(v) => updateField('category', v)}
                 >
                   <SelectTrigger id="category">
                     <SelectValue placeholder="Select category" />
                   </SelectTrigger>
                   <SelectContent>
-                    {partyCategories.map(cat => (
-                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    {partyCategories.map((cat) => (
+                      <SelectItem key={cat} value={cat}>
+                        {cat}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="party_type">Party Type *</Label>
-                <Select 
-                  value={formData.party_type} 
-                  onValueChange={v => {
-                    clearFieldError('party_type')
-                    setFormData({ ...formData, party_type: v })
-                  }}
+                <Select
+                  value={formData.party_type}
+                  onValueChange={(v) => updateField('party_type', v)}
                 >
                   <SelectTrigger className={cn(fieldErrors.party_type && 'border-red-500')}>
                     <SelectValue />
@@ -195,21 +201,26 @@ export default function CreatePartyPage() {
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="opening_balance">Opening Balance</Label>
-                <Input 
-                  id="opening_balance" 
-                  type="number" 
-                  value={formData.opening_balance} 
-                  onChange={e => setFormData({ ...formData, opening_balance: parseFloat(e.target.value) || 0 })} 
+                <Input
+                  id="opening_balance"
+                  type="number"
+                  value={formData.opening_balance}
+                  onChange={(e) => updateField('opening_balance', parseFloat(e.target.value) || 0)}
+                  className={cn(fieldErrors.opening_balance && 'border-red-500')}
                 />
+                <FieldError message={fieldErrors.opening_balance} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="credit_limit">Credit Limit</Label>
-                <Input 
-                  id="credit_limit" 
-                  type="number" 
-                  value={formData.credit_limit} 
-                  onChange={e => setFormData({ ...formData, credit_limit: parseFloat(e.target.value) || 0 })} 
+                <Input
+                  id="credit_limit"
+                  type="number"
+                  min={0}
+                  value={formData.credit_limit}
+                  onChange={(e) => updateField('credit_limit', parseFloat(e.target.value) || 0)}
+                  className={cn(fieldErrors.credit_limit && 'border-red-500')}
                 />
+                <FieldError message={fieldErrors.credit_limit} />
               </div>
             </CardContent>
           </Card>
@@ -221,27 +232,36 @@ export default function CreatePartyPage() {
             <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label htmlFor="gstin">GSTIN</Label>
-                <Input 
-                  id="gstin" 
-                  value={formData.gstin} 
-                  onChange={e => setFormData({ ...formData, gstin: e.target.value })} 
+                <Input
+                  id="gstin"
+                  value={formData.gstin}
+                  onChange={(e) => updateField('gstin', e.target.value.toUpperCase())}
+                  className={cn(fieldErrors.gstin && 'border-red-500')}
+                  placeholder="15-character GSTIN"
                 />
+                <FieldError message={fieldErrors.gstin} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="pan">PAN</Label>
-                <Input 
-                  id="pan" 
-                  value={formData.pan} 
-                  onChange={e => setFormData({ ...formData, pan: e.target.value })} 
+                <Input
+                  id="pan"
+                  value={formData.pan}
+                  onChange={(e) => updateField('pan', e.target.value.toUpperCase())}
+                  className={cn(fieldErrors.pan && 'border-red-500')}
+                  placeholder="ABCDE1234F"
                 />
+                <FieldError message={fieldErrors.pan} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="tan">TAN</Label>
-                <Input 
-                  id="tan" 
-                  value={formData.tan} 
-                  onChange={e => setFormData({ ...formData, tan: e.target.value })} 
+                <Input
+                  id="tan"
+                  value={formData.tan}
+                  onChange={(e) => updateField('tan', e.target.value.toUpperCase())}
+                  className={cn(fieldErrors.tan && 'border-red-500')}
+                  placeholder="ABCD12345E"
                 />
+                <FieldError message={fieldErrors.tan} />
               </div>
             </CardContent>
           </Card>
@@ -253,36 +273,39 @@ export default function CreatePartyPage() {
             <CardContent className="grid grid-cols-1 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="address">Address</Label>
-                <Input 
-                  id="address" 
-                  value={formData.address} 
-                  onChange={e => setFormData({ ...formData, address: e.target.value })} 
+                <Input
+                  id="address"
+                  value={formData.address}
+                  onChange={(e) => updateField('address', e.target.value)}
                 />
               </div>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
                 <div className="space-y-2">
                   <Label htmlFor="city">City</Label>
-                  <Input 
-                    id="city" 
-                    value={formData.city} 
-                    onChange={e => setFormData({ ...formData, city: e.target.value })} 
+                  <Input
+                    id="city"
+                    value={formData.city}
+                    onChange={(e) => updateField('city', e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="state">State</Label>
-                  <Input 
-                    id="state" 
-                    value={formData.state} 
-                    onChange={e => setFormData({ ...formData, state: e.target.value })} 
+                  <Input
+                    id="state"
+                    value={formData.state}
+                    onChange={(e) => updateField('state', e.target.value)}
                   />
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="pincode">Pincode</Label>
-                  <Input 
-                    id="pincode" 
-                    value={formData.pincode} 
-                    onChange={e => setFormData({ ...formData, pincode: e.target.value })} 
+                  <Input
+                    id="pincode"
+                    value={formData.pincode}
+                    onChange={(e) => updateField('pincode', e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    className={cn(fieldErrors.pincode && 'border-red-500')}
+                    placeholder="6-digit pincode"
                   />
+                  <FieldError message={fieldErrors.pincode} />
                 </div>
               </div>
             </CardContent>
@@ -298,7 +321,7 @@ export default function CreatePartyPage() {
                 <textarea
                   id="notes"
                   value={formData.notes}
-                  onChange={e => setFormData({ ...formData, notes: e.target.value })}
+                  onChange={(e) => updateField('notes', e.target.value)}
                   className="min-h-[100px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   placeholder="Additional notes..."
                 />

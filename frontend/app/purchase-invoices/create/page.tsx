@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn, formatCurrency } from '@/lib/utils'
+import { exclusiveUnitPrice, limitDecimalInput, parseItemNumber, parseMoney } from '@/lib/numbers'
 import BarcodeScanner from '@/components/ui/BarcodeScanner'
 import { Plus, Trash2, Loader2, Save, ArrowLeft, Search, Barcode, Package, X, Camera } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
@@ -69,12 +70,6 @@ const ITEM_NUMBER_FIELDS: (keyof PurchaseBillItem)[] = [
   'tax_amount',
   'total',
 ]
-
-function parseItemNumber(value: unknown, fallback = 0): number {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  const parsed = parseFloat(String(value))
-  return Number.isFinite(parsed) ? parsed : fallback
-}
 
 export default function CreatePurchaseInvoicePage() {
   const router = useRouter()
@@ -183,21 +178,26 @@ export default function CreatePurchaseInvoicePage() {
             p.name.toLowerCase() === (item.description || '').toLowerCase() ||
             (item.item_code && p.item_code === item.item_code)
           )
+          const taxRate = matchedProduct?.tax_rate ?? parseItemNumber(item.tax_rate, 18)
+          const withTax = matchedProduct?.purchase_price_with_tax ?? item.purchase_price_with_tax ?? false
+          const rawPrice = matchedProduct
+            ? matchedProduct.purchase_price
+            : item.unit_price
           return calcItemTotals({
             product_id: matchedProduct?.id || '',
             item_code: matchedProduct?.item_code || item.item_code || '',
             description: matchedProduct?.name || item.description || '',
             hsn_code: matchedProduct?.hsn_code || item.hsn_code || '',
-            quantity: item.quantity,
-            unit_price: matchedProduct?.purchase_price || item.unit_price,
-            discount: item.discount || 0,
-            tax_rate: matchedProduct?.tax_rate ?? item.tax_rate,
-            mrp: matchedProduct?.mrp || item.mrp || 0,
-            sale_price: matchedProduct?.sale_price || item.sale_price || 0,
+            quantity: parseItemNumber(item.quantity, 1),
+            unit_price: exclusiveUnitPrice(rawPrice, taxRate, withTax),
+            discount: parseItemNumber(item.discount),
+            tax_rate: taxRate,
+            mrp: parseItemNumber(matchedProduct?.mrp ?? item.mrp),
+            sale_price: parseItemNumber(matchedProduct?.sale_price ?? item.sale_price),
             unit: matchedProduct?.unit || item.unit || 'PCS',
             tax_amount: 0,
             total: 0,
-            purchase_price_with_tax: item.purchase_price_with_tax ?? false,
+            purchase_price_with_tax: withTax,
           })
         })
         setItems(parsedItems)
@@ -254,22 +254,22 @@ export default function CreatePurchaseInvoicePage() {
         setItems(
           (bill.items || []).map((item: any) => {
             const prod = products.find((p: Product) => p.id === item.product_id)
-            return {
+            return calcItemTotals({
               product_id: item.product_id || '',
               item_code: item.item_code || '',
               description: item.description || '',
               hsn_code: item.hsn_code || '',
-              quantity: item.quantity || 0,
-              unit_price: item.unit_price || 0,
-              discount: item.discount || 0,
-              tax_rate: item.tax_rate || 0,
-              mrp: item.mrp || 0,
-              sale_price: item.sale_price || 0,
+              quantity: parseItemNumber(item.quantity),
+              unit_price: parseItemNumber(item.unit_price),
+              discount: parseItemNumber(item.discount),
+              tax_rate: parseItemNumber(item.tax_rate),
+              mrp: parseItemNumber(item.mrp),
+              sale_price: parseItemNumber(item.sale_price),
               unit: item.unit || 'PCS',
-              tax_amount: item.tax_amount || 0,
-              total: item.total || 0,
+              tax_amount: parseItemNumber(item.tax_amount),
+              total: parseItemNumber(item.total),
               purchase_price_with_tax: prod?.purchase_price_with_tax ?? false,
-            }
+            })
           })
         )
       }
@@ -299,16 +299,24 @@ export default function CreatePurchaseInvoicePage() {
   }
 
   const calcItemTotals = (item: PurchaseBillItem): PurchaseBillItem => {
-    const qty = Number(item.quantity) || 0
-    const price = Number(item.unit_price) || 0
-    const disc = Number(item.discount) || 0
-    const tax = Number(item.tax_rate) || 0
+    const qty = parseItemNumber(item.quantity)
+    const price = parseItemNumber(item.unit_price)
+    const disc = parseItemNumber(item.discount)
+    const tax = parseItemNumber(item.tax_rate)
 
     const itemTotal = qty * price
     const itemDiscount = itemTotal * (disc / 100)
     const taxable = itemTotal - itemDiscount
     const itemTax = taxable * (tax / 100)
-    return { ...item, tax_amount: itemTax, total: taxable + itemTax }
+    return {
+      ...item,
+      quantity: qty,
+      unit_price: price,
+      discount: disc,
+      tax_rate: tax,
+      tax_amount: itemTax,
+      total: taxable + itemTax,
+    }
   }
 
   const addProductToInvoice = (product: Product, scannedCode?: string) => {
@@ -328,24 +336,25 @@ export default function CreatePurchaseInvoicePage() {
         setTimeout(() => setToast(null), 2000)
         return updatedItems
       } else {
-        const basePrice = product.purchase_price_with_tax
-          ? product.purchase_price / (1 + product.tax_rate / 100)
-          : product.purchase_price
         const newItem = calcItemTotals({
           product_id: product.id,
           item_code: itemItemCode,
           description: product.name,
           hsn_code: product.hsn_code || '',
           quantity: 1,
-          unit_price: basePrice,
+          unit_price: exclusiveUnitPrice(
+            product.purchase_price,
+            product.tax_rate,
+            product.purchase_price_with_tax
+          ),
           discount: 0,
-          tax_rate: product.tax_rate,
-          mrp: product.mrp || 0,
-          sale_price: product.sale_price || 0,
+          tax_rate: parseItemNumber(product.tax_rate, 18),
+          mrp: parseItemNumber(product.mrp),
+          sale_price: parseItemNumber(product.sale_price),
           unit: product.unit,
           tax_amount: 0,
           total: 0,
-          purchase_price_with_tax: product.purchase_price_with_tax ?? true
+          purchase_price_with_tax: product.purchase_price_with_tax ?? false,
         })
         setToast({ message: `Added: ${product.name}`, type: 'success' })
         setTimeout(() => setToast(null), 2000)
@@ -518,7 +527,9 @@ export default function CreatePurchaseInvoicePage() {
   const updateItem = (index: number, field: keyof PurchaseBillItem, value: unknown) => {
     if (field === 'product_id' || field === 'description') clearFieldError('items')
     const newItems = [...items]
-    if (ITEM_NUMBER_FIELDS.includes(field)) {
+    if (field === 'unit_price') {
+      newItems[index] = { ...newItems[index], unit_price: parseMoney(limitDecimalInput(String(value ?? ''), 2)) }
+    } else if (ITEM_NUMBER_FIELDS.includes(field)) {
       newItems[index] = { ...newItems[index], [field]: parseItemNumber(value) }
     } else {
       newItems[index] = { ...newItems[index], [field]: value as PurchaseBillItem[typeof field] }
@@ -528,14 +539,17 @@ export default function CreatePurchaseInvoicePage() {
       const product = products.find(p => p.id === value)
       if (product) {
         newItems[index].description = product.name
-        newItems[index].unit_price = product.purchase_price_with_tax
-          ? product.purchase_price / (1 + product.tax_rate / 100)
-          : product.purchase_price
-        newItems[index].tax_rate = product.tax_rate
-        newItems[index].mrp = product.mrp || 0
-        newItems[index].sale_price = product.sale_price || 0
+        newItems[index].unit_price = exclusiveUnitPrice(
+          product.purchase_price,
+          product.tax_rate,
+          product.purchase_price_with_tax
+        )
+        newItems[index].tax_rate = parseItemNumber(product.tax_rate, 18)
+        newItems[index].mrp = parseItemNumber(product.mrp)
+        newItems[index].sale_price = parseItemNumber(product.sale_price)
         newItems[index].unit = product.unit
         newItems[index].hsn_code = product.hsn_code || ''
+        newItems[index].purchase_price_with_tax = product.purchase_price_with_tax ?? false
       }
     }
 
@@ -605,11 +619,11 @@ export default function CreatePurchaseInvoicePage() {
             description: item.description,
             quantity: parseItemNumber(item.quantity),
             unit: item.unit,
-            unit_price: parseItemNumber(item.unit_price),
+            unit_price: parseMoney(item.unit_price),
             discount: parseItemNumber(item.discount),
             tax_rate: parseItemNumber(item.tax_rate),
-            mrp: parseItemNumber(item.mrp),
-            sale_price: parseItemNumber(item.sale_price),
+            mrp: parseMoney(item.mrp),
+            sale_price: parseMoney(item.sale_price),
             hsn_code: item.hsn_code,
             batch_no: '',
             mfg_date: null,
@@ -811,8 +825,10 @@ export default function CreatePurchaseInvoicePage() {
                             type="number"
                             min="0"
                             step="0.01"
+                            inputMode="decimal"
                             value={item.unit_price}
-                            onChange={(e) => updateItem(index, 'unit_price', e.target.value)}
+                            onChange={(e) => updateItem(index, 'unit_price', limitDecimalInput(e.target.value, 2))}
+                            onBlur={() => updateItem(index, 'unit_price', parseMoney(item.unit_price))}
                             className="h-8 w-full text-right"
                             required
                           />

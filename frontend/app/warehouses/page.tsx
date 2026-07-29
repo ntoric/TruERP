@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,10 +9,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
-import { Warehouse, Plus, Edit, Trash2, MapPin, Phone, Mail, Building2 } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Plus, Edit, Trash2, Search, Download, MoreVertical, Power } from 'lucide-react'
+import { formatDate } from '@/lib/utils'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface WarehouseData {
   id: string
@@ -31,9 +43,18 @@ interface WarehouseData {
 }
 
 export default function WarehousesPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
   const { user, loading: authLoading } = useAuth()
   const [warehouses, setWarehouses] = useState<WarehouseData[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [stateFilter, setStateFilter] = useState('all')
+  const [selectedWarehouses, setSelectedWarehouses] = useState<Set<string>>(new Set())
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false)
+  const [isBulkStatusConfirmOpen, setIsBulkStatusConfirmOpen] = useState(false)
+  const [bulkStatusAction, setBulkStatusAction] = useState<'enable' | 'disable'>('enable')
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showEditModal, setShowEditModal] = useState(false)
   const [editingWarehouse, setEditingWarehouse] = useState<WarehouseData | null>(null)
@@ -52,6 +73,151 @@ export default function WarehousesPage() {
   })
 
   useEffect(() => { if (!authLoading && user) fetchWarehouses() }, [authLoading, user])
+  useEffect(() => {
+    if (searchParams.get('create') === 'true') {
+      setShowCreateModal(true)
+      router.replace('/warehouses', { scroll: false })
+    }
+  }, [searchParams, router])
+
+  const filteredWarehouses = warehouses.filter((warehouse) => {
+    const query = search.toLowerCase()
+    const matchesSearch =
+      !search ||
+      warehouse.name.toLowerCase().includes(query) ||
+      warehouse.code.toLowerCase().includes(query) ||
+      warehouse.city?.toLowerCase().includes(query) ||
+      warehouse.state?.toLowerCase().includes(query) ||
+      warehouse.contact_person?.toLowerCase().includes(query) ||
+      warehouse.contact_phone?.includes(search) ||
+      warehouse.contact_email?.toLowerCase().includes(query)
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'active' && warehouse.is_active) ||
+      (statusFilter === 'inactive' && !warehouse.is_active)
+
+    const matchesState = stateFilter === 'all' || warehouse.state === stateFilter
+
+    return matchesSearch && matchesStatus && matchesState
+  })
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredWarehouses)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedWarehouses(new Set())
+  }, [search, statusFilter, stateFilter])
+
+  const states = [...new Set(warehouses.map((warehouse) => warehouse.state).filter(Boolean))].sort()
+
+  const deletableSelectedCount = Array.from(selectedWarehouses).filter((id) => {
+    const warehouse = warehouses.find((item) => item.id === id)
+    return warehouse && !warehouse.is_default
+  }).length
+
+  const handleSelectWarehouse = (id: string) => {
+    const next = new Set(selectedWarehouses)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedWarehouses(next)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedWarehouses.size === filteredWarehouses.length) {
+      setSelectedWarehouses(new Set())
+    } else {
+      setSelectedWarehouses(new Set(filteredWarehouses.map((warehouse) => warehouse.id)))
+    }
+  }
+
+  const handleBulkDelete = () => {
+    if (deletableSelectedCount === 0) return
+    setIsBulkDeleteConfirmOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
+    try {
+      const res = await apiFetch('/warehouses/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedWarehouses) }),
+      })
+      if (res.ok) {
+        setSelectedWarehouses(new Set())
+        setIsBulkDeleteConfirmOpen(false)
+        fetchWarehouses()
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkStatus = (action: 'enable' | 'disable') => {
+    if (selectedWarehouses.size === 0) return
+    setBulkStatusAction(action)
+    setIsBulkStatusConfirmOpen(true)
+  }
+
+  const confirmBulkStatus = async () => {
+    try {
+      const res = await apiFetch('/warehouses/bulk/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: Array.from(selectedWarehouses),
+          is_active: bulkStatusAction === 'enable',
+        }),
+      })
+      if (res.ok) {
+        setSelectedWarehouses(new Set())
+        setIsBulkStatusConfirmOpen(false)
+        fetchWarehouses()
+      }
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleExport = () => {
+    const exportList =
+      selectedWarehouses.size > 0
+        ? filteredWarehouses.filter((warehouse) => selectedWarehouses.has(warehouse.id))
+        : filteredWarehouses
+    const rows: (string | number)[][] = [
+      [
+        'Code',
+        'Name',
+        'Address',
+        'City',
+        'State',
+        'Pincode',
+        'Contact Person',
+        'Contact Phone',
+        'Contact Email',
+        'Status',
+        'Default',
+        'Notes',
+        'Created',
+      ],
+      ...exportList.map((warehouse) => [
+        warehouse.code,
+        warehouse.name,
+        warehouse.address || '',
+        warehouse.city || '',
+        warehouse.state || '',
+        warehouse.pincode || '',
+        warehouse.contact_person || '',
+        warehouse.contact_phone || '',
+        warehouse.contact_email || '',
+        warehouse.is_active ? 'Active' : 'Inactive',
+        warehouse.is_default ? 'Yes' : 'No',
+        warehouse.notes || '',
+        warehouse.created_at ? formatDate(warehouse.created_at) : '',
+      ]),
+    ]
+    downloadCsv(`warehouses_${accountingExportDateStamp()}.csv`, rows)
+  }
 
   const fetchWarehouses = async () => {
     try {
@@ -166,7 +332,16 @@ export default function WarehousesPage() {
             <h1 className="text-2xl font-bold text-gray-900">Warehouses / Outlets</h1>
             <p className="text-gray-500">Manage your storage locations and outlets</p>
           </div>
-          <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleExport}
+              disabled={loading || filteredWarehouses.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export
+            </Button>
+            <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
             <DialogTrigger asChild>
               <Button className="gap-2">
                 <Plus className="h-4 w-4" />
@@ -294,16 +469,79 @@ export default function WarehousesPage() {
               </div>
             </DialogContent>
           </Dialog>
+          </div>
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>All Warehouses</CardTitle>
+          {selectedWarehouses.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 border-b px-4 py-3">
+              <span className="text-sm text-gray-600">{selectedWarehouses.size} selected</span>
+              <Button variant="outline" size="sm" onClick={() => handleBulkStatus('enable')}>
+                <Power className="mr-2 h-4 w-4" />
+                Enable
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleBulkStatus('disable')}>
+                <Power className="mr-2 h-4 w-4" />
+                Disable
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDelete}
+                disabled={deletableSelectedCount === 0}
+              >
+                <Trash2 className="mr-2 h-4 w-4" />
+                Delete{deletableSelectedCount > 0 ? ` (${deletableSelectedCount})` : ''}
+              </Button>
+            </div>
+          )}
+          <CardHeader className="pb-4">
+            <CardTitle className="mb-4">All Warehouses</CardTitle>
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+              <div className="relative flex-1 min-w-[220px] sm:max-w-sm">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Input
+                  placeholder="Search by name, code, city, contact..."
+                  className="pl-10"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select value={statusFilter} onValueChange={setStatusFilter}>
+                <SelectTrigger className="w-full sm:w-[150px]">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Status</SelectItem>
+                  <SelectItem value="active">Active</SelectItem>
+                  <SelectItem value="inactive">Inactive</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={stateFilter} onValueChange={setStateFilter}>
+                <SelectTrigger className="w-full sm:w-[180px]">
+                  <SelectValue placeholder="State" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All States</SelectItem>
+                  {states.map((state) => (
+                    <SelectItem key={state} value={state}>
+                      {state}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={selectedWarehouses.size === filteredWarehouses.length && filteredWarehouses.length > 0}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead>Code</TableHead>
                   <TableHead>Name</TableHead>
                   <TableHead>Location</TableHead>
@@ -316,13 +554,25 @@ export default function WarehousesPage() {
               <TableBody>
                 {warehouses.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-gray-500">
+                    <TableCell colSpan={8} className="text-center text-gray-500">
                       No warehouses found. Create your first warehouse to get started.
                     </TableCell>
                   </TableRow>
+                ) : filteredWarehouses.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center text-gray-500">
+                      No warehouses match your filters.
+                    </TableCell>
+                  </TableRow>
                 ) : (
-                  warehouses.map((warehouse) => (
+                  paginatedItems.map((warehouse) => (
                     <TableRow key={warehouse.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedWarehouses.has(warehouse.id)}
+                          onCheckedChange={() => handleSelectWarehouse(warehouse.id)}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{warehouse.code}</TableCell>
                       <TableCell>{warehouse.name}</TableCell>
                       <TableCell>
@@ -350,30 +600,41 @@ export default function WarehousesPage() {
                         )}
                       </TableCell>
                       <TableCell className="text-right">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => handleEditClick(warehouse)}
-                          >
-                            <Edit className="h-4 w-4" />
-                          </Button>
-                          {!warehouse.is_default && (
-                            <Button
-                              size="sm"
-                              variant="destructive"
-                              onClick={() => handleDeleteWarehouse(warehouse.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreVertical className="h-4 w-4" />
                             </Button>
-                          )}
-                        </div>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            <DropdownMenuItem onClick={() => handleEditClick(warehouse)}>
+                              <Edit className="mr-2 h-4 w-4" />
+                              Edit
+                            </DropdownMenuItem>
+                            {!warehouse.is_default && (
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteWarehouse(warehouse.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   ))
                 )}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
 
@@ -498,6 +759,49 @@ export default function WarehousesPage() {
 
               <Button onClick={handleUpdateWarehouse} className="w-full">Update Warehouse</Button>
             </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm Bulk Delete</DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Delete {deletableSelectedCount} selected warehouse{deletableSelectedCount === 1 ? '' : 's'}?
+              Default warehouses will be skipped and cannot be deleted.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkDeleteConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={confirmBulkDelete}>
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkStatusConfirmOpen} onOpenChange={setIsBulkStatusConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>
+                {bulkStatusAction === 'enable' ? 'Enable Warehouses' : 'Disable Warehouses'}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              {bulkStatusAction === 'enable'
+                ? `Enable ${selectedWarehouses.size} selected warehouse${selectedWarehouses.size === 1 ? '' : 's'}?`
+                : `Disable ${selectedWarehouses.size} selected warehouse${selectedWarehouses.size === 1 ? '' : 's'}?`}
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkStatusConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={confirmBulkStatus}>
+                {bulkStatusAction === 'enable' ? 'Enable' : 'Disable'}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       </div>

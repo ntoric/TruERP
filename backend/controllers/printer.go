@@ -1,14 +1,15 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"encoding/base64"
 	"fmt"
 	"html"
 	"net/http"
 	"strings"
 	"text/template"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -23,6 +24,23 @@ type ThermalPrintRequest struct {
 type ThermalPrintResponse struct {
 	Content string `json:"content"`
 	Width   int    `json:"width"` // in mm
+}
+
+type DocumentPrintRequest struct {
+	DocumentType string    `json:"document_type" binding:"required"` // invoice, expense
+	DocumentID   uuid.UUID `json:"document_id" binding:"required"`
+	Mode         string    `json:"mode"` // a4, thermal, or empty to use settings
+	PrintSize    string    `json:"print_size"`
+}
+
+type DocumentPrintResponse struct {
+	Mode        string `json:"mode"` // a4, thermal
+	PDFBase64   string `json:"pdf_base64"`
+	ContentType string `json:"content_type"`
+	Content     string `json:"content,omitempty"` // thermal text (preview)
+	Width       int    `json:"width,omitempty"`
+	PrinterName string `json:"printer_name,omitempty"`
+	Title       string `json:"title"`
 }
 
 // 2-inch (58mm) template
@@ -86,6 +104,115 @@ func GenerateThermalPrint(c *gin.Context) {
 		Content: content,
 		Width:   width,
 	})
+}
+
+// GenerateDocumentPrint returns a real PDF page (base64) for A4 or thermal based on settings/mode.
+func GenerateDocumentPrint(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var req DocumentPrintRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	settings := loadPrintSettings(userID)
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode == "" {
+		mode = settings.InvoicePrintMode
+	}
+	if mode != "thermal" {
+		mode = "a4"
+	}
+
+	printSize := req.PrintSize
+	if printSize != "2inch" && printSize != "3inch" {
+		printSize = settings.ThermalPrintSize
+	}
+
+	switch req.DocumentType {
+	case "invoice":
+		var invoice models.Invoice
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, req.DocumentID).
+			Preload("Party").
+			Preload("Items").
+			First(&invoice).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Invoice not found"})
+			return
+		}
+		title := "Invoice " + invoice.InvoiceNumber
+		var business models.Business
+		_ = utils.DB.Where("user_id = ?", userID).First(&business)
+
+		if mode == "thermal" {
+			content, width := generateInvoiceThermal(userID, req.DocumentID, printSize)
+			if content == "" {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate thermal print"})
+				return
+			}
+			pdfBytes, err := buildThermalReceiptPDF(content, width)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build thermal PDF page"})
+				return
+			}
+			c.JSON(http.StatusOK, DocumentPrintResponse{
+				Mode:        "thermal",
+				PDFBase64:   base64.StdEncoding.EncodeToString(pdfBytes),
+				ContentType: "application/pdf",
+				Content:     content,
+				Width:       width,
+				PrinterName: settings.ThermalPrinterName,
+				Title:       title,
+			})
+			return
+		}
+
+		pdfBytes, err := buildInvoiceDocumentPDF(invoice, &business, settings)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build invoice PDF page"})
+			return
+		}
+		c.JSON(http.StatusOK, DocumentPrintResponse{
+			Mode:        "a4",
+			PDFBase64:   base64.StdEncoding.EncodeToString(pdfBytes),
+			ContentType: "application/pdf",
+			PrinterName: settings.DocumentPrinterName,
+			Title:       title,
+		})
+	case "expense":
+		var expense models.Expense
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, req.DocumentID).
+			First(&expense).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Expense not found"})
+			return
+		}
+		title := "Expense " + expense.ExpenseNumber
+		content, width := generateExpenseThermal(userID, req.DocumentID, printSize)
+		if content == "" {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate thermal print"})
+			return
+		}
+		pdfBytes, err := buildThermalReceiptPDF(content, width)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to build expense PDF page"})
+			return
+		}
+		printerName := settings.ThermalPrinterName
+		if mode == "a4" {
+			printerName = settings.DocumentPrinterName
+		}
+		c.JSON(http.StatusOK, DocumentPrintResponse{
+			Mode:        "thermal",
+			PDFBase64:   base64.StdEncoding.EncodeToString(pdfBytes),
+			ContentType: "application/pdf",
+			Content:     content,
+			Width:       width,
+			PrinterName: printerName,
+			Title:       title,
+		})
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid document type"})
+	}
 }
 
 func GetThermalPrintPreview(c *gin.Context) {

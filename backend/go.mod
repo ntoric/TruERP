@@ -1,4 +1,4 @@
-module billbook
+module truerp
 
 go 1.25.4
 

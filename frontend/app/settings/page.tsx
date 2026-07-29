@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import Cookies from 'js-cookie'
 import { apiFetch } from '@/hooks/useAuth'
+import { getAuthToken } from '@/lib/authToken'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +22,9 @@ import {
 } from 'lucide-react'
 import WeighingScaleSettingsCard from '@/components/WeighingScaleSettingsCard'
 import PrintSettingsCard from '@/components/PrintSettingsCard'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
+import { API_BASE } from '@/lib/utils'
 
 interface Business {
   name: string
@@ -140,6 +143,10 @@ export default function SettingsPage() {
   
   // Users state
   const [users, setUsers] = useState<BusinessUser[]>([])
+  const customFieldsPagination = usePagination(invoiceCustomFields)
+  const usersPagination = usePagination(users)
+  const remindersPagination = usePagination(reminders)
+  const caSharesPagination = usePagination(caShares)
   const [newUser, setNewUser] = useState({
     name: '', email: '', password: '', phone: '', role: 'staff'
   })
@@ -340,8 +347,8 @@ export default function SettingsPage() {
     setSaving(true)
     setMessage('')
     try {
-      const token = Cookies.get('token')
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8088'}/api/v1/business/upload-logo`, {
+      const token = getAuthToken()
+      const res = await fetch(`${API_BASE}/business/upload-logo`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -373,8 +380,8 @@ export default function SettingsPage() {
     setSaving(true)
     setMessage('')
     try {
-      const token = Cookies.get('token')
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8088'}/api/v1/business/upload-signature`, {
+      const token = getAuthToken()
+      const res = await fetch(`${API_BASE}/business/upload-signature`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
@@ -979,7 +986,7 @@ export default function SettingsPage() {
                 </form>
                 {invoiceCustomFields.length > 0 && (
                   <ul className="divide-y rounded-md border">
-                    {invoiceCustomFields.map((f) => (
+                    {customFieldsPagination.paginatedItems.map((f) => (
                       <li key={f.id} className="flex items-center justify-between px-3 py-2 text-sm">
                         <div>
                           <span className="font-medium">{f.label}</span>
@@ -992,6 +999,13 @@ export default function SettingsPage() {
                     ))}
                   </ul>
                 )}
+                <PaginationControls
+                  page={customFieldsPagination.page}
+                  totalPages={customFieldsPagination.totalPages}
+                  totalItems={customFieldsPagination.totalItems}
+                  pageSize={customFieldsPagination.pageSize}
+                  onPageChange={customFieldsPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -1054,7 +1068,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <h3 className="font-semibold">Existing Users</h3>
                   <div className="space-y-2">
-                    {users.map((user) => (
+                    {usersPagination.paginatedItems.map((user) => (
                       <div key={user.id} className="flex items-center justify-between rounded-lg border p-3">
                         <div>
                           <p className="font-medium">{user.name}</p>
@@ -1068,6 +1082,13 @@ export default function SettingsPage() {
                       </div>
                     ))}
                   </div>
+                  <PaginationControls
+                    page={usersPagination.page}
+                    totalPages={usersPagination.totalPages}
+                    totalItems={usersPagination.totalItems}
+                    pageSize={usersPagination.pageSize}
+                    onPageChange={usersPagination.setPage}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -1143,7 +1164,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <h3 className="font-semibold">Your Reminders</h3>
                   <div className="space-y-2">
-                    {reminders.map((reminder) => (
+                    {remindersPagination.paginatedItems.map((reminder) => (
                       <div key={reminder.id} className="flex items-center justify-between rounded-lg border p-3">
                         <div>
                           <p className="font-medium">{reminder.title}</p>
@@ -1155,6 +1176,13 @@ export default function SettingsPage() {
                       </div>
                     ))}
                   </div>
+                  <PaginationControls
+                    page={remindersPagination.page}
+                    totalPages={remindersPagination.totalPages}
+                    totalItems={remindersPagination.totalItems}
+                    pageSize={remindersPagination.pageSize}
+                    onPageChange={remindersPagination.setPage}
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -1204,7 +1232,7 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   <h3 className="font-semibold">CA Report Shares</h3>
                   <div className="space-y-2">
-                    {caShares.map((share) => (
+                    {caSharesPagination.paginatedItems.map((share) => (
                       <div key={share.id} className="flex items-center justify-between rounded-lg border p-3">
                         <div>
                           <p className="font-medium">{share.ca_name || share.ca_email}</p>
@@ -1216,6 +1244,13 @@ export default function SettingsPage() {
                       </div>
                     ))}
                   </div>
+                  <PaginationControls
+                    page={caSharesPagination.page}
+                    totalPages={caSharesPagination.totalPages}
+                    totalItems={caSharesPagination.totalItems}
+                    pageSize={caSharesPagination.pageSize}
+                    onPageChange={caSharesPagination.setPage}
+                  />
                 </div>
               </CardContent>
             </Card>

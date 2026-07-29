@@ -6,9 +6,17 @@ import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, Search, FileText, Download, MoreVertical, Edit, X, Trash2, Truck } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface DeliveryChallan {
   id: string
@@ -28,7 +36,7 @@ export default function DeliveryChallansPage() {
   const [filter, setFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [actionMenu, setActionMenu] = useState<string | null>(null)
+  const [selectedChallans, setSelectedChallans] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchChallans()
@@ -55,6 +63,13 @@ export default function DeliveryChallansPage() {
     challan.challan_number.toLowerCase().includes(search.toLowerCase()) ||
     challan.party?.name?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredChallans)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedChallans(new Set())
+  }, [search, filter, dateFrom, dateTo])
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
@@ -97,7 +112,6 @@ export default function DeliveryChallansPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   const handleDeleteChallan = async (id: string) => {
@@ -110,7 +124,79 @@ export default function DeliveryChallansPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
+  }
+
+  const toggleSelectChallan = (id: string) => {
+    setSelectedChallans(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllChallans = () => {
+    if (selectedChallans.size === filteredChallans.length) {
+      setSelectedChallans(new Set())
+    } else {
+      setSelectedChallans(new Set(filteredChallans.map(ch => ch.id)))
+    }
+  }
+
+  const handleBulkExportChallans = () => {
+    const selected = filteredChallans.filter(ch => selectedChallans.has(ch.id))
+    const headers = ['Date', 'Challan #', 'Party Name', 'Quantity', 'Amount', 'Status']
+    const rows = selected.map(challan => [
+      formatDate(challan.date),
+      challan.challan_number,
+      challan.party?.name || 'N/A',
+      challan.total_quantity.toString(),
+      formatCurrency(challan.sub_total),
+      challan.status
+    ])
+    const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'selected-delivery-challans.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const handleBulkCancelChallans = async () => {
+    const eligible = filteredChallans.filter(
+      ch => selectedChallans.has(ch.id) && ch.status !== 'cancelled' && ch.status !== 'delivered'
+    )
+    if (eligible.length === 0) return
+    try {
+      await Promise.all(
+        eligible.map(ch =>
+          apiFetch(`/delivery-challans/${ch.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ status: 'cancelled' })
+          })
+        )
+      )
+      setSelectedChallans(new Set())
+      fetchChallans()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkDeleteChallans = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedChallans.size} delivery challan(s)?`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedChallans).map(id => apiFetch(`/delivery-challans/${id}`, { method: 'DELETE' }))
+      )
+      setSelectedChallans(new Set())
+      fetchChallans()
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   return (
@@ -171,9 +257,33 @@ export default function DeliveryChallansPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {selectedChallans.size > 0 && (
+                  <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
+                    <span className="text-sm text-gray-600">{selectedChallans.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkExportChallans}>
+                        <Download className="mr-1 h-3.5 w-3.5" /> Export
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={handleBulkCancelChallans}>
+                        Cancel
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteChallans}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-gray-500">
+                      <th className="pb-3 pr-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={filteredChallans.length > 0 && selectedChallans.size === filteredChallans.length}
+                          onChange={toggleSelectAllChallans}
+                        />
+                      </th>
                       <th className="pb-3 font-medium">Date</th>
                       <th className="pb-3 font-medium">Challan #</th>
                       <th className="pb-3 font-medium">Party Name</th>
@@ -184,8 +294,16 @@ export default function DeliveryChallansPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredChallans.map((challan) => (
+                    {paginatedItems.map((challan) => (
                       <tr key={challan.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={selectedChallans.has(challan.id)}
+                            onChange={() => toggleSelectChallan(challan.id)}
+                          />
+                        </td>
                         <td className="py-3 text-gray-500">{formatDate(challan.date)}</td>
                         <td className="py-3">
                           <Link href={`/delivery-challans/view?id=${challan.id}`} className="font-medium text-blue-600 hover:underline">
@@ -197,47 +315,40 @@ export default function DeliveryChallansPage() {
                         <td className="py-3 font-medium text-gray-900">{formatCurrency(challan.sub_total)}</td>
                         <td className="py-3">{getStatusBadge(challan.status)}</td>
                         <td className="py-3">
-                          <div className="relative">
-                            <button
-                              onClick={() => setActionMenu(actionMenu === challan.id ? null : challan.id)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <MoreVertical className="h-4 w-4 text-gray-500" />
-                            </button>
-                            {actionMenu === challan.id && (
-                              <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-md border bg-white shadow-lg">
-                                <div className="py-1">
-                                  <Link
-                                    href={`/delivery-challans/create?id=${challan.id}`}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    onClick={() => setActionMenu(null)}
-                                  >
-                                    <Edit className="h-4 w-4" /> Edit
-                                  </Link>
-                                  {challan.status !== 'cancelled' && challan.status !== 'delivered' && (
-                                    <button
-                                      onClick={() => handleCancelChallan(challan.id)}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      <X className="h-4 w-4" /> Cancel
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteChallan(challan.id)}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-gray-100"
-                                  >
-                                    <Trash2 className="h-4 w-4" /> Delete
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link href={`/delivery-challans/create?id=${challan.id}`} className="flex items-center">
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                              {challan.status !== 'cancelled' && challan.status !== 'delivered' && (
+                                <DropdownMenuItem onClick={() => handleCancelChallan(challan.id)}>
+                                  <X className="mr-2 h-4 w-4" />
+                                  Cancel
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteChallan(challan.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
                     {filteredChallans.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-gray-500">
+                        <td colSpan={8} className="py-8 text-center text-gray-500">
                           No delivery challans found
                         </td>
                       </tr>
@@ -245,6 +356,15 @@ export default function DeliveryChallansPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

@@ -6,9 +6,17 @@ import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, Search, MoreVertical, Edit, Trash2, CheckCircle } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface SalesReturn {
   id: string
@@ -27,7 +35,7 @@ export default function SalesReturnsPage() {
   const [filter, setFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
-  const [actionMenu, setActionMenu] = useState<string | null>(null)
+  const [selectedReturns, setSelectedReturns] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchReturns()
@@ -59,6 +67,13 @@ export default function SalesReturnsPage() {
     ret.invoice?.invoice_number?.toLowerCase().includes(search.toLowerCase())
   )
 
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredReturns)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedReturns(new Set())
+  }, [search, filter, dateFrom, dateTo])
+
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
       draft: 'bg-gray-100 text-gray-700',
@@ -77,7 +92,6 @@ export default function SalesReturnsPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
   }
 
   const handleDeleteReturn = async (id: string) => {
@@ -90,7 +104,50 @@ export default function SalesReturnsPage() {
     } catch (err) {
       console.error(err)
     }
-    setActionMenu(null)
+  }
+
+  const toggleSelectReturn = (id: string) => {
+    setSelectedReturns(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const toggleSelectAllReturns = () => {
+    if (selectedReturns.size === filteredReturns.length) {
+      setSelectedReturns(new Set())
+    } else {
+      setSelectedReturns(new Set(filteredReturns.map(ret => ret.id)))
+    }
+  }
+
+  const handleBulkProcessReturns = async () => {
+    const eligible = filteredReturns.filter(ret => selectedReturns.has(ret.id) && ret.status === 'draft')
+    if (eligible.length === 0) return
+    try {
+      await Promise.all(
+        eligible.map(ret => apiFetch(`/sales-returns/${ret.id}/process`, { method: 'POST' }))
+      )
+      setSelectedReturns(new Set())
+      fetchReturns()
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const handleBulkDeleteReturns = async () => {
+    if (!confirm(`Are you sure you want to delete ${selectedReturns.size} sales return(s)?`)) return
+    try {
+      await Promise.all(
+        Array.from(selectedReturns).map(id => apiFetch(`/sales-returns/${id}`, { method: 'DELETE' }))
+      )
+      setSelectedReturns(new Set())
+      fetchReturns()
+    } catch (err) {
+      console.error(err)
+    }
   }
 
   return (
@@ -146,9 +203,30 @@ export default function SalesReturnsPage() {
               </div>
             ) : (
               <div className="overflow-x-auto">
+                {selectedReturns.size > 0 && (
+                  <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
+                    <span className="text-sm text-gray-600">{selectedReturns.size} selected</span>
+                    <div className="ml-auto flex gap-2">
+                      <Button variant="outline" size="sm" onClick={handleBulkProcessReturns}>
+                        <CheckCircle className="mr-1 h-3.5 w-3.5" /> Process
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteReturns}>
+                        <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b text-left text-gray-500">
+                      <th className="pb-3 pr-2">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                          checked={filteredReturns.length > 0 && selectedReturns.size === filteredReturns.length}
+                          onChange={toggleSelectAllReturns}
+                        />
+                      </th>
                       <th className="pb-3 font-medium">Date</th>
                       <th className="pb-3 font-medium">Sales Return #</th>
                       <th className="pb-3 font-medium">Party Name</th>
@@ -159,8 +237,16 @@ export default function SalesReturnsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredReturns.map((ret) => (
+                    {paginatedItems.map((ret) => (
                       <tr key={ret.id} className="border-b last:border-0 hover:bg-gray-50">
+                        <td className="py-3 pr-2">
+                          <input
+                            type="checkbox"
+                            className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                            checked={selectedReturns.has(ret.id)}
+                            onChange={() => toggleSelectReturn(ret.id)}
+                          />
+                        </td>
                         <td className="py-3 text-gray-500">{formatDate(ret.date)}</td>
                         <td className="py-3">
                           <Link href={`/sales-returns/view?id=${ret.id}`} className="font-medium text-blue-600 hover:underline">
@@ -172,47 +258,40 @@ export default function SalesReturnsPage() {
                         <td className="py-3 font-medium text-gray-900">{formatCurrency(ret.amount)}</td>
                         <td className="py-3">{getStatusBadge(ret.status)}</td>
                         <td className="py-3">
-                          <div className="relative">
-                            <button
-                              onClick={() => setActionMenu(actionMenu === ret.id ? null : ret.id)}
-                              className="p-1 hover:bg-gray-100 rounded"
-                            >
-                              <MoreVertical className="h-4 w-4 text-gray-500" />
-                            </button>
-                            {actionMenu === ret.id && (
-                              <div className="absolute right-0 top-full z-10 mt-1 w-40 rounded-md border bg-white shadow-lg">
-                                <div className="py-1">
-                                  <Link
-                                    href={`/sales-returns/create?id=${ret.id}`}
-                                    className="flex items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    onClick={() => setActionMenu(null)}
-                                  >
-                                    <Edit className="h-4 w-4" /> Edit
-                                  </Link>
-                                  {ret.status === 'draft' && (
-                                    <button
-                                      onClick={() => handleProcessReturn(ret.id)}
-                                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                                    >
-                                      <CheckCircle className="h-4 w-4" /> Process
-                                    </button>
-                                  )}
-                                  <button
-                                    onClick={() => handleDeleteReturn(ret.id)}
-                                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-gray-100"
-                                  >
-                                    <Trash2 className="h-4 w-4" /> Delete
-                                  </button>
-                                </div>
-                              </div>
-                            )}
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                <MoreVertical className="h-4 w-4" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem asChild>
+                                <Link href={`/sales-returns/create?id=${ret.id}`} className="flex items-center">
+                                  <Edit className="mr-2 h-4 w-4" />
+                                  Edit
+                                </Link>
+                              </DropdownMenuItem>
+                              {ret.status === 'draft' && (
+                                <DropdownMenuItem onClick={() => handleProcessReturn(ret.id)}>
+                                  <CheckCircle className="mr-2 h-4 w-4" />
+                                  Process
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuItem
+                                onClick={() => handleDeleteReturn(ret.id)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     ))}
                     {filteredReturns.length === 0 && (
                       <tr>
-                        <td colSpan={7} className="py-8 text-center text-gray-500">
+                        <td colSpan={8} className="py-8 text-center text-gray-500">
                           No sales returns found
                         </td>
                       </tr>
@@ -220,6 +299,15 @@ export default function SalesReturnsPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

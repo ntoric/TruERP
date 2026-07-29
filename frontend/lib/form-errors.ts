@@ -26,9 +26,23 @@ const FIELD_LABELS: Record<string, string> = {
   unit_price: 'Item unit price',
   UnitPrice: 'Item unit price',
   'Items.UnitPrice': 'Item unit price',
+  quantity: 'Quantity',
+  Quantity: 'Quantity',
+  'Items.Quantity': 'Quantity',
+  PartyID: 'Party',
   email: 'Email',
   phone: 'Phone',
+  gstin: 'GSTIN',
+  pan: 'PAN',
+  tan: 'TAN',
+  pincode: 'Pincode',
+  party_type: 'Party type',
+  opening_balance: 'Opening balance',
+  credit_limit: 'Credit limit',
   password: 'Password',
+  totp_code: 'Authenticator code',
+  current_password: 'Current password',
+  new_password: 'New password',
 }
 
 function labelFor(field: string): string {

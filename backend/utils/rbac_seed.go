@@ -1,7 +1,7 @@
 package utils
 
 import (
-	"billbook/models"
+	"truerp/models"
 	"log"
 
 	"github.com/google/uuid"

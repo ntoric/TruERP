@@ -1,0 +1,22 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "TruERP",
+  "outputfilename": "TruERP",
+  "frontend:dir": "frontend",
+  "frontend:install": "",
+  "frontend:build": "",
+  "frontend:dev:watcher": "",
+  "frontend:dev:serverUrl": "",
+  "author": {
+    "name": "TruERP",
+    "email": ""
+  },
+  "info": {
+    "companyName": "TruERP",
+    "productName": "TruERP",
+    "productVersion": "1.0.0",
+    "copyright": "Copyright TruERP",
+    "comments": "TruERP desktop billing application for Windows"
+  },
+  "nsisType": "multiple"
+}

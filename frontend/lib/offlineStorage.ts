@@ -1,5 +1,5 @@
 // IndexedDB wrapper for offline storage
-const DB_NAME = 'BillBookOfflineDB';
+const DB_NAME = 'TruERPOfflineDB';
 const DB_VERSION = 1;
 const STORES = {
   INVOICES: 'invoices',

@@ -11,6 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 import {
   PaymentMethodMapping,
   savePaymentMethodMappings,
@@ -105,6 +107,12 @@ export default function CashBankPage() {
       fetchData()
     }
   }, [authLoading, user, filterUnlinked, startDate, endDate])
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(transactions)
+
+  useEffect(() => {
+    resetPage()
+  }, [filterUnlinked, startDate, endDate])
 
   const fetchData = async () => {
     try {
@@ -822,7 +830,7 @@ export default function CashBankPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {transactions.map((trans) => (
+                  {paginatedItems.map((trans) => (
                     <tr key={trans.id} className="border-b last:border-0">
                       <td className="py-3 text-gray-600">{formatDate(trans.date)}</td>
                       <td className="py-3">{getTransactionTypeBadge(trans.transaction_type)}</td>
@@ -858,6 +866,13 @@ export default function CashBankPage() {
                 </tbody>
               </table>
             </div>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
       </div>

@@ -1,10 +1,10 @@
 package main
 
 import (
-	"billbook/controllers"
-	"billbook/routes"
-	"billbook/services"
-	"billbook/utils"
+	"truerp/controllers"
+	"truerp/routes"
+	"truerp/services"
+	"truerp/utils"
 	"log"
 
 	"github.com/gin-contrib/cors"

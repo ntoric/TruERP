@@ -11,18 +11,21 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { SearchableSelect } from '@/components/ui/searchable-select'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import BarcodeScanner from '@/components/ui/BarcodeScanner'
-import { Package, Plus, Search, Trash2, Download, Printer, Edit, MoreVertical, Eye, Power, Barcode } from 'lucide-react'
+import { Package, Plus, Search, Trash2, Download, Upload, Printer, Edit, MoreVertical, Eye, Power, Barcode } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
 import { cn } from '@/lib/utils'
-import { notifySuccess } from '@/lib/notify'
+import { notifyError, notifySuccess } from '@/lib/notify'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
 import ProductImageField from '@/components/ProductImageField'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Category {
   id: string
@@ -53,6 +56,46 @@ interface Product {
   image_url?: string
   is_active: boolean
 }
+
+const PRODUCT_IMPORT_HEADERS = [
+  'Name',
+  'SKU',
+  'Item Code',
+  'Category',
+  'Unit',
+  'HSN Code',
+  'Purchase Price',
+  'Sale Price',
+  'MRP',
+  'Tax Rate %',
+  'Discount',
+  'Min Stock',
+  'Item Type',
+  'Low Stock Alert',
+  'Enable Batching',
+  'Sale Price With Tax',
+  'Purchase Price With Tax',
+]
+
+const PRODUCT_IMPORT_SAMPLE_ROW: (string | number)[] = [
+  'Sample Product',
+  'SKU001',
+  'ITEM001',
+  'General',
+  'PCS',
+  '8471',
+  100,
+  150,
+  180,
+  18,
+  '5',
+  10,
+  'product',
+  'true',
+  'false',
+  'true',
+  'true',
+]
 
 export default function ProductsPage() {
   const router = useRouter()
@@ -144,6 +187,12 @@ export default function ProductsPage() {
     }
   })
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+  const [showImportDialog, setShowImportDialog] = useState(false)
+  const [importFile, setImportFile] = useState<File | null>(null)
+  const [importing, setImporting] = useState(false)
+  const [importedCount, setImportedCount] = useState<number | null>(null)
+  const [importErrors, setImportErrors] = useState<string[]>([])
+  const importFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => { if (!authLoading && user) fetchCategories() }, [authLoading, user])
   useEffect(() => {
@@ -154,6 +203,12 @@ export default function ProductsPage() {
   }, [searchParams, router])
   useEffect(() => { if (!authLoading && user) fetchBusinessSettings() }, [authLoading, user])
   useEffect(() => { if (!authLoading && user) fetchProducts() }, [authLoading, user, selectedCategory, searchQuery])
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(products)
+
+  useEffect(() => {
+    resetPage()
+  }, [selectedCategory, searchQuery])
   useEffect(() => { if (showDraftsModal && user) fetchDrafts() }, [showDraftsModal, user])
   useEffect(() => { if (!authLoading && user) fetchWarehouses() }, [authLoading, user])
   useEffect(() => { if (!authLoading && user) fetchInventoryItems() }, [authLoading, user])
@@ -438,6 +493,73 @@ export default function ProductsPage() {
         document.body.removeChild(a)
       }
     } catch (err) { console.error(err) }
+  }
+
+  const handleDownloadImportTemplate = () => {
+    downloadCsv(`products_import_template_${accountingExportDateStamp()}.csv`, [
+      PRODUCT_IMPORT_HEADERS,
+      PRODUCT_IMPORT_SAMPLE_ROW,
+    ])
+  }
+
+  const resetImportDialog = () => {
+    setImportFile(null)
+    setImportedCount(null)
+    setImportErrors([])
+    if (importFileRef.current) importFileRef.current.value = ''
+  }
+
+  const handleImportDialogChange = (open: boolean) => {
+    setShowImportDialog(open)
+    if (!open) resetImportDialog()
+  }
+
+  const handleImportProducts = async () => {
+    if (!importFile) {
+      notifyError('Please select a CSV or Excel file to import')
+      return
+    }
+
+    setImporting(true)
+    setImportedCount(null)
+    setImportErrors([])
+
+    try {
+      const formData = new FormData()
+      formData.append('file', importFile)
+      const fileName = importFile.name.toLowerCase()
+      const endpoint = fileName.endsWith('.xlsx') || fileName.endsWith('.xls')
+        ? '/products/import/excel'
+        : '/products/import/csv'
+
+      const res = await apiFetch(endpoint, { method: 'POST', body: formData })
+      const data = await res.json()
+
+      if (res.ok) {
+        const count = data.imported ?? 0
+        const errors: string[] = data.errors ?? []
+        setImportedCount(count)
+        setImportErrors(errors)
+
+        if (count > 0) {
+          fetchProducts()
+          notifySuccess(`Successfully imported ${count} product${count === 1 ? '' : 's'}`)
+        }
+
+        if (count === 0 && errors.length > 0) {
+          notifyError('No products were imported. Please review the errors below.')
+        } else if (errors.length > 0) {
+          notifyError(`${errors.length} row${errors.length === 1 ? '' : 's'} could not be imported`)
+        }
+      } else {
+        notifyError(data.error || 'Import failed')
+      }
+    } catch (err) {
+      console.error(err)
+      notifyError('Import failed')
+    } finally {
+      setImporting(false)
+    }
   }
 
   const handlePrintLabel = async (productId: string) => {
@@ -1093,6 +1215,10 @@ export default function ProductsPage() {
                 </SelectContent>
               </Select>
               <div className="flex gap-2 ml-auto">
+                <Button variant="outline" size="sm" onClick={() => setShowImportDialog(true)} className="gap-2">
+                  <Upload className="h-4 w-4" />
+                  Bulk Import
+                </Button>
                 <Button variant="outline" size="sm" onClick={handleExportCSV} className="gap-2">
                   <Download className="h-4 w-4" />
                   Export CSV
@@ -1127,7 +1253,7 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {products.map((p) => (
+                {paginatedItems.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>
                       <Checkbox
@@ -1176,9 +1302,64 @@ export default function ProductsPage() {
                 {products.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-500">No products found</TableCell></TableRow>}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
       </div>
+
+      <Dialog open={showImportDialog} onOpenChange={handleImportDialogChange}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Bulk Import Products</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Upload a CSV or Excel file with your product data. Download the template first to see the required columns and format.
+            </p>
+            <Button variant="outline" onClick={handleDownloadImportTemplate} className="gap-2 w-full sm:w-auto">
+              <Download className="h-4 w-4" />
+              Download Import Template
+            </Button>
+            <div className="space-y-2">
+              <Label htmlFor="product_import_file">Import file</Label>
+              <Input
+                id="product_import_file"
+                ref={importFileRef}
+                type="file"
+                accept=".csv,.xlsx,.xls"
+                onChange={(e) => setImportFile(e.target.files?.[0] ?? null)}
+              />
+              {importFile && (
+                <p className="text-sm text-gray-500">Selected: {importFile.name}</p>
+              )}
+            </div>
+            {importedCount !== null && (
+              <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+                Imported {importedCount} product{importedCount === 1 ? '' : 's'} successfully.
+              </div>
+            )}
+            {importErrors.length > 0 && (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 max-h-40 overflow-y-auto space-y-1">
+                {importErrors.map((error, index) => (
+                  <p key={`${error}-${index}`}>{error}</p>
+                ))}
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => handleImportDialogChange(false)}>Cancel</Button>
+            <Button onClick={handleImportProducts} disabled={importing || !importFile}>
+              {importing ? 'Importing...' : 'Import Products'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={showPrintDialog} onOpenChange={setShowPrintDialog}>
         <DialogContent>

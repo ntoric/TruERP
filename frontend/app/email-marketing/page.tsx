@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { formatDate } from '@/lib/utils'
 import { Plus, Send, Calendar, Users, Mail, Loader2, Clock, CheckCircle, XCircle, AlertCircle, Eye, MousePointerClick } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface EmailCampaign {
   id: string
@@ -62,6 +64,7 @@ interface EmailStats {
 
 export default function EmailMarketingPage() {
   const [campaigns, setCampaigns] = useState<EmailCampaign[]>([])
+  const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(campaigns)
   const [stats, setStats] = useState<EmailStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -446,7 +449,7 @@ export default function EmailMarketingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {campaigns.map((campaign) => (
+                    {paginatedItems.map((campaign) => (
                       <tr key={campaign.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 font-medium text-gray-900">{campaign.campaign_name}</td>
                         <td className="py-3 text-gray-600">{campaign.subject}</td>
@@ -505,6 +508,13 @@ export default function EmailMarketingPage() {
                     )}
                   </tbody>
                 </table>
+                <PaginationControls
+                  page={page}
+                  totalPages={totalPages}
+                  totalItems={totalItems}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                />
               </div>
             )}
           </CardContent>

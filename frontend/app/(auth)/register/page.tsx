@@ -11,13 +11,17 @@ import { IndianRupee, Loader2 } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
 import { cn } from '@/lib/utils'
+import {
+  firstValidationMessage,
+  validateRegisterForm,
+} from '@/lib/authValidation'
 
 export default function RegisterPage() {
   const { register } = useAuth()
   const {
     fieldErrors,
+    setFieldErrors,
     clearFieldError,
-    setError: setFieldError,
     showErrorToast,
   } = useFormErrors()
   const [name, setName] = useState('')
@@ -30,26 +34,15 @@ export default function RegisterPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
-    let valid = true
-    if (!name.trim()) {
-      setFieldError('name', 'Name is required')
-      valid = false
-    }
-    if (!email.trim()) {
-      setFieldError('email', 'Email is required')
-      valid = false
-    }
-    if (!password) {
-      setFieldError('password', 'Password is required')
-      valid = false
-    }
-    if (!valid) {
-      showErrorToast('Please fill in all required fields')
+    const errors = validateRegisterForm({ name, email, password, phone })
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors)
+      showErrorToast(firstValidationMessage(errors) || 'Please fix the highlighted fields')
       return
     }
     setLoading(true)
     try {
-      await register(name, email, password, phone)
+      await register(name.trim(), email.trim(), password, phone.trim())
       window.location.href = '/dashboard'
     } catch (err: any) {
       setError(err.message)
@@ -69,7 +62,7 @@ export default function RegisterPage() {
             </div>
           </div>
           <CardTitle className="text-2xl font-bold">Create account</CardTitle>
-          <CardDescription>Start your free BillBook trial</CardDescription>
+          <CardDescription>Start your free TruERP trial</CardDescription>
         </CardHeader>
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
@@ -116,8 +109,13 @@ export default function RegisterPage() {
                 type="tel"
                 placeholder="+91 98765 43210"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value)}
+                onChange={(e) => {
+                  clearFieldError('phone')
+                  setPhone(e.target.value)
+                }}
+                className={cn(fieldErrors.phone && 'border-red-500')}
               />
+              <FieldError message={fieldErrors.phone} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="password">Password</Label>

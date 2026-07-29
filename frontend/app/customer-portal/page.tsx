@@ -15,6 +15,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { formatDate } from '@/lib/utils'
 import { ExternalLink, Globe, Loader2, Save, Users, LifeBuoy } from 'lucide-react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface PortalSettings {
   is_enabled: boolean
@@ -63,6 +65,9 @@ export default function CustomerPortalAdminPage() {
   useEffect(() => {
     loadAll()
   }, [])
+
+  const accessPagination = usePagination(access)
+  const ticketsPagination = usePagination(tickets)
 
   const loadAll = async () => {
     setLoading(true)
@@ -269,7 +274,7 @@ export default function CustomerPortalAdminPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {access.map((row) => (
+                  {accessPagination.paginatedItems.map((row) => (
                     <tr key={row.party_id} className="border-b last:border-0">
                       <td className="py-3 pr-4 font-medium">{row.name}</td>
                       <td className="py-3 pr-4">{row.phone || '—'}</td>
@@ -339,6 +344,13 @@ export default function CustomerPortalAdminPage() {
                   ))}
                 </tbody>
               </table>
+              <PaginationControls
+                page={accessPagination.page}
+                totalPages={accessPagination.totalPages}
+                totalItems={accessPagination.totalItems}
+                pageSize={accessPagination.pageSize}
+                onPageChange={accessPagination.setPage}
+              />
             </CardContent>
           </Card>
         </TabsContent>
@@ -349,7 +361,7 @@ export default function CustomerPortalAdminPage() {
               <CardContent className="py-10 text-center text-muted-foreground">No support tickets yet</CardContent>
             </Card>
           ) : (
-            tickets.map((t) => (
+            ticketsPagination.paginatedItems.map((t) => (
               <Card key={t.id}>
                 <CardHeader className="pb-2">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -396,6 +408,15 @@ export default function CustomerPortalAdminPage() {
                 </CardContent>
               </Card>
             ))
+          )}
+          {tickets.length > 0 && (
+            <PaginationControls
+              page={ticketsPagination.page}
+              totalPages={ticketsPagination.totalPages}
+              totalItems={ticketsPagination.totalItems}
+              pageSize={ticketsPagination.pageSize}
+              onPageChange={ticketsPagination.setPage}
+            />
           )}
         </TabsContent>
       </Tabs>

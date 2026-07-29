@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
@@ -25,6 +26,8 @@ import {
   CheckCheck,
   Play,
 } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 type NotificationTypeKey = 'invoice_due' | 'payment_due' | 'overdue'
 
@@ -147,6 +150,8 @@ function mergePreferences(apiPrefs: NotificationPreference[]): Record<Notificati
 }
 
 export default function NotificationsPage() {
+  const searchParams = useSearchParams()
+  const [activeTab, setActiveTab] = useState('preferences')
   const [loading, setLoading] = useState(true)
   const [savingType, setSavingType] = useState<NotificationTypeKey | null>(null)
   const [runningType, setRunningType] = useState<string | null>(null)
@@ -176,9 +181,21 @@ export default function NotificationsPage() {
     [notifications]
   )
 
+  const notificationsPagination = usePagination(notifications)
+  const templatesPagination = usePagination(templates)
+  const remindersPagination = usePagination(reminders)
+
   useEffect(() => {
     void loadAll()
   }, [])
+
+  useEffect(() => {
+    const tab = searchParams.get('tab')
+    const validTabs = ['preferences', 'alerts', 'templates', 'scheduled']
+    if (tab && validTabs.includes(tab)) {
+      setActiveTab(tab)
+    }
+  }, [searchParams])
 
   const loadAll = async () => {
     setLoading(true)
@@ -378,7 +395,7 @@ export default function NotificationsPage() {
           </div>
         )}
 
-        <Tabs defaultValue="preferences">
+        <Tabs value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4">
             <TabsTrigger value="preferences">Reminder settings</TabsTrigger>
             <TabsTrigger value="alerts">Internal alerts</TabsTrigger>
@@ -509,7 +526,7 @@ export default function NotificationsPage() {
                 {notifications.length === 0 ? (
                   <p className="text-sm text-gray-500">No notifications yet.</p>
                 ) : (
-                  notifications.map((notification) => (
+                  notificationsPagination.paginatedItems.map((notification) => (
                     <div
                       key={notification.id}
                       className={`rounded-lg border p-3 ${notification.is_read ? 'bg-white' : 'bg-blue-50/50'}`}
@@ -543,6 +560,13 @@ export default function NotificationsPage() {
                     </div>
                   ))
                 )}
+                <PaginationControls
+                  page={notificationsPagination.page}
+                  totalPages={notificationsPagination.totalPages}
+                  totalItems={notificationsPagination.totalItems}
+                  pageSize={notificationsPagination.pageSize}
+                  onPageChange={notificationsPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -629,7 +653,7 @@ export default function NotificationsPage() {
                   {templates.length === 0 ? (
                     <p className="text-sm text-gray-500">No templates yet.</p>
                   ) : (
-                    templates.map((template) => (
+                    templatesPagination.paginatedItems.map((template) => (
                       <div key={template.id} className="flex flex-col gap-2 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                           <p className="font-medium">{template.name}</p>
@@ -648,6 +672,13 @@ export default function NotificationsPage() {
                     ))
                   )}
                 </div>
+                <PaginationControls
+                  page={templatesPagination.page}
+                  totalPages={templatesPagination.totalPages}
+                  totalItems={templatesPagination.totalItems}
+                  pageSize={templatesPagination.pageSize}
+                  onPageChange={templatesPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>
@@ -714,7 +745,7 @@ export default function NotificationsPage() {
                 </form>
 
                 <div className="space-y-2">
-                  {reminders.map((reminder) => (
+                  {remindersPagination.paginatedItems.map((reminder) => (
                     <div key={reminder.id} className="flex items-center justify-between rounded-lg border p-3">
                       <div>
                         <p className="font-medium">{reminder.title}</p>
@@ -728,6 +759,13 @@ export default function NotificationsPage() {
                     </div>
                   ))}
                 </div>
+                <PaginationControls
+                  page={remindersPagination.page}
+                  totalPages={remindersPagination.totalPages}
+                  totalItems={remindersPagination.totalItems}
+                  pageSize={remindersPagination.pageSize}
+                  onPageChange={remindersPagination.setPage}
+                />
               </CardContent>
             </Card>
           </TabsContent>

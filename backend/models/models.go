@@ -74,8 +74,10 @@ type User struct {
 	Phone             string         `json:"phone"`
 	Role              string         `json:"role" gorm:"default:'owner'"`
 	TwoFactorEnabled  bool           `json:"two_factor_enabled" gorm:"default:false"`
-	TotpSecret        string         `json:"-" gorm:"column:totp_secret"`
-	IsActive          bool           `json:"is_active" gorm:"default:true"`
+	TotpSecret               string         `json:"-" gorm:"column:totp_secret"`
+	PasswordResetTokenHash   string         `json:"-" gorm:"index"`
+	PasswordResetExpiresAt   *time.Time     `json:"-"`
+	IsActive                 bool           `json:"is_active" gorm:"default:true"`
 	Business          Business       `json:"business,omitempty" gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE;"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
@@ -1000,22 +1002,26 @@ type InvoiceSettings struct {
 }
 
 type PrintSettings struct {
-	ID              uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID          uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
-	PaperSize       string         `json:"paper_size" gorm:"default:'a4'"` // a4, letter, legal
-	Orientation     string         `json:"orientation" gorm:"default:'portrait'"` // portrait, landscape
-	MarginTop       float64        `json:"margin_top" gorm:"default:0.5"`
-	MarginBottom    float64        `json:"margin_bottom" gorm:"default:0.5"`
-	MarginLeft      float64        `json:"margin_left" gorm:"default:0.5"`
-	MarginRight     float64        `json:"margin_right" gorm:"default:0.5"`
-	FontSize        int            `json:"font_size" gorm:"default:12"`
-	PrintHeader     bool           `json:"print_header" gorm:"default:true"`
-	PrintFooter     bool           `json:"print_footer" gorm:"default:true"`
-	ThermalPrintSize string        `json:"thermal_print_size" gorm:"default:'2inch'"` // 2inch, 3inch
-	BarcodePrintMode string        `json:"barcode_print_mode" gorm:"default:'a4'"`  // label, a4
-	CreatedAt       time.Time      `json:"created_at"`
-	UpdatedAt       time.Time      `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	ID                   uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID               uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
+	InvoicePrintMode     string         `json:"invoice_print_mode" gorm:"default:'a4'"` // a4, thermal
+	PaperSize            string         `json:"paper_size" gorm:"default:'a4'"`         // a4, letter, legal
+	Orientation          string         `json:"orientation" gorm:"default:'portrait'"`  // portrait, landscape
+	MarginTop            float64        `json:"margin_top" gorm:"default:0.5"`
+	MarginBottom         float64        `json:"margin_bottom" gorm:"default:0.5"`
+	MarginLeft           float64        `json:"margin_left" gorm:"default:0.5"`
+	MarginRight          float64        `json:"margin_right" gorm:"default:0.5"`
+	FontSize             int            `json:"font_size" gorm:"default:12"`
+	PrintHeader          bool           `json:"print_header" gorm:"default:true"`
+	PrintFooter          bool           `json:"print_footer" gorm:"default:true"`
+	ThermalPrintSize     string         `json:"thermal_print_size" gorm:"default:'2inch'"` // 2inch, 3inch
+	BarcodePrintMode     string         `json:"barcode_print_mode" gorm:"default:'a4'"`    // label, a4
+	ThermalPrinterName   string         `json:"thermal_printer_name"`                      // OS printer name (desktop)
+	DocumentPrinterName  string         `json:"document_printer_name"`                     // OS printer name for A4/PDF (desktop)
+	AutoPrintOnPOS       bool           `json:"auto_print_on_pos" gorm:"default:true"`
+	CreatedAt            time.Time      `json:"created_at"`
+	UpdatedAt            time.Time      `json:"updated_at"`
+	DeletedAt            gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type WeighingScaleSettings struct {

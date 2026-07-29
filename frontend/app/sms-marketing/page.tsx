@@ -13,6 +13,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, Send, Calendar, Users, MessageSquare, Loader2, Clock, CheckCircle, XCircle, AlertCircle } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface SMSCampaign {
   id: string
@@ -55,6 +57,7 @@ interface SMSStats {
 
 export default function SMSMarketingPage() {
   const [campaigns, setCampaigns] = useState<SMSCampaign[]>([])
+  const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(campaigns)
   const [stats, setStats] = useState<SMSStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [showCreateDialog, setShowCreateDialog] = useState(false)
@@ -421,7 +424,7 @@ export default function SMSMarketingPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {campaigns.map((campaign) => (
+                    {paginatedItems.map((campaign) => (
                       <tr key={campaign.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 font-medium text-gray-900">{campaign.campaign_name}</td>
                         <td className="py-3 text-gray-600 capitalize">{campaign.target_audience.replace('_', ' ')}</td>
@@ -479,6 +482,13 @@ export default function SMSMarketingPage() {
                     )}
                   </tbody>
                 </table>
+                <PaginationControls
+                  page={page}
+                  totalPages={totalPages}
+                  totalItems={totalItems}
+                  pageSize={pageSize}
+                  onPageChange={setPage}
+                />
               </div>
             )}
           </CardContent>

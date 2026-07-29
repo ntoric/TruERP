@@ -1,8 +1,8 @@
 package routes
 
 import (
-	"billbook/controllers"
-	"billbook/middleware"
+	"truerp/controllers"
+	"truerp/middleware"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,6 +18,9 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		auth.POST("/register", controllers.Register)
 		auth.POST("/login", controllers.Login)
+		auth.POST("/forgot-password", controllers.ForgotPassword)
+		auth.GET("/reset-password/validate", controllers.ValidateResetToken)
+		auth.POST("/reset-password", controllers.ResetPassword)
 		auth.GET("/profile", middleware.AuthRequired(), controllers.GetProfile)
 		auth.PUT("/profile", middleware.AuthRequired(), controllers.UpdateProfile)
 	}
@@ -38,6 +41,7 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		invoices.GET("", controllers.GetInvoices)
 		invoices.POST("", controllers.CreateInvoice)
+		invoices.POST("/import/csv", controllers.ImportInvoicesCSV)
 		invoices.GET("/stats", controllers.GetInvoiceStats)
 		invoices.GET("/next-number", controllers.GetNextInvoiceNumber)
 		invoices.GET("/:id/status-history", controllers.GetInvoiceStatusHistory)
@@ -166,6 +170,8 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		categories.GET("", controllers.GetCategories)
 		categories.POST("", controllers.CreateCategory)
+		categories.POST("/bulk/delete", controllers.BulkDeleteCategories)
+		categories.POST("/bulk/update-status", controllers.BulkUpdateCategoryStatus)
 		categories.GET("/:id", controllers.GetCategory)
 		categories.PUT("/:id", controllers.UpdateCategory)
 		categories.DELETE("/:id", controllers.DeleteCategory)
@@ -222,6 +228,8 @@ func SetupRoutes(r *gin.Engine) {
 		inventory.GET("/stocks/products/:id", controllers.GetProductStock)
 		inventory.GET("/stocks/search", controllers.SearchByItemCode)
 		inventory.POST("/stocks/adjust", controllers.AdjustStock)
+		inventory.POST("/stocks/bulk-update/csv", controllers.BulkUpdateStockCSV)
+		inventory.POST("/stocks/bulk-update/excel", controllers.BulkUpdateStockExcel)
 		inventory.POST("/stocks/reserve", controllers.ReserveStock)
 		inventory.POST("/stocks/release", controllers.ReleaseStock)
 		inventory.GET("/alerts/low-stock", controllers.GetLowStockAlerts)
@@ -248,6 +256,8 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		warehouses.GET("", controllers.GetWarehouses)
 		warehouses.POST("", controllers.CreateWarehouse)
+		warehouses.POST("/bulk/delete", controllers.BulkDeleteWarehouses)
+		warehouses.POST("/bulk/update-status", controllers.BulkUpdateWarehouseStatus)
 		warehouses.GET("/:id", controllers.GetWarehouse)
 		warehouses.PUT("/:id", controllers.UpdateWarehouse)
 		warehouses.DELETE("/:id", controllers.DeleteWarehouse)
@@ -572,6 +582,8 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		staff.GET("", controllers.GetStaffs)
 		staff.POST("", controllers.CreateStaff)
+		staff.POST("/bulk/delete", controllers.BulkDeleteStaff)
+		staff.POST("/bulk/update-status", controllers.BulkUpdateStaffStatus)
 		staff.GET("/:id", controllers.GetStaff)
 		staff.PUT("/:id", controllers.UpdateStaff)
 		staff.DELETE("/:id", controllers.DeleteStaff)
@@ -604,6 +616,7 @@ func SetupRoutes(r *gin.Engine) {
 		attendance.GET("/stats", controllers.GetAttendanceStats)
 		attendance.POST("", controllers.MarkAttendance)
 		attendance.POST("/bulk", controllers.BulkMarkAttendance)
+		attendance.POST("/bulk/delete", controllers.BulkDeleteAttendance)
 		attendance.GET("/staff/:staff_id", controllers.GetStaffAttendance)
 		attendance.DELETE("/:id", controllers.DeleteAttendance)
 	}
@@ -616,6 +629,8 @@ func SetupRoutes(r *gin.Engine) {
 		payroll.GET("/stats", controllers.GetPayrollStats)
 		payroll.GET("/next-number", controllers.GetNextPaymentNumber)
 		payroll.POST("", controllers.CreatePayroll)
+		payroll.POST("/bulk/delete", controllers.BulkDeletePayrolls)
+		payroll.POST("/bulk/update-status", controllers.BulkUpdatePayrollStatus)
 		payroll.GET("/:id", controllers.GetPayroll)
 		payroll.PUT("/:id", controllers.UpdatePayroll)
 		payroll.DELETE("/:id", controllers.DeletePayroll)
@@ -802,11 +817,12 @@ func SetupRoutes(r *gin.Engine) {
 		audit.GET("/archives", controllers.GetArchivedAuditLogs)
 	}
 
-	// Thermal Printer routes
+	// Printer routes (thermal + A4 document print)
 	printer := r.Group("/api/v1/printer")
 	printer.Use(middleware.AuthRequired())
 	{
 		printer.POST("/thermal", controllers.GenerateThermalPrint)
+		printer.POST("/document", controllers.GenerateDocumentPrint)
 		printer.GET("/thermal/preview", controllers.GetThermalPrintPreview)
 		printer.GET("/barcode/preview", controllers.GetBarcodePrintPreview)
 	}

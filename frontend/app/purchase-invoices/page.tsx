@@ -12,6 +12,8 @@ import { formatCurrency, formatDate } from '@/lib/utils'
 import { Plus, Search, Download, MoreVertical, Edit, X, Trash2, Printer, Eye } from 'lucide-react'
 import JSZip from 'jszip'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface PurchaseBill {
   id: string
@@ -141,6 +143,12 @@ export default function PurchaseInvoicesPage() {
     bill.bill_number.toLowerCase().includes(search.toLowerCase()) ||
     bill.party?.name?.toLowerCase().includes(search.toLowerCase())
   )
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredBills)
+
+  useEffect(() => {
+    resetPage()
+  }, [search, filter, dateFrom, dateTo])
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
@@ -504,7 +512,7 @@ export default function PurchaseInvoicesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBills.map((bill) => (
+                    {paginatedItems.map((bill) => (
                       <tr key={bill.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 pr-2">
                           <input
@@ -598,6 +606,15 @@ export default function PurchaseInvoicesPage() {
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

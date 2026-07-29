@@ -7,10 +7,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Plus, DollarSign, Calendar, Download } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Plus, DollarSign, Calendar, Download, Search, MoreVertical, Pencil, Trash2, Power } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { formatDate } from '@/lib/utils'
 
 interface Staff {
   id: string
@@ -42,6 +53,8 @@ interface Payroll {
   reference: string
   notes: string
   status: string
+  created_at?: string
+  updated_at?: string
 }
 
 interface PayrollStats {
@@ -50,13 +63,43 @@ interface PayrollStats {
   this_month: number
 }
 
+const PAYMENT_MODES = [
+  { value: 'cash', label: 'Cash' },
+  { value: 'bank_transfer', label: 'Bank Transfer' },
+  { value: 'upi', label: 'UPI' },
+  { value: 'cheque', label: 'Cheque' },
+] as const
+
+const STATUS_OPTIONS = [
+  { value: 'paid', label: 'Paid' },
+  { value: 'pending', label: 'Pending' },
+] as const
+
+function formatPaymentMode(mode: string) {
+  return PAYMENT_MODES.find((item) => item.value === mode)?.label || mode.replace('_', ' ')
+}
+
 export default function PayrollPage() {
   const { user, loading: authLoading } = useAuth()
   const [staffs, setStaffs] = useState<Staff[]>([])
   const [payrolls, setPayrolls] = useState<Payroll[]>([])
   const [stats, setStats] = useState<PayrollStats | null>(null)
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [staffFilter, setStaffFilter] = useState('all')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [paymentModeFilter, setPaymentModeFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+  const [selectedPayrolls, setSelectedPayrolls] = useState<Set<string>>(new Set())
   const [isDialogOpen, setIsDialogOpen] = useState(false)
+  const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
+  const [editingPayroll, setEditingPayroll] = useState<Payroll | null>(null)
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [payrollToDelete, setPayrollToDelete] = useState<string | null>(null)
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false)
+  const [isBulkStatusConfirmOpen, setIsBulkStatusConfirmOpen] = useState(false)
+  const [bulkStatus, setBulkStatus] = useState<'paid' | 'pending'>('paid')
   const [paymentNumber, setPaymentNumber] = useState('')
   const [formData, setFormData] = useState({
     staff_id: '',
@@ -70,8 +113,44 @@ export default function PayrollPage() {
     reference: '',
     notes: ''
   })
+  const [editFormData, setEditFormData] = useState({
+    payment_date: '',
+    deductions: 0,
+    bonus: 0,
+    payment_mode: 'bank_transfer',
+    reference: '',
+    notes: '',
+    status: 'paid',
+  })
 
   useEffect(() => { if (!authLoading && user) { fetchStaffs(); fetchPayrolls(); fetchStats(); fetchNextNumber() } }, [authLoading, user])
+
+  const filteredPayrolls = payrolls.filter((payroll) => {
+    const query = search.toLowerCase()
+    const paymentDate = payroll.payment_date?.split('T')[0] || ''
+
+    const matchesSearch =
+      !search ||
+      payroll.payment_number.toLowerCase().includes(query) ||
+      payroll.staff?.name?.toLowerCase().includes(query) ||
+      payroll.staff?.designation?.toLowerCase().includes(query) ||
+      payroll.reference?.toLowerCase().includes(query)
+
+    const matchesStaff = staffFilter === 'all' || payroll.staff_id === staffFilter
+    const matchesStatus = statusFilter === 'all' || payroll.status === statusFilter
+    const matchesPaymentMode = paymentModeFilter === 'all' || payroll.payment_mode === paymentModeFilter
+    const matchesDateFrom = !dateFrom || paymentDate >= dateFrom
+    const matchesDateTo = !dateTo || paymentDate <= dateTo
+
+    return matchesSearch && matchesStaff && matchesStatus && matchesPaymentMode && matchesDateFrom && matchesDateTo
+  })
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredPayrolls)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedPayrolls(new Set())
+  }, [search, staffFilter, statusFilter, paymentModeFilter, dateFrom, dateTo])
 
   const fetchStaffs = async () => {
     try {
@@ -105,6 +184,11 @@ export default function PayrollPage() {
     } catch (err) { console.error(err) }
   }
 
+  const refreshData = () => {
+    fetchPayrolls()
+    fetchStats()
+  }
+
   const handleSubmit = async () => {
     try {
       const res = await apiFetch('/payroll', {
@@ -117,7 +201,7 @@ export default function PayrollPage() {
           end_date: new Date(formData.end_date).toISOString()
         })
       })
-      if (res.ok) { setIsDialogOpen(false); resetForm(); fetchPayrolls(); fetchStats(); fetchNextNumber() }
+      if (res.ok) { setIsDialogOpen(false); resetForm(); refreshData(); fetchNextNumber() }
     } catch (err) { console.error(err) }
   }
 
@@ -136,15 +220,173 @@ export default function PayrollPage() {
     })
   }
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('Delete this payroll record?')) return
+  const handleEdit = (payroll: Payroll) => {
+    setEditingPayroll(payroll)
+    setEditFormData({
+      payment_date: payroll.payment_date?.split('T')[0] || '',
+      deductions: payroll.deductions,
+      bonus: payroll.bonus,
+      payment_mode: payroll.payment_mode || 'bank_transfer',
+      reference: payroll.reference || '',
+      notes: payroll.notes || '',
+      status: payroll.status || 'paid',
+    })
+    setIsEditDialogOpen(true)
+  }
+
+  const handleUpdate = async () => {
+    if (!editingPayroll) return
     try {
-      const res = await apiFetch(`/payroll/${id}`, { method: 'DELETE' })
-      if (res.ok) { fetchPayrolls(); fetchStats() }
+      const res = await apiFetch(`/payroll/${editingPayroll.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ...editFormData,
+          payment_date: new Date(editFormData.payment_date).toISOString(),
+        }),
+      })
+      if (res.ok) {
+        setIsEditDialogOpen(false)
+        setEditingPayroll(null)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const handleDelete = (id: string) => {
+    setPayrollToDelete(id)
+    setIsDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!payrollToDelete) return
+    try {
+      const res = await apiFetch(`/payroll/${payrollToDelete}`, { method: 'DELETE' })
+      if (res.ok) {
+        setIsDeleteConfirmOpen(false)
+        setPayrollToDelete(null)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const handleSelectPayroll = (id: string) => {
+    const next = new Set(selectedPayrolls)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedPayrolls(next)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedPayrolls.size === filteredPayrolls.length) {
+      setSelectedPayrolls(new Set())
+    } else {
+      setSelectedPayrolls(new Set(filteredPayrolls.map((payroll) => payroll.id)))
+    }
+  }
+
+  const handleBulkDelete = () => {
+    if (selectedPayrolls.size === 0) return
+    setIsBulkDeleteConfirmOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
+    try {
+      const res = await apiFetch('/payroll/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedPayrolls) }),
+      })
+      if (res.ok) {
+        setSelectedPayrolls(new Set())
+        setIsBulkDeleteConfirmOpen(false)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const handleBulkStatus = (status: 'paid' | 'pending') => {
+    if (selectedPayrolls.size === 0) return
+    setBulkStatus(status)
+    setIsBulkStatusConfirmOpen(true)
+  }
+
+  const confirmBulkStatus = async () => {
+    try {
+      const res = await apiFetch('/payroll/bulk/update-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ids: Array.from(selectedPayrolls),
+          status: bulkStatus,
+        }),
+      })
+      if (res.ok) {
+        setSelectedPayrolls(new Set())
+        setIsBulkStatusConfirmOpen(false)
+        refreshData()
+      }
     } catch (err) { console.error(err) }
   }
 
   const formatCurrency = (val: number) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR' }).format(val)
+
+  const handleExport = () => {
+    const exportList =
+      selectedPayrolls.size > 0
+        ? filteredPayrolls.filter((payroll) => selectedPayrolls.has(payroll.id))
+        : filteredPayrolls
+
+    const rows: (string | number)[][] = [
+      [
+        'Payment No',
+        'Staff',
+        'Designation',
+        'Period Start',
+        'Period End',
+        'Payment Date',
+        'Present Days',
+        'Absent Days',
+        'Half Days',
+        'Paid Leave Days',
+        'Weekly Off Days',
+        'Basic Salary',
+        'Deductions',
+        'Bonus',
+        'Net Salary',
+        'Payment Mode',
+        'Reference',
+        'Status',
+        'Notes',
+        'Created',
+        'Last Updated',
+      ],
+      ...exportList.map((payroll) => [
+        payroll.payment_number,
+        payroll.staff?.name || '',
+        payroll.staff?.designation || '',
+        payroll.start_date ? formatDate(payroll.start_date) : '',
+        payroll.end_date ? formatDate(payroll.end_date) : '',
+        payroll.payment_date ? formatDate(payroll.payment_date) : '',
+        payroll.present_days,
+        payroll.absent_days,
+        payroll.half_days,
+        payroll.paid_leave_days,
+        payroll.weekly_off_days,
+        payroll.basic_salary,
+        payroll.deductions,
+        payroll.bonus,
+        payroll.net_salary,
+        formatPaymentMode(payroll.payment_mode),
+        payroll.reference || '',
+        payroll.status,
+        payroll.notes || '',
+        payroll.created_at ? formatDate(payroll.created_at) : '',
+        payroll.updated_at ? formatDate(payroll.updated_at) : '',
+      ]),
+    ]
+    downloadCsv(`payroll_${accountingExportDateStamp()}.csv`, rows)
+  }
 
   if (authLoading || loading) return <div className="flex min-h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" /></div>
 
@@ -153,10 +395,14 @@ export default function PayrollPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">Payroll Management</h1>
-          <Button onClick={() => { resetForm(); setIsDialogOpen(true) }}><Plus className="mr-2 h-4 w-4" /> Make Payment</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleExport} disabled={loading || filteredPayrolls.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
+            <Button onClick={() => { resetForm(); setIsDialogOpen(true) }}><Plus className="mr-2 h-4 w-4" /> Make Payment</Button>
+          </div>
         </div>
 
-        {/* Payroll Stats */}
         {stats && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
@@ -196,13 +442,102 @@ export default function PayrollPage() {
         )}
 
         <Card>
-          <CardHeader>
-            <CardTitle>Payment History</CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle className="mb-4">Payment History</CardTitle>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap flex-1">
+                <div className="relative flex-1 min-w-[220px] sm:max-w-sm">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Input
+                    placeholder="Search payment no, staff, reference..."
+                    className="pl-10"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <Select value={staffFilter} onValueChange={setStaffFilter}>
+                  <SelectTrigger className="w-full sm:w-[180px]">
+                    <SelectValue placeholder="Staff" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Staff</SelectItem>
+                    {staffs.map((staff) => (
+                      <SelectItem key={staff.id} value={staff.id}>
+                        {staff.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-full sm:w-[150px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    {STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={paymentModeFilter} onValueChange={setPaymentModeFilter}>
+                  <SelectTrigger className="w-full sm:w-[170px]">
+                    <SelectValue placeholder="Payment Mode" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Modes</SelectItem>
+                    {PAYMENT_MODES.map((mode) => (
+                      <SelectItem key={mode.value} value={mode.value}>
+                        {mode.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="w-full sm:w-[160px]"
+                  placeholder="From date"
+                />
+                <Input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="w-full sm:w-[160px]"
+                  placeholder="To date"
+                />
+              </div>
+              {selectedPayrolls.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-600">{selectedPayrolls.size} selected</span>
+                  <Button variant="outline" size="sm" onClick={() => handleBulkStatus('paid')}>
+                    <Power className="mr-2 h-4 w-4" /> Mark Paid
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => handleBulkStatus('pending')}>
+                    <Power className="mr-2 h-4 w-4" /> Mark Pending
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={handleExport}>
+                    <Download className="mr-2 h-4 w-4" /> Export
+                  </Button>
+                  <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
+                    <Trash2 className="mr-2 h-4 w-4" /> Delete
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={selectedPayrolls.size === filteredPayrolls.length && filteredPayrolls.length > 0}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead>Payment No</TableHead>
                   <TableHead>Staff</TableHead>
                   <TableHead>Period</TableHead>
@@ -218,8 +553,14 @@ export default function PayrollPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {payrolls.map((p) => (
+                {paginatedItems.map((p) => (
                   <TableRow key={p.id}>
+                    <TableCell>
+                      <Checkbox
+                        checked={selectedPayrolls.has(p.id)}
+                        onCheckedChange={() => handleSelectPayroll(p.id)}
+                      />
+                    </TableCell>
                     <TableCell className="font-medium">{p.payment_number}</TableCell>
                     <TableCell>
                       <div>
@@ -228,11 +569,11 @@ export default function PayrollPage() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <div className="text-sm">
-                        {new Date(p.start_date).toLocaleDateString('en-IN')} - {new Date(p.end_date).toLocaleDateString('en-IN')}
+                      <div className="text-sm whitespace-nowrap">
+                        {formatDate(p.start_date)} - {formatDate(p.end_date)}
                       </div>
                     </TableCell>
-                    <TableCell>{new Date(p.payment_date).toLocaleDateString('en-IN')}</TableCell>
+                    <TableCell className="whitespace-nowrap">{formatDate(p.payment_date)}</TableCell>
                     <TableCell>
                       <div className="text-sm">
                         P: {p.present_days} | A: {p.absent_days} | H: {p.half_days} | L: {p.paid_leave_days} | W: {p.weekly_off_days}
@@ -242,22 +583,49 @@ export default function PayrollPage() {
                     <TableCell className="text-red-600">{formatCurrency(p.deductions)}</TableCell>
                     <TableCell className="text-green-600">{formatCurrency(p.bonus)}</TableCell>
                     <TableCell className="font-bold">{formatCurrency(p.net_salary)}</TableCell>
-                    <TableCell>{p.payment_mode.replace('_', ' ')}</TableCell>
+                    <TableCell>{formatPaymentMode(p.payment_mode)}</TableCell>
                     <TableCell>
                       <span className={`px-2 py-1 rounded-full text-xs ${p.status === 'paid' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
                         {p.status.toUpperCase()}
                       </span>
                     </TableCell>
                     <TableCell className="text-right">
-                      <Button variant="ghost" size="sm" onClick={() => handleDelete(p.id)} className="text-red-600">
-                        Delete
-                      </Button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleEdit(p)}>
+                            <Pencil className="mr-2 h-4 w-4" />
+                            Edit
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleDelete(p.id)} className="text-red-600">
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </TableCell>
                   </TableRow>
                 ))}
-                {payrolls.length === 0 && <TableRow><TableCell colSpan={12} className="text-center py-8 text-gray-500">No payroll records found</TableCell></TableRow>}
+                {filteredPayrolls.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={13} className="text-center py-8 text-gray-500">
+                      {payrolls.length === 0 ? 'No payroll records found' : 'No payroll records match the selected filters.'}
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
 
@@ -268,9 +636,12 @@ export default function PayrollPage() {
               <div className="space-y-2">
                 <Label>Staff *</Label>
                 <Select value={formData.staff_id} onValueChange={(v) => {
-                  setFormData({...formData, staff_id: v})
                   const staff = staffs.find(s => s.id === v)
-                  if (staff) setFormData({...formData, staff_id: v, basic_salary: staff.salary})
+                  setFormData({
+                    ...formData,
+                    staff_id: v,
+                    basic_salary: staff?.salary || 0,
+                  })
                 }}>
                   <SelectTrigger><SelectValue placeholder="Select staff" /></SelectTrigger>
                   <SelectContent>
@@ -284,10 +655,9 @@ export default function PayrollPage() {
                   <Select value={formData.payment_mode} onValueChange={(v) => setFormData({...formData, payment_mode: v})}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                      <SelectItem value="upi">UPI</SelectItem>
-                      <SelectItem value="cheque">Cheque</SelectItem>
+                      {PAYMENT_MODES.map((mode) => (
+                        <SelectItem key={mode.value} value={mode.value}>{mode.label}</SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -307,6 +677,131 @@ export default function PayrollPage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
               <Button onClick={handleSubmit}>Process Payment</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isEditDialogOpen} onOpenChange={setIsEditDialogOpen}>
+          <DialogContent className="max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Edit Payroll - {editingPayroll?.payment_number}</DialogTitle>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div className="space-y-2">
+                <Label>Payment Date</Label>
+                <Input
+                  type="date"
+                  value={editFormData.payment_date}
+                  onChange={(e) => setEditFormData({ ...editFormData, payment_date: e.target.value })}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Deductions</Label>
+                  <Input
+                    type="number"
+                    value={editFormData.deductions}
+                    onChange={(e) => setEditFormData({ ...editFormData, deductions: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Bonus</Label>
+                  <Input
+                    type="number"
+                    value={editFormData.bonus}
+                    onChange={(e) => setEditFormData({ ...editFormData, bonus: parseFloat(e.target.value) || 0 })}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Payment Mode</Label>
+                  <Select
+                    value={editFormData.payment_mode}
+                    onValueChange={(v) => setEditFormData({ ...editFormData, payment_mode: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {PAYMENT_MODES.map((mode) => (
+                        <SelectItem key={mode.value} value={mode.value}>{mode.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label>Status</Label>
+                  <Select
+                    value={editFormData.status}
+                    onValueChange={(v) => setEditFormData({ ...editFormData, status: v })}
+                  >
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {STATUS_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Reference</Label>
+                <Input
+                  value={editFormData.reference}
+                  onChange={(e) => setEditFormData({ ...editFormData, reference: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Notes</Label>
+                <Input
+                  value={editFormData.notes}
+                  onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>Cancel</Button>
+              <Button onClick={handleUpdate}>Update</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Confirm Delete</DialogTitle></DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Are you sure you want to delete this payroll record? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Confirm Bulk Delete</DialogTitle></DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Are you sure you want to delete {selectedPayrolls.size} payroll records? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmBulkDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkStatusConfirmOpen} onOpenChange={setIsBulkStatusConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm Bulk Status Update</DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Mark {selectedPayrolls.size} payroll records as {bulkStatus}?
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkStatusConfirmOpen(false)}>Cancel</Button>
+              <Button onClick={confirmBulkStatus}>Confirm</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react'
-import Cookies from 'js-cookie'
 import { API_BASE } from '@/lib/utils'
+import { clearAuthToken, getAuthToken, setAuthToken } from '@/lib/authToken'
 
 interface User {
   id: string
@@ -24,10 +24,10 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
 
 function clearAuthAndRedirect() {
-  Cookies.remove('token')
+  clearAuthToken()
   if (typeof window === 'undefined') return
   const path = window.location.pathname
-  if (path === '/login' || path === '/register') return
+  if (path === '/login' || path === '/register' || path === '/forgot-password' || path.startsWith('/reset-password')) return
   if (path.startsWith('/portal')) return
   window.location.href = `/login?next=${encodeURIComponent(path)}`
 }
@@ -38,7 +38,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    const storedToken = Cookies.get('token')
+    const storedToken = getAuthToken()
     if (storedToken) {
       setToken(storedToken)
       fetchProfile(storedToken)
@@ -62,7 +62,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           role: data.role,
         })
       } else {
-        Cookies.remove('token')
+        clearAuthToken()
         setToken(null)
         if (res.status === 401) clearAuthAndRedirect()
       }
@@ -74,39 +74,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const login = async (email: string, password: string, totpCode?: string) => {
-    const res = await fetch(`${API_BASE}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, totp_code: totpCode || '' }),
-    })
-    const data = await res.json()
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, totp_code: totpCode || '' }),
+      })
+    } catch {
+      throw new Error('Unable to reach the server. Please try again.')
+    }
+    let data: {
+      error?: string
+      requires_2fa?: boolean
+      token?: string
+      user?: User
+    } = {}
+    try {
+      data = await res.json()
+    } catch {
+      throw new Error(res.ok ? 'Invalid server response' : 'Login failed')
+    }
     if (!res.ok) {
       const err = new Error(data.error || 'Login failed') as Error & { requires2fa?: boolean }
       if (data.requires_2fa) err.requires2fa = true
       throw err
     }
+    if (!data.token || !data.user) throw new Error('Invalid server response')
 
-    Cookies.set('token', data.token, { expires: 1 })
+    setAuthToken(data.token)
     setToken(data.token)
     setUser(data.user)
   }
 
   const register = async (name: string, email: string, password: string, phone?: string) => {
-    const res = await fetch(`${API_BASE}/auth/register`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, email, password, phone }),
-    })
-    const data = await res.json()
+    let res: Response
+    try {
+      res = await fetch(`${API_BASE}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, phone }),
+      })
+    } catch {
+      throw new Error('Unable to reach the server. Please try again.')
+    }
+    let data: { error?: string; token?: string; user?: User } = {}
+    try {
+      data = await res.json()
+    } catch {
+      throw new Error(res.ok ? 'Invalid server response' : 'Registration failed')
+    }
     if (!res.ok) throw new Error(data.error || 'Registration failed')
+    if (!data.token || !data.user) throw new Error('Invalid server response')
 
-    Cookies.set('token', data.token, { expires: 1 })
+    setAuthToken(data.token)
     setToken(data.token)
     setUser(data.user)
   }
 
   const logout = () => {
-    Cookies.remove('token')
+    clearAuthToken()
     setToken(null)
     setUser(null)
     window.location.href = '/login'
@@ -128,7 +155,7 @@ export function useAuth() {
 }
 
 export async function apiFetch(path: string, options: RequestInit = {}) {
-  const token = Cookies.get('token')
+  const token = getAuthToken()
   const isFormData = options.body instanceof FormData
   const hasContentType = options.headers && 'Content-Type' in (options.headers as Record<string, string>)
   const res = await fetch(`${API_BASE}${path}`, {

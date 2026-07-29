@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"fmt"
 	"math"
 	"net/http"
@@ -80,7 +80,8 @@ func CreateInvoice(c *gin.Context) {
 	var input struct {
 		InvoiceNumber     string     `json:"invoice_number"`
 		InvoiceType       string     `json:"invoice_type"`
-		PartyID           uuid.UUID  `json:"party_id" binding:"required"`
+		PartyID           uuid.UUID  `json:"party_id"`
+		CustomerID        uuid.UUID  `json:"customer_id"`
 		Date              time.Time  `json:"date" binding:"required"`
 		DueDate           *time.Time `json:"due_date"`
 		PaymentTerms      int        `json:"payment_terms"`
@@ -100,18 +101,26 @@ func CreateInvoice(c *gin.Context) {
 		PDFTemplate      string                 `json:"pdf_template"`
 		CustomFields     map[string]interface{} `json:"custom_fields"`
 		Items            []struct {
-			Description string    `json:"description"`
-			Quantity    float64   `json:"quantity"`
-			UnitPrice   float64   `json:"unit_price"`
-			Discount    float64   `json:"discount"`
-			TaxRate     float64   `json:"tax_rate"`
-			Unit        string    `json:"unit"`
+			Description string               `json:"description"`
+			Quantity    models.FlexibleFloat `json:"quantity"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			Unit        string               `json:"unit"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fmt.Printf("[DEBUG] CreateInvoice - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if input.PartyID == uuid.Nil {
+		input.PartyID = input.CustomerID
+	}
+	if input.PartyID == uuid.Nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "party_id is required"})
 		return
 	}
 
@@ -177,10 +186,15 @@ func CreateInvoice(c *gin.Context) {
 	// Calculate totals
 	var subTotal, discountTotal, taxTotal, cgstTotal, sgstTotal, igstTotal float64
 	for _, item := range input.Items {
-		itemTotal := item.Quantity * item.UnitPrice
-		itemDiscount := itemTotal * (item.Discount / 100)
+		qty := item.Quantity.Float64()
+		unitPrice := item.UnitPrice.Float64()
+		discount := item.Discount.Float64()
+		taxRate := item.TaxRate.Float64()
+
+		itemTotal := qty * unitPrice
+		itemDiscount := itemTotal * (discount / 100)
 		taxableAmount := itemTotal - itemDiscount
-		itemTax := taxableAmount * (item.TaxRate / 100)
+		itemTax := taxableAmount * (taxRate / 100)
 
 		var cgst, sgst, igst float64
 		if input.IsInterState {
@@ -193,11 +207,11 @@ func CreateInvoice(c *gin.Context) {
 		invoice.Items = append(invoice.Items, models.InvoiceItem{
 			ID:          uuid.New(),
 			Description: item.Description,
-			Quantity:    item.Quantity,
+			Quantity:    qty,
 			Unit:        item.Unit,
-			UnitPrice:   item.UnitPrice,
-			Discount:    item.Discount,
-			TaxRate:     item.TaxRate,
+			UnitPrice:   unitPrice,
+			Discount:    discount,
+			TaxRate:     taxRate,
 			CGST:        cgst,
 			SGST:        sgst,
 			IGST:        igst,
@@ -217,9 +231,9 @@ func CreateInvoice(c *gin.Context) {
 			UserID:     userID,
 			ItemName:   item.Description,
 			EntryType:  "sale",
-			Quantity:   -item.Quantity,
+			Quantity:   -qty,
 			BalanceQty: 0,
-			CostPrice:  item.UnitPrice,
+			CostPrice:  unitPrice,
 			EntryDate:  input.Date,
 		}
 		utils.DB.Create(&entry)
@@ -355,7 +369,8 @@ func UpdateInvoice(c *gin.Context) {
 
 	var input struct {
 		InvoiceNumber     string          `json:"invoice_number"`
-		PartyID           uuid.UUID       `json:"customer_id"`
+		PartyID           uuid.UUID       `json:"party_id"`
+		CustomerID        uuid.UUID       `json:"customer_id"`
 		Date              time.Time       `json:"date"`
 		DueDate           *time.Time      `json:"due_date"`
 		PaymentTerms      int             `json:"payment_terms"`
@@ -372,14 +387,14 @@ func UpdateInvoice(c *gin.Context) {
 		PDFTemplate       string          `json:"pdf_template"`
 		CustomFields      map[string]interface{} `json:"custom_fields"`
 		Items             []struct {
-			ProductID   *uuid.UUID `json:"product_id"`
-			Description string     `json:"description"`
-			Quantity    float64    `json:"quantity"`
-			UnitPrice   float64    `json:"unit_price"`
-			Discount    float64    `json:"discount"`
-			TaxRate     float64    `json:"tax_rate"`
-			Unit        string     `json:"unit"`
-			HSNCode     string     `json:"hsn_code"`
+			ProductID   *uuid.UUID           `json:"product_id"`
+			Description string               `json:"description"`
+			Quantity    models.FlexibleFloat `json:"quantity"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			Unit        string               `json:"unit"`
+			HSNCode     string               `json:"hsn_code"`
 		} `json:"items"`
 	}
 
@@ -387,6 +402,10 @@ func UpdateInvoice(c *gin.Context) {
 		fmt.Printf("[DEBUG] UpdateInvoice - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if input.PartyID == uuid.Nil && input.CustomerID != uuid.Nil {
+		input.PartyID = input.CustomerID
 	}
 
 	if err := validateUserBankAccount(userID, input.BankAccountID); err != nil {
@@ -435,11 +454,12 @@ func UpdateInvoice(c *gin.Context) {
 	utils.DB.Where("invoice_id = ?", invoice.ID).Delete(&models.InvoiceItem{})
 
 	var subTotal, discountTotal, cgstTotal, sgstTotal, igstTotal float64
+	invoice.Items = nil
 	for _, item := range input.Items {
-		qty := item.Quantity
-		price := item.UnitPrice
-		disc := item.Discount
-		tax := item.TaxRate
+		qty := item.Quantity.Float64()
+		price := item.UnitPrice.Float64()
+		disc := item.Discount.Float64()
+		tax := item.TaxRate.Float64()
 
 		itemTotal := qty * price
 		itemDiscount := itemTotal * (disc / 100)
@@ -687,8 +707,17 @@ func GenerateInvoicePDF(c *gin.Context) {
 		return
 	}
 
-	// Generate HTML for PDF
-	html := InvoicePDFHTML(invoice)
-	c.Header("Content-Type", "text/html")
-	c.String(http.StatusOK, html)
+	settings := loadPrintSettings(userID)
+	var business models.Business
+	_ = utils.DB.Where("user_id = ?", userID).First(&business)
+
+	pdfBytes, err := buildInvoiceDocumentPDF(invoice, &business, settings)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate invoice PDF"})
+		return
+	}
+
+	c.Header("Content-Type", "application/pdf")
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"Invoice_%s.pdf\"", invoice.InvoiceNumber))
+	c.Data(http.StatusOK, "application/pdf", pdfBytes)
 }

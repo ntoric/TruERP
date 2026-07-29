@@ -30,6 +30,8 @@ import {
 } from 'lucide-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface AppUser {
   id: string
@@ -382,7 +384,10 @@ export default function UserManagementPage() {
     )
   }
 
-  const UserTable = ({ rows, allowRoleEdit }: { rows: AppUser[]; allowRoleEdit?: boolean }) => (
+  const UserTable = ({ rows, allowRoleEdit }: { rows: AppUser[]; allowRoleEdit?: boolean }) => {
+    const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(rows)
+    return (
+    <>
     <Table>
       <TableHeader>
         <TableRow>
@@ -395,7 +400,7 @@ export default function UserManagementPage() {
         </TableRow>
       </TableHeader>
       <TableBody>
-        {rows.map((u) => (
+        {paginatedItems.map((u) => (
           <TableRow key={u.id}>
             <TableCell className="font-medium">{u.name}</TableCell>
             <TableCell>{u.email}</TableCell>
@@ -444,7 +449,16 @@ export default function UserManagementPage() {
         ))}
       </TableBody>
     </Table>
-  )
+    <PaginationControls
+      page={page}
+      totalPages={totalPages}
+      totalItems={totalItems}
+      pageSize={pageSize}
+      onPageChange={setPage}
+    />
+    </>
+    )
+  }
 
   return (
     <DashboardLayout>

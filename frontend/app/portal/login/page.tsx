@@ -112,7 +112,7 @@ export default function PortalLoginPage() {
             <p className="text-center text-xs text-muted-foreground">
               Business user?{' '}
               <Link href="/login" className="text-blue-600 hover:underline">
-                BillBook login
+                TruERP login
               </Link>
             </p>
           </CardContent>

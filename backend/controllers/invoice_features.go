@@ -1,9 +1,9 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/services"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/services"
+	"truerp/utils"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"

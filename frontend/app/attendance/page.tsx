@@ -7,15 +7,38 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Calendar, CheckCircle, XCircle, Clock, Coffee, Home, Save } from 'lucide-react'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  CheckCircle,
+  XCircle,
+  Clock,
+  Coffee,
+  Home,
+  Save,
+  MoreVertical,
+  Pencil,
+  Trash2,
+  Search,
+  Download,
+} from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
 
 interface Staff {
   id: string
   name: string
   designation: string
+  department?: string
 }
 
 interface Attendance {
@@ -40,6 +63,20 @@ interface AttendanceStats {
   date: string
 }
 
+const STATUS_OPTIONS = [
+  { value: 'present', label: 'Present' },
+  { value: 'absent', label: 'Absent' },
+  { value: 'half_day', label: 'Half Day' },
+  { value: 'paid_leave', label: 'Paid Leave' },
+  { value: 'weekly_off', label: 'Weekly Off' },
+] as const
+
+function defaultWorkHours(status: string) {
+  if (status === 'half_day') return 4
+  if (status === 'present') return 8
+  return 0
+}
+
 export default function AttendancePage() {
   const { user, loading: authLoading } = useAuth()
   const [staffs, setStaffs] = useState<Staff[]>([])
@@ -47,8 +84,17 @@ export default function AttendancePage() {
   const [stats, setStats] = useState<AttendanceStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
+  const [search, setSearch] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [designationFilter, setDesignationFilter] = useState('all')
+  const [departmentFilter, setDepartmentFilter] = useState('all')
+  const [selectedStaffIds, setSelectedStaffIds] = useState<Set<string>>(new Set())
   const [isDialogOpen, setIsDialogOpen] = useState(false)
-  const [selectedStaff, setSelectedStaff] = useState<Staff | null>(null)
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false)
+  const [attendanceToDelete, setAttendanceToDelete] = useState<Attendance | null>(null)
+  const [isBulkDeleteConfirmOpen, setIsBulkDeleteConfirmOpen] = useState(false)
+  const [isBulkStatusConfirmOpen, setIsBulkStatusConfirmOpen] = useState(false)
+  const [bulkStatus, setBulkStatus] = useState<string>('present')
   const [formData, setFormData] = useState({
     staff_id: '',
     date: selectedDate,
@@ -60,6 +106,40 @@ export default function AttendancePage() {
   })
 
   useEffect(() => { if (!authLoading && user) { fetchStaffs(); fetchAttendance(); fetchStats() } }, [authLoading, user, selectedDate])
+
+  const filteredStaffs = staffs.filter((staff) => {
+    const query = search.toLowerCase()
+    const attendance = attendances.find((a) => a.staff_id === staff.id)
+
+    const matchesSearch =
+      !search ||
+      staff.name.toLowerCase().includes(query) ||
+      staff.designation?.toLowerCase().includes(query) ||
+      staff.department?.toLowerCase().includes(query)
+
+    const matchesDesignation =
+      designationFilter === 'all' || staff.designation === designationFilter
+
+    const matchesDepartment =
+      departmentFilter === 'all' || staff.department === departmentFilter
+
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'not_marked' && !attendance) ||
+      (attendance?.status === statusFilter)
+
+    return matchesSearch && matchesDesignation && matchesDepartment && matchesStatus
+  })
+
+  const designations = [...new Set(staffs.map((s) => s.designation).filter(Boolean))].sort()
+  const departments = [...new Set(staffs.map((s) => s.department).filter(Boolean))].sort()
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredStaffs)
+
+  useEffect(() => {
+    resetPage()
+    setSelectedStaffIds(new Set())
+  }, [selectedDate, search, statusFilter, designationFilter, departmentFilter])
 
   const fetchStaffs = async () => {
     try {
@@ -83,6 +163,11 @@ export default function AttendancePage() {
     } catch (err) { console.error(err) }
   }
 
+  const refreshData = () => {
+    fetchAttendance()
+    fetchStats()
+  }
+
   const handleSubmit = async () => {
     try {
       const res = await apiFetch('/attendance', {
@@ -95,7 +180,7 @@ export default function AttendancePage() {
           check_out_time: formData.check_out_time ? new Date(`${selectedDate}T${formData.check_out_time}`).toISOString() : null
         })
       })
-      if (res.ok) { setIsDialogOpen(false); resetForm(); fetchAttendance(); fetchStats() }
+      if (res.ok) { setIsDialogOpen(false); resetForm(); refreshData() }
     } catch (err) { console.error(err) }
   }
 
@@ -109,7 +194,6 @@ export default function AttendancePage() {
       work_hours: 0,
       notes: ''
     })
-    setSelectedStaff(null)
   }
 
   const handleQuickMark = async (staffId: string, status: string) => {
@@ -121,12 +205,125 @@ export default function AttendancePage() {
           staff_id: staffId,
           date: selectedDate,
           status,
-          work_hours: status === 'half_day' ? 4 : status === 'present' ? 8 : 0
+          work_hours: defaultWorkHours(status)
         })
       })
-      if (res.ok) { fetchAttendance(); fetchStats() }
+      if (res.ok) refreshData()
     } catch (err) { console.error(err) }
   }
+
+  const handleEdit = (staff: Staff, attendance?: Attendance) => {
+    setFormData({
+      staff_id: staff.id,
+      date: selectedDate,
+      status: attendance?.status || 'present',
+      check_in_time: attendance?.check_in_time
+        ? new Date(attendance.check_in_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+        : '',
+      check_out_time: attendance?.check_out_time
+        ? new Date(attendance.check_out_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })
+        : '',
+      work_hours: attendance?.work_hours || 0,
+      notes: attendance?.notes || ''
+    })
+    setIsDialogOpen(true)
+  }
+
+  const handleDelete = (attendance: Attendance) => {
+    setAttendanceToDelete(attendance)
+    setIsDeleteConfirmOpen(true)
+  }
+
+  const confirmDelete = async () => {
+    if (!attendanceToDelete) return
+    try {
+      const res = await apiFetch(`/attendance/${attendanceToDelete.id}`, { method: 'DELETE' })
+      if (res.ok) {
+        setIsDeleteConfirmOpen(false)
+        setAttendanceToDelete(null)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const handleSelectStaff = (id: string) => {
+    const next = new Set(selectedStaffIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedStaffIds(next)
+  }
+
+  const handleSelectAll = () => {
+    if (selectedStaffIds.size === filteredStaffs.length) {
+      setSelectedStaffIds(new Set())
+    } else {
+      setSelectedStaffIds(new Set(filteredStaffs.map((staff) => staff.id)))
+    }
+  }
+
+  const handleBulkMark = (status: string) => {
+    if (selectedStaffIds.size === 0) return
+    setBulkStatus(status)
+    setIsBulkStatusConfirmOpen(true)
+  }
+
+  const confirmBulkMark = async () => {
+    try {
+      const res = await apiFetch('/attendance/bulk', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date: selectedDate,
+          attendance: Array.from(selectedStaffIds).map((staffId) => ({
+            staff_id: staffId,
+            status: bulkStatus,
+            work_hours: defaultWorkHours(bulkStatus),
+          })),
+        }),
+      })
+      if (res.ok) {
+        setSelectedStaffIds(new Set())
+        setIsBulkStatusConfirmOpen(false)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const handleBulkDelete = () => {
+    const deletableIds = Array.from(selectedStaffIds)
+      .map((staffId) => attendances.find((a) => a.staff_id === staffId))
+      .filter((attendance): attendance is Attendance => Boolean(attendance))
+      .map((attendance) => attendance.id)
+
+    if (deletableIds.length === 0) return
+    setIsBulkDeleteConfirmOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
+    const deletableIds = Array.from(selectedStaffIds)
+      .map((staffId) => attendances.find((a) => a.staff_id === staffId))
+      .filter((attendance): attendance is Attendance => Boolean(attendance))
+      .map((attendance) => attendance.id)
+
+    if (deletableIds.length === 0) return
+
+    try {
+      const res = await apiFetch('/attendance/bulk/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: deletableIds }),
+      })
+      if (res.ok) {
+        setSelectedStaffIds(new Set())
+        setIsBulkDeleteConfirmOpen(false)
+        refreshData()
+      }
+    } catch (err) { console.error(err) }
+  }
+
+  const selectedDeletableCount = Array.from(selectedStaffIds).filter((staffId) =>
+    attendances.some((a) => a.staff_id === staffId)
+  ).length
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -150,6 +347,49 @@ export default function AttendancePage() {
     }
   }
 
+  const getStatusLabel = (status: string) =>
+    STATUS_OPTIONS.find((option) => option.value === status)?.label ||
+    status.replace('_', ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+
+  const formatTime = (iso?: string) =>
+    iso ? new Date(iso).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''
+
+  const handleExport = () => {
+    const exportList =
+      selectedStaffIds.size > 0
+        ? filteredStaffs.filter((staff) => selectedStaffIds.has(staff.id))
+        : filteredStaffs
+
+    const rows: (string | number)[][] = [
+      [
+        'Date',
+        'Staff Name',
+        'Designation',
+        'Department',
+        'Status',
+        'Check In',
+        'Check Out',
+        'Work Hours',
+        'Notes',
+      ],
+      ...exportList.map((staff) => {
+        const attendance = attendances.find((a) => a.staff_id === staff.id)
+        return [
+          selectedDate,
+          staff.name,
+          staff.designation || '',
+          staff.department || '',
+          attendance ? getStatusLabel(attendance.status) : 'Not Marked',
+          formatTime(attendance?.check_in_time),
+          formatTime(attendance?.check_out_time),
+          attendance?.work_hours ?? '',
+          attendance?.notes || '',
+        ]
+      }),
+    ]
+    downloadCsv(`attendance_${selectedDate}_${accountingExportDateStamp()}.csv`, rows)
+  }
+
   if (authLoading || loading) return <div className="flex min-h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" /></div>
 
   return (
@@ -164,11 +404,13 @@ export default function AttendancePage() {
               onChange={(e) => setSelectedDate(e.target.value)}
               className="w-auto"
             />
+            <Button variant="outline" onClick={handleExport} disabled={loading || filteredStaffs.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
             <Button onClick={() => { resetForm(); setIsDialogOpen(true) }}><Save className="mr-2 h-4 w-4" /> Mark Attendance</Button>
           </div>
         </div>
 
-        {/* Attendance Stats Widget */}
         {stats && (
           <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
             <Card>
@@ -211,29 +453,132 @@ export default function AttendancePage() {
         )}
 
         <Card>
-          <CardHeader>
-            <CardTitle>Attendance for {new Date(selectedDate).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle className="mb-4">
+              Attendance for {new Date(selectedDate).toLocaleDateString('en-IN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+            </CardTitle>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap flex-1">
+                <div className="relative flex-1 min-w-[220px] sm:max-w-sm">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                  <Input
+                    placeholder="Search by name, designation..."
+                    className="pl-10"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-full sm:w-[170px]">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="not_marked">Not Marked</SelectItem>
+                    {STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+                  <SelectTrigger className="w-full sm:w-[170px]">
+                    <SelectValue placeholder="Department" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Departments</SelectItem>
+                    {departments.map((department) => (
+                      <SelectItem key={department} value={department}>
+                        {department}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Select value={designationFilter} onValueChange={setDesignationFilter}>
+                  <SelectTrigger className="w-full sm:w-[170px]">
+                    <SelectValue placeholder="Designation" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Designations</SelectItem>
+                    {designations.map((designation) => (
+                      <SelectItem key={designation} value={designation}>
+                        {designation}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              {selectedStaffIds.size > 0 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-gray-600">{selectedStaffIds.size} selected</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm">Mark As</Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      {STATUS_OPTIONS.map((option) => (
+                        <DropdownMenuItem
+                          key={option.value}
+                          onClick={() => handleBulkMark(option.value)}
+                        >
+                          {getStatusIcon(option.value)}
+                          <span className="ml-2">{option.label}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                  <Button variant="outline" size="sm" onClick={handleExport}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Export
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleBulkDelete}
+                    disabled={selectedDeletableCount === 0}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    Delete{selectedDeletableCount > 0 ? ` (${selectedDeletableCount})` : ''}
+                  </Button>
+                </div>
+              )}
+            </div>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={selectedStaffIds.size === filteredStaffs.length && filteredStaffs.length > 0}
+                      onCheckedChange={handleSelectAll}
+                    />
+                  </TableHead>
                   <TableHead>Staff Name</TableHead>
                   <TableHead>Designation</TableHead>
+                  <TableHead>Department</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Check In</TableHead>
                   <TableHead>Check Out</TableHead>
                   <TableHead>Work Hours</TableHead>
-                  <TableHead>Quick Actions</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {staffs.map((staff) => {
+                {paginatedItems.map((staff) => {
                   const attendance = attendances.find(a => a.staff_id === staff.id)
                   return (
                     <TableRow key={staff.id}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selectedStaffIds.has(staff.id)}
+                          onCheckedChange={() => handleSelectStaff(staff.id)}
+                        />
+                      </TableCell>
                       <TableCell className="font-medium">{staff.name}</TableCell>
                       <TableCell>{staff.designation}</TableCell>
+                      <TableCell>{staff.department || '—'}</TableCell>
                       <TableCell>
                         {attendance ? (
                           <div className="flex items-center gap-2">
@@ -249,21 +594,58 @@ export default function AttendancePage() {
                       <TableCell>{attendance?.check_in_time ? new Date(attendance.check_in_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '-'}</TableCell>
                       <TableCell>{attendance?.check_out_time ? new Date(attendance.check_out_time).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : '-'}</TableCell>
                       <TableCell>{attendance?.work_hours || 0} hrs</TableCell>
-                      <TableCell>
-                        <div className="flex gap-1">
-                          <Button size="sm" variant="outline" onClick={() => handleQuickMark(staff.id, 'present')} className="text-green-600 hover:bg-green-50">P</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleQuickMark(staff.id, 'absent')} className="text-red-600 hover:bg-red-50">A</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleQuickMark(staff.id, 'half_day')} className="text-yellow-600 hover:bg-yellow-50">H</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleQuickMark(staff.id, 'paid_leave')} className="text-blue-600 hover:bg-blue-50">L</Button>
-                          <Button size="sm" variant="outline" onClick={() => handleQuickMark(staff.id, 'weekly_off')} className="text-purple-600 hover:bg-purple-50">W</Button>
-                        </div>
+                      <TableCell className="text-right">
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                              <MoreVertical className="h-4 w-4" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {STATUS_OPTIONS.map((option) => (
+                              <DropdownMenuItem
+                                key={option.value}
+                                onClick={() => handleQuickMark(staff.id, option.value)}
+                              >
+                                {getStatusIcon(option.value)}
+                                <span className="ml-2">Mark {option.label}</span>
+                              </DropdownMenuItem>
+                            ))}
+                            <DropdownMenuItem onClick={() => handleEdit(staff, attendance)}>
+                              <Pencil className="mr-2 h-4 w-4" />
+                              Edit Details
+                            </DropdownMenuItem>
+                            {attendance && (
+                              <DropdownMenuItem
+                                onClick={() => handleDelete(attendance)}
+                                className="text-red-600"
+                              >
+                                <Trash2 className="mr-2 h-4 w-4" />
+                                Delete
+                              </DropdownMenuItem>
+                            )}
+                          </DropdownMenuContent>
+                        </DropdownMenu>
                       </TableCell>
                     </TableRow>
                   )
                 })}
-                {staffs.length === 0 && <TableRow><TableCell colSpan={7} className="text-center py-8 text-gray-500">No staff found. Add staff first.</TableCell></TableRow>}
+                {filteredStaffs.length === 0 && (
+                  <TableRow>
+                    <TableCell colSpan={9} className="text-center py-8 text-gray-500">
+                      {staffs.length === 0 ? 'No staff found. Add staff first.' : 'No staff match the selected filters.'}
+                    </TableCell>
+                  </TableRow>
+                )}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
 
@@ -285,11 +667,9 @@ export default function AttendancePage() {
                 <Select value={formData.status} onValueChange={(v) => setFormData({...formData, status: v})}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="present">Present</SelectItem>
-                    <SelectItem value="absent">Absent</SelectItem>
-                    <SelectItem value="half_day">Half Day</SelectItem>
-                    <SelectItem value="paid_leave">Paid Leave</SelectItem>
-                    <SelectItem value="weekly_off">Weekly Off</SelectItem>
+                    {STATUS_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -303,6 +683,47 @@ export default function AttendancePage() {
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
               <Button onClick={handleSubmit}>Save</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isDeleteConfirmOpen} onOpenChange={setIsDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Confirm Delete</DialogTitle></DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Are you sure you want to delete this attendance record? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkDeleteConfirmOpen} onOpenChange={setIsBulkDeleteConfirmOpen}>
+          <DialogContent>
+            <DialogHeader><DialogTitle>Confirm Bulk Delete</DialogTitle></DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Are you sure you want to delete {selectedDeletableCount} attendance records? This action cannot be undone.
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkDeleteConfirmOpen(false)}>Cancel</Button>
+              <Button variant="destructive" onClick={confirmBulkDelete}>Delete</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={isBulkStatusConfirmOpen} onOpenChange={setIsBulkStatusConfirmOpen}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Confirm Bulk Mark</DialogTitle>
+            </DialogHeader>
+            <p className="py-4 text-sm text-gray-600">
+              Mark {selectedStaffIds.size} staff as {getStatusLabel(bulkStatus)} for {new Date(selectedDate).toLocaleDateString('en-IN')}?
+            </p>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setIsBulkStatusConfirmOpen(false)}>Cancel</Button>
+              <Button onClick={confirmBulkMark}>Confirm</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

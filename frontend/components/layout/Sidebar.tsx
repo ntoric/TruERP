@@ -181,7 +181,7 @@ export default function Sidebar() {
         <div className="flex h-16 items-center border-b px-6">
           <Link href="/dashboard" className="flex items-center gap-2">
             <IndianRupee className="h-6 w-6 text-blue-600" />
-            <span className="text-xl font-bold text-gray-900">BillBook</span>
+            <span className="text-xl font-bold text-gray-900">TruERP</span>
           </Link>
         </div>
 

@@ -16,7 +16,7 @@ func GetEncryptionKey() ([]byte, error) {
 	key := os.Getenv("ENCRYPTION_KEY")
 	if key == "" {
 		// Default key for development (should be changed in production)
-		return []byte("billbook-encryption-key-32-bytes!!"), nil
+		return []byte("truerp-encryption-key-32-bytes!!"), nil
 	}
 	return []byte(key), nil
 }

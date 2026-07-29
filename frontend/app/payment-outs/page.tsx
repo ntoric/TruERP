@@ -9,8 +9,17 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { Plus, CreditCard, Trash2 } from 'lucide-react'
+import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
+import { Plus, Search, Download, MoreVertical, Trash2 } from 'lucide-react'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface PaymentOut {
   id: string
@@ -21,6 +30,10 @@ interface PaymentOut {
   date: string
   reference: string
   notes: string
+  party?: {
+    id: string
+    name: string
+  }
   vendor?: {
     id: string
     name: string
@@ -49,6 +62,11 @@ export default function PaymentOutsPage() {
   const [vendors, setVendors] = useState<Vendor[]>([])
   const [bills, setBills] = useState<PurchaseBill[]>([])
   const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [vendorFilter, setVendorFilter] = useState('all')
+  const [modeFilter, setModeFilter] = useState('all')
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
   const [dialogOpen, setDialogOpen] = useState(false)
   const [formData, setFormData] = useState({
     vendor_id: '',
@@ -59,18 +77,69 @@ export default function PaymentOutsPage() {
     mode: '',
     date: new Date().toISOString().split('T')[0],
     reference: '',
-    notes: ''
+    notes: '',
   })
 
   useEffect(() => {
-    fetchPaymentOuts()
     fetchVendors()
     fetchBills()
   }, [])
 
+  useEffect(() => {
+    fetchPaymentOuts()
+  }, [vendorFilter])
+
+  function getVendorName(paymentOut: PaymentOut) {
+    return paymentOut.party?.name || paymentOut.vendor?.name || '-'
+  }
+
+  function getBillNumber(paymentOut: PaymentOut) {
+    return paymentOut.purchase_bill?.bill_number || '-'
+  }
+
+  function getNetAmount(paymentOut: PaymentOut) {
+    return paymentOut.amount_paid - paymentOut.payment_out_discount
+  }
+
+  const filteredPaymentOuts = paymentOuts.filter((paymentOut) => {
+    const query = search.toLowerCase()
+    const vendorName = getVendorName(paymentOut).toLowerCase()
+    const paymentDate = paymentOut.date.split('T')[0]
+
+    const matchesSearch =
+      !search ||
+      vendorName.includes(query) ||
+      paymentOut.purchase_bill?.bill_number?.toLowerCase().includes(query) ||
+      paymentOut.payment_out_number?.toLowerCase().includes(query) ||
+      paymentOut.reference?.toLowerCase().includes(query) ||
+      paymentOut.notes?.toLowerCase().includes(query) ||
+      paymentOut.mode?.toLowerCase().includes(query)
+
+    const matchesVendor =
+      vendorFilter === 'all' ||
+      paymentOut.party?.id === vendorFilter ||
+      paymentOut.vendor?.id === vendorFilter
+    const matchesMode = modeFilter === 'all' || paymentOut.mode === modeFilter
+    const matchesDateFrom = !dateFrom || paymentDate >= dateFrom
+    const matchesDateTo = !dateTo || paymentDate <= dateTo
+
+    return matchesSearch && matchesVendor && matchesMode && matchesDateFrom && matchesDateTo
+  })
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } =
+    usePagination(filteredPaymentOuts)
+
+  useEffect(() => {
+    resetPage()
+  }, [search, vendorFilter, modeFilter, dateFrom, dateTo])
+
   const fetchPaymentOuts = async () => {
     try {
-      const res = await apiFetch('/payment-outs')
+      let url = '/payment-outs'
+      if (vendorFilter !== 'all') {
+        url += `?party_id=${vendorFilter}`
+      }
+      const res = await apiFetch(url)
       if (res.ok) setPaymentOuts(await res.json())
     } catch (err) {
       console.error(err)
@@ -100,7 +169,7 @@ export default function PaymentOutsPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const payload: any = {
+      const payload: Record<string, string | number> = {
         vendor_id: formData.vendor_id,
         amount_paid: parseFloat(formData.amount_paid),
         payment_out_discount: parseFloat(formData.payment_out_discount),
@@ -108,16 +177,16 @@ export default function PaymentOutsPage() {
         mode: formData.mode,
         date: formData.date,
         reference: formData.reference,
-        notes: formData.notes
+        notes: formData.notes,
       }
-      
+
       if (formData.purchase_bill_id) {
         payload.purchase_bill_id = formData.purchase_bill_id
       }
 
       const res = await apiFetch('/payment-outs', {
         method: 'POST',
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         setDialogOpen(false)
@@ -130,7 +199,7 @@ export default function PaymentOutsPage() {
           mode: '',
           date: new Date().toISOString().split('T')[0],
           reference: '',
-          notes: ''
+          notes: '',
         })
         fetchPaymentOuts()
       }
@@ -149,6 +218,51 @@ export default function PaymentOutsPage() {
     }
   }
 
+  const handleExport = () => {
+    const rows: (string | number)[][] = [
+      [
+        'Date',
+        'Payment Out Number',
+        'Vendor',
+        'Bill #',
+        'Amount Paid',
+        'Discount',
+        'Net Amount',
+        'Mode',
+        'Reference',
+        'Notes',
+      ],
+      ...filteredPaymentOuts.map((paymentOut) => [
+        formatDate(paymentOut.date),
+        paymentOut.payment_out_number || '',
+        getVendorName(paymentOut),
+        getBillNumber(paymentOut),
+        paymentOut.amount_paid,
+        paymentOut.payment_out_discount,
+        getNetAmount(paymentOut),
+        paymentOut.mode,
+        paymentOut.reference || '',
+        paymentOut.notes || '',
+      ]),
+    ]
+    downloadCsv(`payment_outs_${accountingExportDateStamp()}.csv`, rows)
+  }
+
+  const hasActiveFilters =
+    search !== '' ||
+    vendorFilter !== 'all' ||
+    modeFilter !== 'all' ||
+    dateFrom !== '' ||
+    dateTo !== ''
+
+  const clearFilters = () => {
+    setSearch('')
+    setVendorFilter('all')
+    setModeFilter('all')
+    setDateFrom('')
+    setDateTo('')
+  }
+
   const getModeIcon = (mode: string) => {
     const colors: Record<string, string> = {
       cash: 'bg-green-100 text-green-700',
@@ -157,19 +271,13 @@ export default function PaymentOutsPage() {
       cheque: 'bg-orange-100 text-orange-700',
       card: 'bg-pink-100 text-pink-700',
     }
-    return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[mode] || 'bg-gray-100 text-gray-700'}`}>{mode.replace('_', ' ')}</span>
-  }
-
-  const getVendorName = (paymentOut: PaymentOut) => {
-    return paymentOut.vendor?.name || '-'
-  }
-
-  const getBillNumber = (paymentOut: PaymentOut) => {
-    return paymentOut.purchase_bill?.bill_number || '-'
-  }
-
-  const getNetAmount = (paymentOut: PaymentOut) => {
-    return paymentOut.amount_paid - paymentOut.payment_out_discount
+    return (
+      <span
+        className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${colors[mode] || 'bg-gray-100 text-gray-700'}`}
+      >
+        {mode.replace('_', ' ')}
+      </span>
+    )
   }
 
   return (
@@ -177,133 +285,214 @@ export default function PaymentOutsPage() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-gray-900">Payments Out</h1>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button className="flex items-center gap-2">
-                <Plus className="h-4 w-4" />
-                Create Payment Out
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Payment Out</DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <Label htmlFor="vendor">Vendor Name</Label>
-                  <Select value={formData.vendor_id} onValueChange={(value) => setFormData({ ...formData, vendor_id: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select vendor" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {vendors.map((vendor) => (
-                        <SelectItem key={vendor.id} value={vendor.id}>
-                          {vendor.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="purchase_bill">Purchase Bill (Optional)</Label>
-                  <Select value={formData.purchase_bill_id} onValueChange={(value) => setFormData({ ...formData, purchase_bill_id: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select bill" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {bills.filter(b => !formData.vendor_id || b.vendor_id === formData.vendor_id).map((bill) => (
-                        <SelectItem key={bill.id} value={bill.id}>
-                          {bill.bill_number} - {formatCurrency(bill.balance_due)} due
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="amount_paid">Amount Paid</Label>
-                  <Input
-                    id="amount_paid"
-                    type="number"
-                    step="0.01"
-                    value={formData.amount_paid}
-                    onChange={(e) => setFormData({ ...formData, amount_paid: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="payment_out_discount">Payment Out Discount</Label>
-                  <Input
-                    id="payment_out_discount"
-                    type="number"
-                    step="0.01"
-                    value={formData.payment_out_discount}
-                    onChange={(e) => setFormData({ ...formData, payment_out_discount: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="payment_out_number">Payment Out Number</Label>
-                  <Input
-                    id="payment_out_number"
-                    value={formData.payment_out_number}
-                    onChange={(e) => setFormData({ ...formData, payment_out_number: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="mode">Payment Mode</Label>
-                  <Select value={formData.mode} onValueChange={(value) => setFormData({ ...formData, mode: value })}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select mode" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cash">Cash</SelectItem>
-                      <SelectItem value="upi">UPI</SelectItem>
-                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                      <SelectItem value="cheque">Cheque</SelectItem>
-                      <SelectItem value="card">Card</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div>
-                  <Label htmlFor="date">Payment Date</Label>
-                  <Input
-                    id="date"
-                    type="date"
-                    value={formData.date}
-                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                    required
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="reference">Reference</Label>
-                  <Input
-                    id="reference"
-                    value={formData.reference}
-                    onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                  />
-                </div>
-                <div>
-                  <Label htmlFor="notes">Notes</Label>
-                  <Input
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  />
-                </div>
-                <DialogFooter>
-                  <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button type="submit">Create Payment</Button>
-                </DialogFooter>
-              </form>
-            </DialogContent>
-          </Dialog>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={handleExport}
+              disabled={loading || filteredPaymentOuts.length === 0}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Export
+            </Button>
+            <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+              <DialogTrigger asChild>
+                <Button className="flex items-center gap-2">
+                  <Plus className="h-4 w-4" />
+                  Create Payment Out
+                </Button>
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Payment Out</DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div>
+                    <Label htmlFor="vendor">Vendor Name</Label>
+                    <Select
+                      value={formData.vendor_id}
+                      onValueChange={(value) => setFormData({ ...formData, vendor_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select vendor" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vendors.map((vendor) => (
+                          <SelectItem key={vendor.id} value={vendor.id}>
+                            {vendor.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="purchase_bill">Purchase Bill (Optional)</Label>
+                    <Select
+                      value={formData.purchase_bill_id}
+                      onValueChange={(value) => setFormData({ ...formData, purchase_bill_id: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select bill" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {bills
+                          .filter((b) => !formData.vendor_id || b.vendor_id === formData.vendor_id)
+                          .map((bill) => (
+                            <SelectItem key={bill.id} value={bill.id}>
+                              {bill.bill_number} - {formatCurrency(bill.balance_due)} due
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="amount_paid">Amount Paid</Label>
+                    <Input
+                      id="amount_paid"
+                      type="number"
+                      step="0.01"
+                      value={formData.amount_paid}
+                      onChange={(e) => setFormData({ ...formData, amount_paid: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="payment_out_discount">Payment Out Discount</Label>
+                    <Input
+                      id="payment_out_discount"
+                      type="number"
+                      step="0.01"
+                      value={formData.payment_out_discount}
+                      onChange={(e) =>
+                        setFormData({ ...formData, payment_out_discount: e.target.value })
+                      }
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="payment_out_number">Payment Out Number</Label>
+                    <Input
+                      id="payment_out_number"
+                      value={formData.payment_out_number}
+                      onChange={(e) =>
+                        setFormData({ ...formData, payment_out_number: e.target.value })
+                      }
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="mode">Payment Mode</Label>
+                    <Select
+                      value={formData.mode}
+                      onValueChange={(value) => setFormData({ ...formData, mode: value })}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select mode" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cash">Cash</SelectItem>
+                        <SelectItem value="upi">UPI</SelectItem>
+                        <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="cheque">Cheque</SelectItem>
+                        <SelectItem value="card">Card</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <Label htmlFor="date">Payment Date</Label>
+                    <Input
+                      id="date"
+                      type="date"
+                      value={formData.date}
+                      onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="reference">Reference</Label>
+                    <Input
+                      id="reference"
+                      value={formData.reference}
+                      onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="notes">Notes</Label>
+                    <Input
+                      id="notes"
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                    />
+                  </div>
+                  <DialogFooter>
+                    <Button type="button" variant="outline" onClick={() => setDialogOpen(false)}>
+                      Cancel
+                    </Button>
+                    <Button type="submit">Create Payment</Button>
+                  </DialogFooter>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
         </div>
 
         <Card>
-          <CardHeader>
-            <CardTitle>Payment Out History</CardTitle>
+          <CardHeader className="pb-4">
+            <CardTitle className="mb-4">Payment Out History</CardTitle>
+            <div className="flex flex-wrap items-center gap-4">
+              <div className="relative flex-1 min-w-[200px] max-w-md">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                <Input
+                  placeholder="Search payments..."
+                  className="pl-10"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <Select value={vendorFilter} onValueChange={setVendorFilter}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="Vendor" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Vendors</SelectItem>
+                  {vendors.map((vendor) => (
+                    <SelectItem key={vendor.id} value={vendor.id}>
+                      {vendor.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={modeFilter} onValueChange={setModeFilter}>
+                <SelectTrigger className="w-[170px]">
+                  <SelectValue placeholder="Payment mode" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Modes</SelectItem>
+                  <SelectItem value="cash">Cash</SelectItem>
+                  <SelectItem value="upi">UPI</SelectItem>
+                  <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                  <SelectItem value="cheque">Cheque</SelectItem>
+                  <SelectItem value="card">Card</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                type="date"
+                className="h-10 w-auto"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                aria-label="From date"
+              />
+              <Input
+                type="date"
+                className="h-10 w-auto"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                aria-label="To date"
+              />
+              {hasActiveFilters && (
+                <Button variant="ghost" size="sm" onClick={clearFilters}>
+                  Clear filters
+                </Button>
+              )}
+            </div>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -329,38 +518,66 @@ export default function PaymentOutsPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paymentOuts.map((p) => (
-                      <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
-                        <td className="py-3 text-gray-600">{formatDate(p.date)}</td>
-                        <td className="py-3 text-gray-600 font-mono text-xs">{p.id.slice(0, 8)}...</td>
-                        <td className="py-3 font-medium text-gray-900">{getVendorName(p)}</td>
-                        <td className="py-3 text-gray-600">{getBillNumber(p)}</td>
-                        <td className="py-3 font-medium text-gray-900">{formatCurrency(p.amount_paid)}</td>
-                        <td className="py-3 font-medium text-gray-900">{formatCurrency(p.payment_out_discount)}</td>
-                        <td className="py-3 font-medium text-gray-900">{formatCurrency(getNetAmount(p))}</td>
-                        <td className="py-3">{getModeIcon(p.mode)}</td>
-                        <td className="py-3 text-gray-600">{p.payment_out_number || '-'}</td>
-                        <td className="py-3 text-gray-600">{p.notes || '-'}</td>
-                        <td className="py-3">
-                          <button
-                            onClick={() => handleDelete(p.id)}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                    {paymentOuts.length === 0 && (
+                    {paymentOuts.length === 0 ? (
                       <tr>
                         <td colSpan={11} className="py-8 text-center text-gray-500">
                           No payment outs recorded yet
                         </td>
                       </tr>
+                    ) : filteredPaymentOuts.length === 0 ? (
+                      <tr>
+                        <td colSpan={11} className="py-8 text-center text-gray-500">
+                          No payment outs match your filters
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedItems.map((p) => (
+                        <tr key={p.id} className="border-b last:border-0 hover:bg-gray-50">
+                          <td className="py-3 text-gray-600">{formatDate(p.date)}</td>
+                          <td className="py-3 font-mono text-xs text-gray-600">{p.id.slice(0, 8)}...</td>
+                          <td className="py-3 font-medium text-gray-900">{getVendorName(p)}</td>
+                          <td className="py-3 text-gray-600">{getBillNumber(p)}</td>
+                          <td className="py-3 font-medium text-gray-900">{formatCurrency(p.amount_paid)}</td>
+                          <td className="py-3 font-medium text-gray-900">
+                            {formatCurrency(p.payment_out_discount)}
+                          </td>
+                          <td className="py-3 font-medium text-gray-900">{formatCurrency(getNetAmount(p))}</td>
+                          <td className="py-3">{getModeIcon(p.mode)}</td>
+                          <td className="py-3 text-gray-600">{p.payment_out_number || '-'}</td>
+                          <td className="py-3 text-gray-600">{p.notes || '-'}</td>
+                          <td className="py-3">
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <Button variant="ghost" size="sm" className="h-8 w-8 p-0">
+                                  <MoreVertical className="h-4 w-4" />
+                                </Button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  onClick={() => handleDelete(p.id)}
+                                  className="text-red-600"
+                                >
+                                  <Trash2 className="mr-2 h-4 w-4" />
+                                  Delete
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          </td>
+                        </tr>
+                      ))
                     )}
                   </tbody>
                 </table>
               </div>
+            )}
+            {!loading && (
+              <PaginationControls
+                page={page}
+                totalPages={totalPages}
+                totalItems={totalItems}
+                pageSize={pageSize}
+                onPageChange={setPage}
+              />
             )}
           </CardContent>
         </Card>

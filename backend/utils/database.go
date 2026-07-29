@@ -1,11 +1,12 @@
 package utils
 
 import (
-	"billbook/models"
+	"truerp/models"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
@@ -14,11 +15,61 @@ import (
 
 var DB *gorm.DB
 
+func countSQLiteTableRows(dbPath, table string) int {
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+		Logger: logger.Default.LogMode(logger.Silent),
+	})
+	if err != nil {
+		return 0
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return 0
+	}
+	defer sqlDB.Close()
+
+	var count int64
+	if err := db.Table(table).Count(&count).Error; err != nil {
+		return 0
+	}
+	return int(count)
+}
+
+func resolveDatabasePath() string {
+	if custom := strings.TrimSpace(os.Getenv("DATABASE_PATH")); custom != "" {
+		return custom
+	}
+
+	dataDir := "data"
+	truerpPath := filepath.Join(dataDir, "truerp.db")
+	legacyPath := filepath.Join(dataDir, "billbook.db")
+
+	_, legacyErr := os.Stat(legacyPath)
+	_, truerpErr := os.Stat(truerpPath)
+
+	if legacyErr == nil && truerpErr != nil {
+		return legacyPath
+	}
+
+	if legacyErr == nil && truerpErr == nil {
+		legacyUsers := countSQLiteTableRows(legacyPath, "users")
+		truerpUsers := countSQLiteTableRows(truerpPath, "users")
+		if legacyUsers > 0 && truerpUsers == 0 {
+			log.Printf("Using legacy database %s (%d users); %s has no users yet", legacyPath, legacyUsers, truerpPath)
+			return legacyPath
+		}
+	}
+
+	return truerpPath
+}
+
 func InitDatabase() *gorm.DB {
-	dbPath := filepath.Join("data", "billbook.db")
-	if err := os.MkdirAll("data", 0755); err != nil {
+	dbPath := resolveDatabasePath()
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
 		log.Fatal("Failed to create data directory:", err)
 	}
+
+	log.Printf("Opening database: %s", dbPath)
 
 	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),

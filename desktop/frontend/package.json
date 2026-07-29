@@ -1,0 +1,6 @@
+{
+  "name": "truerp-desktop-frontend",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Placeholder package. UI assets are produced by scripts/prepare-frontend.sh from the sibling Next.js app."
+}

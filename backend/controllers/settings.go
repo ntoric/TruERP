@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"net/http"
 	"time"
 
@@ -113,26 +113,65 @@ func GetPrintSettings(c *gin.Context) {
 	var settings models.PrintSettings
 	if err := utils.DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
 		// Return default settings if not found
-		defaultSettings := models.PrintSettings{
-			ID:          uuid.New(),
-			UserID:      userID,
-			PaperSize:   "a4",
-			Orientation: "portrait",
-			MarginTop:   0.5,
-			MarginBottom: 0.5,
-			MarginLeft:  0.5,
-			MarginRight: 0.5,
-			FontSize:    12,
-			PrintHeader:      true,
-			PrintFooter:      true,
-			ThermalPrintSize: "2inch",
-			BarcodePrintMode: "a4",
-		}
+		defaultSettings := defaultPrintSettings(userID)
 		c.JSON(http.StatusOK, defaultSettings)
 		return
 	}
 
+	normalizePrintSettings(&settings)
 	c.JSON(http.StatusOK, settings)
+}
+
+func defaultPrintSettings(userID uuid.UUID) models.PrintSettings {
+	return models.PrintSettings{
+		ID:                  uuid.New(),
+		UserID:              userID,
+		InvoicePrintMode:    "a4",
+		PaperSize:           "a4",
+		Orientation:         "portrait",
+		MarginTop:           0.5,
+		MarginBottom:        0.5,
+		MarginLeft:          0.5,
+		MarginRight:         0.5,
+		FontSize:            12,
+		PrintHeader:         true,
+		PrintFooter:         true,
+		ThermalPrintSize:    "2inch",
+		BarcodePrintMode:    "a4",
+		ThermalPrinterName:  "",
+		DocumentPrinterName: "",
+		AutoPrintOnPOS:      true,
+	}
+}
+
+func normalizePrintSettings(settings *models.PrintSettings) {
+	if settings.InvoicePrintMode != "thermal" && settings.InvoicePrintMode != "a4" {
+		settings.InvoicePrintMode = "a4"
+	}
+	if settings.ThermalPrintSize != "2inch" && settings.ThermalPrintSize != "3inch" {
+		settings.ThermalPrintSize = "2inch"
+	}
+	if settings.BarcodePrintMode != "label" && settings.BarcodePrintMode != "a4" {
+		settings.BarcodePrintMode = "a4"
+	}
+	if settings.PaperSize == "" {
+		settings.PaperSize = "a4"
+	}
+	if settings.Orientation == "" {
+		settings.Orientation = "portrait"
+	}
+	if settings.FontSize <= 0 {
+		settings.FontSize = 12
+	}
+}
+
+func loadPrintSettings(userID uuid.UUID) models.PrintSettings {
+	var settings models.PrintSettings
+	if err := utils.DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
+		return defaultPrintSettings(userID)
+	}
+	normalizePrintSettings(&settings)
+	return settings
 }
 
 func UpdatePrintSettings(c *gin.Context) {
@@ -144,23 +183,29 @@ func UpdatePrintSettings(c *gin.Context) {
 		return
 	}
 
+	normalizePrintSettings(&input)
+
 	var settings models.PrintSettings
 	if err := utils.DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
 		// Create new settings if not found
 		settings = models.PrintSettings{
-			ID:          uuid.New(),
-			UserID:      userID,
-			PaperSize:   input.PaperSize,
-			Orientation: input.Orientation,
-			MarginTop:   input.MarginTop,
-			MarginBottom: input.MarginBottom,
-			MarginLeft:  input.MarginLeft,
-			MarginRight: input.MarginRight,
-			FontSize:    input.FontSize,
-			PrintHeader:      input.PrintHeader,
-			PrintFooter:      input.PrintFooter,
-			ThermalPrintSize: input.ThermalPrintSize,
-			BarcodePrintMode: input.BarcodePrintMode,
+			ID:                  uuid.New(),
+			UserID:              userID,
+			InvoicePrintMode:    input.InvoicePrintMode,
+			PaperSize:           input.PaperSize,
+			Orientation:         input.Orientation,
+			MarginTop:           input.MarginTop,
+			MarginBottom:        input.MarginBottom,
+			MarginLeft:          input.MarginLeft,
+			MarginRight:         input.MarginRight,
+			FontSize:            input.FontSize,
+			PrintHeader:         input.PrintHeader,
+			PrintFooter:         input.PrintFooter,
+			ThermalPrintSize:    input.ThermalPrintSize,
+			BarcodePrintMode:    input.BarcodePrintMode,
+			ThermalPrinterName:  input.ThermalPrinterName,
+			DocumentPrinterName: input.DocumentPrinterName,
+			AutoPrintOnPOS:      input.AutoPrintOnPOS,
 		}
 		if err := utils.DB.Create(&settings).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create print settings"})
@@ -169,23 +214,28 @@ func UpdatePrintSettings(c *gin.Context) {
 	} else {
 		// Update existing settings
 		if err := utils.DB.Model(&settings).Updates(map[string]interface{}{
-			"paper_size":   input.PaperSize,
-			"orientation":  input.Orientation,
-			"margin_top":   input.MarginTop,
-			"margin_bottom": input.MarginBottom,
-			"margin_left":  input.MarginLeft,
-			"margin_right": input.MarginRight,
-			"font_size":    input.FontSize,
-			"print_header":       input.PrintHeader,
-			"print_footer":       input.PrintFooter,
-			"thermal_print_size": input.ThermalPrintSize,
-			"barcode_print_mode": input.BarcodePrintMode,
+			"invoice_print_mode":    input.InvoicePrintMode,
+			"paper_size":            input.PaperSize,
+			"orientation":           input.Orientation,
+			"margin_top":            input.MarginTop,
+			"margin_bottom":         input.MarginBottom,
+			"margin_left":           input.MarginLeft,
+			"margin_right":          input.MarginRight,
+			"font_size":             input.FontSize,
+			"print_header":          input.PrintHeader,
+			"print_footer":          input.PrintFooter,
+			"thermal_print_size":    input.ThermalPrintSize,
+			"barcode_print_mode":    input.BarcodePrintMode,
+			"thermal_printer_name":  input.ThermalPrinterName,
+			"document_printer_name": input.DocumentPrinterName,
+			"auto_print_on_pos":     input.AutoPrintOnPOS,
 		}).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update print settings"})
 			return
 		}
 	}
 
+	normalizePrintSettings(&settings)
 	c.JSON(http.StatusOK, settings)
 }
 

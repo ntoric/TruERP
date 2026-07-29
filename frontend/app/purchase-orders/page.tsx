@@ -9,6 +9,8 @@ import { Button } from '@/components/ui/button'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Plus, Eye, Pencil, Trash2 } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface Party {
   id: string
@@ -32,6 +34,8 @@ export default function PurchaseOrdersPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => { if (!authLoading && user) fetchData() }, [authLoading, user])
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(orders)
 
   const fetchData = async () => {
     try {
@@ -97,7 +101,7 @@ export default function PurchaseOrdersPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {orders.map((order) => (
+                {paginatedItems.map((order) => (
                   <TableRow key={order.id}>
                     <TableCell className="font-medium">{order.order_number}</TableCell>
                     <TableCell>{order.party?.name}</TableCell>
@@ -131,6 +135,13 @@ export default function PurchaseOrdersPage() {
                 )}
               </TableBody>
             </Table>
+            <PaginationControls
+              page={page}
+              totalPages={totalPages}
+              totalItems={totalItems}
+              pageSize={pageSize}
+              onPageChange={setPage}
+            />
           </CardContent>
         </Card>
       </div>

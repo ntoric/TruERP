@@ -14,6 +14,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { Gift, Users, History, Save, Loader2, Search, Plus, Minus } from 'lucide-react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { usePagination } from '@/hooks/usePagination'
+import PaginationControls from '@/components/ui/pagination-controls'
 
 interface LoyaltySettings {
   is_enabled: boolean
@@ -156,6 +158,12 @@ export default function LoyaltyPage() {
       c.name.toLowerCase().includes(search.toLowerCase()) ||
       c.phone?.includes(search)
   )
+
+  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredCustomers)
+
+  useEffect(() => {
+    resetPage()
+  }, [search])
 
   const txnLabel = (type: string) => {
     switch (type) {
@@ -355,7 +363,7 @@ export default function LoyaltyPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredCustomers.map((c) => (
+                        {paginatedItems.map((c) => (
                           <tr key={c.id} className="border-b last:border-0">
                             <td className="py-3 font-medium">{c.name}</td>
                             <td className="py-3 text-gray-600">{c.phone || '—'}</td>
@@ -378,6 +386,15 @@ export default function LoyaltyPage() {
                       <p className="py-8 text-center text-gray-500">No customers found</p>
                     )}
                   </div>
+                )}
+                {!loading && (
+                  <PaginationControls
+                    page={page}
+                    totalPages={totalPages}
+                    totalItems={totalItems}
+                    pageSize={pageSize}
+                    onPageChange={setPage}
+                  />
                 )}
               </CardContent>
             </Card>

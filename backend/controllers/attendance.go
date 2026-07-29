@@ -1,8 +1,8 @@
 package controllers
 
 import (
-	"billbook/models"
-	"billbook/utils"
+	"truerp/models"
+	"truerp/utils"
 	"net/http"
 	"time"
 
@@ -221,4 +221,28 @@ func DeleteAttendance(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"message": "Attendance deleted successfully"})
+}
+
+func BulkDeleteAttendance(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		IDs []uuid.UUID `json:"ids" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := utils.DB.Where("user_id = ? AND id IN ?", userID, input.IDs).Delete(&models.Attendance{})
+	if result.Error != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete attendance"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Attendance deleted successfully",
+		"deleted": result.RowsAffected,
+	})
 }
