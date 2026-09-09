@@ -9,7 +9,7 @@ import { FormPageSkeleton } from '@/components/layout/PageSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { ArrowLeft, Download, Edit, Loader2 } from 'lucide-react'
+import { ArrowLeft, Download, Edit, Loader2, ExternalLink } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
 import { downloadPurchaseBillPdf } from '@/lib/printDocument'
 
@@ -46,6 +46,8 @@ interface PurchaseBill {
   paid_amount: number
   balance_due: number
   notes: string
+  source_url?: string
+  source_html_url?: string
   items: PurchaseBillItem[]
 }
 
@@ -259,6 +261,38 @@ function PurchaseBillViewContent() {
             {bill.notes && (
               <div className="rounded-lg border bg-gray-50 p-4 text-sm text-gray-600">
                 <p><span className="font-medium">Notes:</span> {bill.notes}</p>
+              </div>
+            )}
+
+            {(bill.source_url || bill.source_html_url) && (
+              <div className="rounded-lg border bg-blue-50 p-4 text-sm">
+                <p className="font-medium text-blue-900">Source document</p>
+                <p className="mt-1 text-gray-600">
+                  This purchase invoice was migrated from an external source.
+                  The original document is preserved below.
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {bill.source_url && (
+                    <a
+                      href={bill.source_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center text-blue-700 hover:underline"
+                    >
+                      <ExternalLink className="mr-1 h-4 w-4" /> Open original source link
+                    </a>
+                  )}
+                  {bill.source_html_url && (
+                    <a
+                      href={bill.source_html_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center text-blue-700 hover:underline"
+                    >
+                      <ExternalLink className="mr-1 h-4 w-4" /> Open stored HTML snapshot
+                    </a>
+                  )}
+                </div>
               </div>
             )}
           </CardContent>

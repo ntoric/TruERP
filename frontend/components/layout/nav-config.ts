@@ -33,6 +33,7 @@ import {
   Globe,
   Store,
   Clock,
+  DatabaseBackup,
 } from 'lucide-react'
 import { canManageUsers, isSuperAdmin } from '@/lib/roles'
 
@@ -168,6 +169,7 @@ export const navItems: NavItem[] = [
   { name: 'Notifications', href: '/notifications', icon: Bell },
   { name: 'Customer Portal', href: '/customer-portal', icon: Globe, superAdminOnly: true },
   { name: 'Settings', href: '/settings', icon: Settings },
+  { name: 'Data Migration', href: '/migration', icon: DatabaseBackup },
   { name: 'Developer Settings', href: '/developer-settings', icon: Code, superAdminOnly: true },
 ]
 
