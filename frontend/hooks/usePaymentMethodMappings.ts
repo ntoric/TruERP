@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { apiFetch } from '@/hooks/useAuth'
+import { offlineStorage } from '@/lib/offlineStorage'
+import { isInitialInvestmentMethod } from '@/lib/paymentSplits'
 
 export interface PaymentMethodMapping {
   payment_method: string
@@ -18,10 +20,20 @@ export function usePaymentMethodMappings() {
       const res = await apiFetch('/cash-bank/payment-method-mappings')
       if (res.ok) {
         const data = await res.json()
-        setMappings(Array.isArray(data.mappings) ? data.mappings : [])
+        const list = Array.isArray(data.mappings) ? data.mappings : []
+        setMappings(list)
+        await offlineStorage.setMeta('payment_mappings', list)
+        setLoading(false)
+        return
       }
     } catch (err) {
       console.error(err)
+    }
+    try {
+      const cached = await offlineStorage.getMeta<PaymentMethodMapping[]>('payment_mappings')
+      if (Array.isArray(cached) && cached.length) setMappings(cached)
+    } catch {
+      /* ignore */
     } finally {
       setLoading(false)
     }
@@ -41,6 +53,9 @@ export function usePaymentMethodMappings() {
 
   const getDepositHint = useCallback(
     (paymentMethod: string, accounts: { id: string; account_name: string; is_primary?: boolean }[]) => {
+      if (isInitialInvestmentMethod(paymentMethod)) {
+        return "Owner's Equity"
+      }
       const row = mappings.find((m) => m.payment_method === paymentMethod)
       if (row?.bank_account_id) {
         const acc = accounts.find((a) => a.id === row.bank_account_id)

@@ -3,7 +3,10 @@ package controllers
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"net/http"
 	"strings"
+	"time"
 	"truerp/models"
 
 	"github.com/go-pdf/fpdf"
@@ -161,6 +164,10 @@ func buildInvoiceDocumentPDF(invoice models.Invoice, business *models.Business, 
 	}
 	pdf.SetFont("Arial", "B", fontSize)
 	writeTotalRow(pdf, usable, "Grand Total", fmt.Sprintf("Rs. %.2f", invoice.TotalAmount), true)
+	if label := formatPaymentSplitsLabel(invoice.PaymentSplits, invoice.PaymentMode); label != "" {
+		pdf.SetFont("Arial", "", fontSize-1)
+		writeTotalRow(pdf, usable, "Payment", sanitizePDFText(label), false)
+	}
 	if invoice.AmountPaid > 0 {
 		pdf.SetFont("Arial", "", fontSize-1)
 		writeTotalRow(pdf, usable, "Paid", fmt.Sprintf("Rs. %.2f", invoice.AmountPaid), false)
@@ -197,16 +204,98 @@ func buildInvoiceDocumentPDF(invoice models.Invoice, business *models.Business, 
 	return buf.Bytes(), nil
 }
 
-func buildThermalReceiptPDF(content string, widthMM int) ([]byte, error) {
+func parseThermalLineMarkers(line string) (center, bold bool, text string) {
+	rest := line
+	for {
+		if strings.HasPrefix(rest, "@C@") {
+			center = true
+			rest = rest[3:]
+			continue
+		}
+		if strings.HasPrefix(rest, "@B@") {
+			bold = true
+			rest = rest[3:]
+			continue
+		}
+		if strings.HasPrefix(rest, "@N@") {
+			center = false
+			bold = false
+			rest = rest[3:]
+			continue
+		}
+		break
+	}
+	return center, bold, rest
+}
+
+func fetchThermalLogoBytes(logoURL string) ([]byte, string) {
+	logoURL = strings.TrimSpace(logoURL)
+	if logoURL == "" || !strings.HasPrefix(logoURL, "http") {
+		return nil, ""
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(logoURL)
+	if err != nil {
+		return nil, ""
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, ""
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if err != nil || len(data) == 0 {
+		return nil, ""
+	}
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	switch {
+	case strings.Contains(ct, "png"), bytes.HasPrefix(data, []byte{0x89, 'P', 'N', 'G'}):
+		return data, "PNG"
+	case strings.Contains(ct, "jpeg"), strings.Contains(ct, "jpg"), bytes.HasPrefix(data, []byte{0xff, 0xd8}):
+		return data, "JPG"
+	case strings.Contains(ct, "gif"), bytes.HasPrefix(data, []byte("GIF")):
+		return data, "GIF"
+	default:
+		return nil, ""
+	}
+}
+
+func buildThermalReceiptPDF(content string, widthMM int, logoURL string) ([]byte, error) {
 	if widthMM <= 0 {
 		widthMM = 58
 	}
-	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	fontSize := 9.0
 	lineH := 4.2
 	margin := 2.0
-	height := margin*2 + float64(len(lines)+2)*lineH
-	if height < 80 {
-		height = 80
+	switch {
+	case widthMM <= 28:
+		fontSize = 6
+		lineH = 3.0
+		margin = 1.2
+	case widthMM <= 42:
+		fontSize = 7
+		lineH = 3.4
+		margin = 1.5
+	case widthMM <= 60:
+		fontSize = 8
+		lineH = 3.8
+		margin = 2.0
+	}
+	lines := strings.Split(strings.ReplaceAll(content, "\r\n", "\n"), "\n")
+	logoBytes, logoType := fetchThermalLogoBytes(logoURL)
+	logoH := 0.0
+	if len(logoBytes) > 0 {
+		logoH = float64(widthMM) * 0.22
+		if logoH < 10 {
+			logoH = 10
+		}
+		if logoH > 18 {
+			logoH = 18
+		}
+	}
+	// Keep page height tight to content — a large min height left long blank gaps on thermal rolls.
+	height := margin*2 + logoH + float64(len(lines)+2)*lineH
+	if height < 40 {
+		height = 40
 	}
 	if height > 2000 {
 		height = 2000
@@ -219,12 +308,40 @@ func buildThermalReceiptPDF(content string, widthMM int) ([]byte, error) {
 	pdf.SetMargins(margin, margin, margin)
 	pdf.SetAutoPageBreak(false, 0)
 	pdf.AddPage()
-	pdf.SetFont("Courier", "", 9)
 	pdf.SetTextColor(0, 0, 0)
 
 	usableW := float64(widthMM) - margin*2
+	if len(logoBytes) > 0 && logoType != "" {
+		opt := fpdf.ImageOptions{ImageType: logoType, ReadDpi: true}
+		info := pdf.RegisterImageOptionsReader("thermal-logo", opt, bytes.NewReader(logoBytes))
+		if info != nil {
+			imgW := usableW * 0.55
+			if info.Width() > 0 && info.Height() > 0 {
+				scale := imgW / info.Width()
+				imgH := info.Height() * scale
+				if imgH > logoH && logoH > 0 {
+					imgH = logoH
+					imgW = info.Width() * (imgH / info.Height())
+				}
+				x := margin + (usableW-imgW)/2
+				pdf.ImageOptions("thermal-logo", x, pdf.GetY(), imgW, imgH, false, opt, 0, "")
+				pdf.SetY(pdf.GetY() + imgH + 1)
+			}
+		}
+	}
+
 	for _, line := range lines {
-		pdf.MultiCell(usableW, lineH, sanitizePDFText(line), "", "L", false)
+		center, bold, text := parseThermalLineMarkers(line)
+		style := ""
+		if bold {
+			style = "B"
+		}
+		pdf.SetFont("Courier", style, fontSize)
+		align := "L"
+		if center {
+			align = "C"
+		}
+		pdf.MultiCell(usableW, lineH, sanitizePDFText(text), "", align, false)
 	}
 
 	var buf bytes.Buffer
@@ -254,7 +371,9 @@ func mmFromInches(inches float64) float64 {
 }
 
 func sanitizePDFText(s string) string {
-	// fpdf core fonts are Latin-1; map common INR / unicode punctuation.
+	// fpdf core fonts are Latin-1/WinAnsi; map common INR / unicode punctuation
+	// then encode remaining runes as single Latin-1 bytes so UTF-8 sequences
+	// like "·" (U+00B7) do not render as "Â·".
 	r := strings.NewReplacer(
 		"₹", "Rs.",
 		"–", "-",
@@ -265,7 +384,110 @@ func sanitizePDFText(s string) string {
 		"”", "\"",
 		"…", "...",
 	)
-	return r.Replace(s)
+	s = r.Replace(s)
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, rr := range s {
+		switch {
+		case rr == '\n' || rr == '\r' || rr == '\t':
+			b.WriteByte(byte(rr))
+		case rr < 32:
+			continue
+		case rr <= 255:
+			b.WriteByte(byte(rr))
+		default:
+			b.WriteByte('?')
+		}
+	}
+	return b.String()
+}
+
+// wrapPDFText splits text so each line's GetStringWidth is <= maxWidth.
+// The current font must already be selected.
+func wrapPDFText(pdf *fpdf.Fpdf, text string, maxWidth float64) []string {
+	text = strings.ReplaceAll(sanitizePDFText(text), "\r", "")
+	if strings.TrimSpace(text) == "" {
+		return []string{""}
+	}
+	if maxWidth <= 0 {
+		return []string{text}
+	}
+	var lines []string
+	for _, para := range strings.Split(text, "\n") {
+		para = strings.TrimSpace(para)
+		if para == "" {
+			lines = append(lines, "")
+			continue
+		}
+		lines = append(lines, wrapPDFParagraph(pdf, para, maxWidth)...)
+	}
+	if len(lines) == 0 {
+		return []string{""}
+	}
+	return lines
+}
+
+func wrapPDFParagraph(pdf *fpdf.Fpdf, text string, maxWidth float64) []string {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+	var lines []string
+	current := ""
+	for _, word := range words {
+		for _, part := range splitPDFWord(pdf, word, maxWidth) {
+			candidate := part
+			if current != "" {
+				candidate = current + " " + part
+			}
+			if pdf.GetStringWidth(candidate) <= maxWidth {
+				current = candidate
+				continue
+			}
+			if current != "" {
+				lines = append(lines, current)
+			}
+			current = part
+		}
+	}
+	if current != "" {
+		lines = append(lines, current)
+	}
+	return lines
+}
+
+func splitPDFWord(pdf *fpdf.Fpdf, word string, maxWidth float64) []string {
+	if pdf.GetStringWidth(word) <= maxWidth {
+		return []string{word}
+	}
+	var parts []string
+	cur := ""
+	for _, rr := range word {
+		trial := cur + string(rr)
+		if cur != "" && pdf.GetStringWidth(trial) > maxWidth {
+			parts = append(parts, cur)
+			cur = string(rr)
+			continue
+		}
+		cur = trial
+	}
+	if cur != "" {
+		parts = append(parts, cur)
+	}
+	if len(parts) == 0 {
+		return []string{word}
+	}
+	return parts
+}
+
+func writePDFWrappedLines(pdf *fpdf.Fpdf, x, y, w, lineH float64, lines []string) {
+	prevMargin := pdf.GetCellMargin()
+	pdf.SetCellMargin(0.4)
+	for i, line := range lines {
+		pdf.SetXY(x, y+float64(i)*lineH)
+		pdf.CellFormat(w, lineH, line, "", 0, "L", false, 0, "")
+	}
+	pdf.SetCellMargin(prevMargin)
 }
 
 func truncatePDF(s string, max int) string {

@@ -1,12 +1,13 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -41,13 +42,14 @@ func GetInvoices(c *gin.Context) {
 		query = query.Where("date <= ?", to)
 	}
 
-	if err := query.Order("date DESC, created_at DESC").Find(&invoices).Error; err != nil {
+	if err := query.Order("invoice_number DESC").Find(&invoices).Error; err != nil {
 		fmt.Printf("[DEBUG] GetInvoices - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch invoices"})
 		return
 	}
 
 	fmt.Printf("[DEBUG] GetInvoices - Found %d invoices\n", len(invoices))
+	attachInvoicePaymentSplitsList(utils.DB, invoices)
 	c.JSON(http.StatusOK, invoices)
 }
 
@@ -67,6 +69,7 @@ func GetInvoice(c *gin.Context) {
 		return
 	}
 
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 	c.JSON(http.StatusOK, invoice)
 }
 
@@ -78,35 +81,45 @@ func CreateInvoice(c *gin.Context) {
 	}
 
 	var input struct {
-		InvoiceNumber     string     `json:"invoice_number"`
-		InvoiceType       string     `json:"invoice_type"`
-		PartyID           uuid.UUID  `json:"party_id"`
-		CustomerID        uuid.UUID  `json:"customer_id"`
-		Date              time.Time  `json:"date" binding:"required"`
-		DueDate           *time.Time `json:"due_date"`
-		PaymentTerms      int        `json:"payment_terms"`
-		Status            string     `json:"status"`
-		PaymentMode       string     `json:"payment_mode"`
-		AmountPaid        float64    `json:"amount_paid"`
-		ReceivedAmount    float64    `json:"received_amount"`
-		BankAccountID     *uuid.UUID `json:"bank_account_id"`
-		Notes            string     `json:"notes"`
-		Terms            string    `json:"terms"`
-		IsInterState     bool      `json:"is_inter_state"`
-		EWayBillRequired bool      `json:"eway_bill_required"`
-		InvoiceDiscount  float64   `json:"invoice_discount"`
-		AdditionalCharges float64  `json:"additional_charges"`
-		LoyaltyPointsRedeemed int64 `json:"loyalty_points_redeemed"`
-		Signature        string                 `json:"signature"`
-		PDFTemplate      string                 `json:"pdf_template"`
-		CustomFields     map[string]interface{} `json:"custom_fields"`
-		Items            []struct {
+		InvoiceNumber         string                 `json:"invoice_number"`
+		InvoiceType           string                 `json:"invoice_type"`
+		PartyID               uuid.UUID              `json:"party_id"`
+		CustomerID            uuid.UUID              `json:"customer_id"`
+		Date                  time.Time              `json:"date" binding:"required"`
+		DueDate               *models.FlexibleTime   `json:"due_date"`
+		PaymentTerms          int                    `json:"payment_terms"`
+		Status                string                 `json:"status"`
+		PaymentMode           string                 `json:"payment_mode"`
+		AmountPaid            float64                `json:"amount_paid"`
+		ReceivedAmount        float64                `json:"received_amount"`
+		PaymentSplits         []models.PaymentSplit  `json:"payment_splits"`
+		BankAccountID         *uuid.UUID             `json:"bank_account_id"`
+		Notes                 string                 `json:"notes"`
+		Terms                 string                 `json:"terms"`
+		IsInterState          bool                   `json:"is_inter_state"`
+		EWayBillRequired      bool                   `json:"eway_bill_required"`
+		InvoiceDiscount       float64                `json:"invoice_discount"`
+		AdditionalCharges     float64                `json:"additional_charges"`
+		LoyaltyPointsRedeemed int64                  `json:"loyalty_points_redeemed"`
+		IsPOS                 bool                   `json:"is_pos"`
+		ClientSaleID          *uuid.UUID             `json:"client_sale_id"`
+		PosSessionID          *uuid.UUID             `json:"pos_session_id"`
+		SessionOpeningCash    float64                `json:"session_opening_cash"`
+		Party                 *posPartySnapshot      `json:"party"`
+		Signature             string                 `json:"signature"`
+		PDFTemplate           string                 `json:"pdf_template"`
+		CustomFields          map[string]interface{} `json:"custom_fields"`
+		Items                 []struct {
+			ProductID   *uuid.UUID           `json:"product_id"`
 			Description string               `json:"description"`
 			Quantity    models.FlexibleFloat `json:"quantity"`
 			UnitPrice   models.FlexibleFloat `json:"unit_price"`
 			Discount    models.FlexibleFloat `json:"discount"`
 			TaxRate     models.FlexibleFloat `json:"tax_rate"`
 			Unit        string               `json:"unit"`
+			HSNCode     string               `json:"hsn_code"`
+			BatchNo     string               `json:"batch_no"`
+			ExpDate     *models.FlexibleTime `json:"exp_date"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
@@ -116,24 +129,40 @@ func CreateInvoice(c *gin.Context) {
 		return
 	}
 
+	if input.ClientSaleID == nil || *input.ClientSaleID == uuid.Nil {
+		if headerID := parseOptionalUUID(c.GetHeader("Idempotency-Key")); headerID != uuid.Nil {
+			input.ClientSaleID = &headerID
+		}
+	}
+	if input.ClientSaleID != nil && *input.ClientSaleID != uuid.Nil {
+		if existing, ok := findInvoiceByClientSaleID(userID, *input.ClientSaleID); ok {
+			c.JSON(http.StatusOK, existing)
+			return
+		}
+	}
+
 	if input.PartyID == uuid.Nil {
 		input.PartyID = input.CustomerID
 	}
-	if input.PartyID == uuid.Nil {
+	if input.PartyID == uuid.Nil && input.Party == nil && !input.IsPOS {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "party_id is required"})
 		return
 	}
+
+	party, err := resolvePOSParty(userID, input.PartyID, input.Party)
+	if err != nil {
+		fmt.Printf("[DEBUG] CreateInvoice - Party resolve error: %v\n", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid party"})
+		return
+	}
+	input.PartyID = party.ID
 
 	if err := validateCustomFields(userID, input.CustomFields); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if input.InvoiceNumber == "" {
-		var count int64
-		utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID).Count(&count)
-		input.InvoiceNumber = fmt.Sprintf("INV-%04d", count+1)
-	}
+	input.InvoiceNumber = allocateUniqueInvoiceNumber(userID, input.InvoiceNumber)
 
 	if input.AmountPaid == 0 && input.ReceivedAmount > 0 {
 		input.AmountPaid = input.ReceivedAmount
@@ -147,13 +176,7 @@ func CreateInvoice(c *gin.Context) {
 
 	fmt.Printf("[DEBUG] CreateInvoice - UserID: %s, InvoiceNumber: %s, PartyID: %s, Items: %d\n", userID, input.InvoiceNumber, input.PartyID, len(input.Items))
 
-	// Validate party
-	var party models.Party
-	if err := utils.DB.Where("user_id = ? AND id = ?", userID, input.PartyID).First(&party).Error; err != nil {
-		fmt.Printf("[DEBUG] CreateInvoice - Party not found: %v\n", err)
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid party"})
-		return
-	}
+	resolvedSessionID := resolvePOSSessionID(userID, input.PosSessionID, input.SessionOpeningCash)
 
 	invoice := models.Invoice{
 		ID:                uuid.New(),
@@ -162,7 +185,7 @@ func CreateInvoice(c *gin.Context) {
 		InvoiceType:       input.InvoiceType,
 		PartyID:           input.PartyID,
 		Date:              input.Date,
-		DueDate:           input.DueDate,
+		DueDate:           input.DueDate.Ptr(),
 		PaymentTerms:      input.PaymentTerms,
 		Status:            input.Status,
 		PaymentMode:       input.PaymentMode,
@@ -177,6 +200,9 @@ func CreateInvoice(c *gin.Context) {
 		Signature:         input.Signature,
 		PDFTemplate:       input.PDFTemplate,
 		CustomFields:      encodeCustomFieldsMap(input.CustomFields),
+		IsPOS:             input.IsPOS,
+		ClientSaleID:      input.ClientSaleID,
+		PosSessionID:      resolvedSessionID,
 	}
 
 	if invoice.Status == "" {
@@ -206,6 +232,7 @@ func CreateInvoice(c *gin.Context) {
 
 		invoice.Items = append(invoice.Items, models.InvoiceItem{
 			ID:          uuid.New(),
+			ProductID:   item.ProductID,
 			Description: item.Description,
 			Quantity:    qty,
 			Unit:        item.Unit,
@@ -216,6 +243,9 @@ func CreateInvoice(c *gin.Context) {
 			SGST:        sgst,
 			IGST:        igst,
 			Total:       taxableAmount + cgst + sgst + igst,
+			HSNCode:     item.HSNCode,
+			BatchNo:     strings.TrimSpace(item.BatchNo),
+			ExpDate:     item.ExpDate.Ptr(),
 		})
 
 		subTotal += itemTotal
@@ -224,19 +254,6 @@ func CreateInvoice(c *gin.Context) {
 		cgstTotal += cgst
 		sgstTotal += sgst
 		igstTotal += igst
-
-		// Update stock entry
-		entry := models.StockEntry{
-			ID:         uuid.New(),
-			UserID:     userID,
-			ItemName:   item.Description,
-			EntryType:  "sale",
-			Quantity:   -qty,
-			BalanceQty: 0,
-			CostPrice:  unitPrice,
-			EntryDate:  input.Date,
-		}
-		utils.DB.Create(&entry)
 	}
 
 	total := subTotal - discountTotal + cgstTotal + sgstTotal + igstTotal - input.InvoiceDiscount + input.AdditionalCharges
@@ -256,6 +273,13 @@ func CreateInvoice(c *gin.Context) {
 
 	roundedTotal := math.Round(total*100) / 100
 	roundOff := roundedTotal - total
+	if input.IsPOS {
+		roundedTotal = math.Round(total)
+		if roundedTotal < 0 {
+			roundedTotal = 0
+		}
+		roundOff = roundedTotal - total
+	}
 
 	invoice.SubTotal = subTotal
 	invoice.DiscountTotal = discountTotal
@@ -292,6 +316,11 @@ func CreateInvoice(c *gin.Context) {
 		invoice.AmountPaid = invoice.TotalAmount
 	}
 
+	if err := finalizeInvoicePaymentSplits(userID, &invoice, input.PaymentSplits, input.PaymentMode, input.BankAccountID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
+		return
+	}
+
 	normalizeInvoicePaymentStatus(&invoice)
 
 	if err := utils.DB.Create(&invoice).Error; err != nil {
@@ -310,15 +339,29 @@ func CreateInvoice(c *gin.Context) {
 		return
 	}
 
+	applyInvoiceSaleStock(userID, &invoice)
+
 	if err := postInvoiceAccounting(utils.DB, userID, &invoice); err != nil {
 		fmt.Printf("[DEBUG] CreateInvoice - accounting error: %v\n", err)
 	}
 
 	if invoice.AmountPaid > 0 {
-		desc := fmt.Sprintf("Sales invoice %s", invoice.InvoiceNumber)
-		if err := recordSalePaymentIn(utils.DB, userID, invoice.BankAccountID, invoice.AmountPaid, invoice.Date, invoice.InvoiceNumber, desc); err != nil {
-			fmt.Printf("[DEBUG] CreateInvoice - cash ledger error: %v\n", err)
+		notes := fmt.Sprintf("Auto-created from sales invoice %s", invoice.InvoiceNumber)
+		if invoice.IsPOS {
+			notes = fmt.Sprintf("Auto-created from POS sale %s", invoice.InvoiceNumber)
 		}
+		if err := createLinkedSalePaymentIn(utils.DB, userID, &invoice, invoice.AmountPaid, invoice.Date, notes); err != nil {
+			fmt.Printf("[DEBUG] CreateInvoice - payment in error: %v\n", err)
+		}
+	}
+
+	if input.IsPOS && resolvedSessionID != nil {
+		utils.DB.Model(&models.POSSession{}).
+			Where("user_id = ? AND id = ? AND status = ?", userID, *resolvedSessionID, "open").
+			Updates(map[string]interface{}{
+				"total_sales":    gorm.Expr("total_sales + ?", invoice.TotalAmount),
+				"total_invoices": gorm.Expr("total_invoices + 1"),
+			})
 	}
 
 	fmt.Printf("[DEBUG] CreateInvoice - Invoice created successfully: %s\n", invoice.ID)
@@ -347,6 +390,7 @@ func CreateInvoice(c *gin.Context) {
 		"",
 	)
 
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 	c.JSON(http.StatusCreated, invoice)
 }
 
@@ -361,30 +405,31 @@ func UpdateInvoice(c *gin.Context) {
 	fmt.Printf("[DEBUG] UpdateInvoice - UserID: %s, ID: %s\n", userID, id)
 
 	var invoice models.Invoice
-	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).First(&invoice).Error; err != nil {
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).Preload("Items").First(&invoice).Error; err != nil {
 		fmt.Printf("[DEBUG] UpdateInvoice - Invoice not found: %v\n", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Invoice not found"})
 		return
 	}
 
 	var input struct {
-		InvoiceNumber     string          `json:"invoice_number"`
-		PartyID           uuid.UUID       `json:"party_id"`
-		CustomerID        uuid.UUID       `json:"customer_id"`
-		Date              time.Time       `json:"date"`
-		DueDate           *time.Time      `json:"due_date"`
-		PaymentTerms      int             `json:"payment_terms"`
-		Status            string          `json:"status"`
-		IsInterState      bool            `json:"is_inter_state"`
-		PaymentMode       string          `json:"payment_mode"`
-		AmountPaid        float64         `json:"amount_paid"`
-		BankAccountID     *uuid.UUID      `json:"bank_account_id"`
-		Notes             string          `json:"notes"`
-		Terms             string          `json:"terms"`
-		InvoiceDiscount   float64         `json:"invoice_discount"`
-		AdditionalCharges float64         `json:"additional_charges"`
-		Signature         string          `json:"signature"`
-		PDFTemplate       string          `json:"pdf_template"`
+		InvoiceNumber     string                 `json:"invoice_number"`
+		PartyID           uuid.UUID              `json:"party_id"`
+		CustomerID        uuid.UUID              `json:"customer_id"`
+		Date              time.Time              `json:"date"`
+		DueDate           *models.FlexibleTime   `json:"due_date"`
+		PaymentTerms      int                    `json:"payment_terms"`
+		Status            string                 `json:"status"`
+		IsInterState      bool                   `json:"is_inter_state"`
+		PaymentMode       string                 `json:"payment_mode"`
+		AmountPaid        float64                `json:"amount_paid"`
+		PaymentSplits     []models.PaymentSplit  `json:"payment_splits"`
+		BankAccountID     *uuid.UUID             `json:"bank_account_id"`
+		Notes             string                 `json:"notes"`
+		Terms             string                 `json:"terms"`
+		InvoiceDiscount   float64                `json:"invoice_discount"`
+		AdditionalCharges float64                `json:"additional_charges"`
+		Signature         string                 `json:"signature"`
+		PDFTemplate       string                 `json:"pdf_template"`
 		CustomFields      map[string]interface{} `json:"custom_fields"`
 		Items             []struct {
 			ProductID   *uuid.UUID           `json:"product_id"`
@@ -395,6 +440,8 @@ func UpdateInvoice(c *gin.Context) {
 			TaxRate     models.FlexibleFloat `json:"tax_rate"`
 			Unit        string               `json:"unit"`
 			HSNCode     string               `json:"hsn_code"`
+			BatchNo     string               `json:"batch_no"`
+			ExpDate     *models.FlexibleTime `json:"exp_date"`
 		} `json:"items"`
 	}
 
@@ -408,6 +455,16 @@ func UpdateInvoice(c *gin.Context) {
 		input.PartyID = input.CustomerID
 	}
 
+	invoiceNumber := strings.TrimSpace(input.InvoiceNumber)
+	if invoiceNumber == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invoice number is required"})
+		return
+	}
+	if invoiceNumberInUse(userID, invoiceNumber, invoice.ID) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invoice number already exists"})
+		return
+	}
+
 	if err := validateUserBankAccount(userID, input.BankAccountID); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account"})
 		return
@@ -419,8 +476,12 @@ func UpdateInvoice(c *gin.Context) {
 		return
 	}
 
-	previousAmountPaid := invoice.AmountPaid
+	attachInvoicePaymentSplits(utils.DB, &invoice)
+	previousInvoice := invoiceCashSnapshot(invoice)
 	previousStatus := invoice.Status
+
+	// Reverse previously applied sale stock before rewriting items
+	reverseInvoiceSaleStock(userID, invoice.ID)
 
 	if input.CustomFields != nil {
 		if err := validateCustomFields(userID, input.CustomFields); err != nil {
@@ -434,10 +495,10 @@ func UpdateInvoice(c *gin.Context) {
 	}
 
 	// Update invoice fields
-	invoice.InvoiceNumber = input.InvoiceNumber
+	invoice.InvoiceNumber = invoiceNumber
 	invoice.PartyID = input.PartyID
 	invoice.Date = input.Date
-	invoice.DueDate = input.DueDate
+	invoice.DueDate = input.DueDate.Ptr()
 	invoice.PaymentTerms = input.PaymentTerms
 	invoice.Status = input.Status
 	invoice.IsInterState = input.IsInterState
@@ -477,6 +538,7 @@ func UpdateInvoice(c *gin.Context) {
 		invoice.Items = append(invoice.Items, models.InvoiceItem{
 			ID:          uuid.New(),
 			InvoiceID:   invoice.ID,
+			ProductID:   item.ProductID,
 			Description: item.Description,
 			Quantity:    qty,
 			Unit:        item.Unit,
@@ -488,6 +550,8 @@ func UpdateInvoice(c *gin.Context) {
 			IGST:        igst,
 			Total:       taxable + cgst + sgst + igst,
 			HSNCode:     item.HSNCode,
+			BatchNo:     strings.TrimSpace(item.BatchNo),
+			ExpDate:     item.ExpDate.Ptr(),
 		})
 
 		subTotal += itemTotal
@@ -512,6 +576,10 @@ func UpdateInvoice(c *gin.Context) {
 	if invoice.Status == "paid" {
 		invoice.AmountPaid = invoice.TotalAmount
 	}
+	if err := finalizeInvoicePaymentSplits(userID, &invoice, input.PaymentSplits, input.PaymentMode, input.BankAccountID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
+		return
+	}
 	normalizeInvoicePaymentStatus(&invoice)
 
 	if err := utils.DB.Save(&invoice).Error; err != nil {
@@ -520,11 +588,12 @@ func UpdateInvoice(c *gin.Context) {
 		return
 	}
 
-	if paymentDelta := invoice.AmountPaid - previousAmountPaid; paymentDelta > 0 {
-		desc := fmt.Sprintf("Sales invoice %s (payment update)", invoice.InvoiceNumber)
-		if err := recordSalePaymentIn(utils.DB, userID, invoice.BankAccountID, paymentDelta, invoice.Date, invoice.InvoiceNumber, desc); err != nil {
-			fmt.Printf("[DEBUG] UpdateInvoice - cash ledger error: %v\n", err)
-		}
+	applyInvoiceSaleStock(userID, &invoice)
+
+	if err := resyncLinkedInvoicePayments(utils.DB, userID, &previousInvoice, &invoice); err != nil {
+		fmt.Printf("[DEBUG] UpdateInvoice - payment resync error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Invoice updated but failed to update cash/bank"})
+		return
 	}
 
 	fmt.Printf("[DEBUG] UpdateInvoice - Invoice updated successfully: %s\n", id)
@@ -553,6 +622,7 @@ func UpdateInvoice(c *gin.Context) {
 		"",
 	)
 
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 	c.JSON(http.StatusOK, invoice)
 }
 
@@ -573,21 +643,66 @@ func DeleteInvoice(c *gin.Context) {
 		return
 	}
 
-	if invoice.Status == "paid" {
-		fmt.Printf("[DEBUG] DeleteInvoice - Cannot delete paid invoice\n")
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete a paid invoice"})
+	var linkedCreditNotes int64
+	utils.DB.Model(&models.CreditNote{}).Where("user_id = ? AND invoice_id = ?", userID, invoice.ID).Count(&linkedCreditNotes)
+	if linkedCreditNotes > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete invoice with linked credit notes"})
 		return
 	}
 
-	if err := utils.DB.Delete(&invoice).Error; err != nil {
+	var linkedSalesReturns int64
+	utils.DB.Model(&models.SalesReturn{}).Where("user_id = ? AND invoice_id = ?", userID, invoice.ID).Count(&linkedSalesReturns)
+	if linkedSalesReturns > 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cannot delete invoice with linked sales returns"})
+		return
+	}
+
+	var party models.Party
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, invoice.PartyID).First(&party).Error; err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invoice party not found"})
+		return
+	}
+
+	// Restore sold stock quantities but keep stock transaction history.
+	restoreInvoiceSaleStockQuantities(userID, invoice.ID)
+
+	tx := utils.DB.Begin()
+	if err := reverseLinkedInvoicePayments(tx, userID, &invoice); err != nil {
+		tx.Rollback()
+		fmt.Printf("[DEBUG] DeleteInvoice - payment reversal error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reverse linked payments"})
+		return
+	}
+	if err := reverseInvoiceAccounting(tx, userID, invoice.ID); err != nil {
+		tx.Rollback()
+		fmt.Printf("[DEBUG] DeleteInvoice - accounting reversal error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reverse accounting entries"})
+		return
+	}
+	if err := reverseLoyaltyForInvoice(tx, userID, &party, &invoice); err != nil {
+		tx.Rollback()
+		fmt.Printf("[DEBUG] DeleteInvoice - loyalty reversal error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reverse loyalty points"})
+		return
+	}
+	if err := tx.Model(&party).Update("balance", party.Balance-invoice.TotalAmount).Error; err != nil {
+		tx.Rollback()
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update party balance"})
+		return
+	}
+	if err := tx.Delete(&invoice).Error; err != nil {
+		tx.Rollback()
 		fmt.Printf("[DEBUG] DeleteInvoice - DB delete error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete invoice"})
+		return
+	}
+	if err := tx.Commit().Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete invoice"})
 		return
 	}
 
 	fmt.Printf("[DEBUG] DeleteInvoice - Invoice deleted successfully: %s\n", id)
 
-	// Log invoice deletion
 	CreateAuditLog(
 		userID,
 		userName,
@@ -600,7 +715,9 @@ func DeleteInvoice(c *gin.Context) {
 		c.GetHeader("User-Agent"),
 		map[string]interface{}{
 			"total_amount": invoice.TotalAmount,
+			"amount_paid":  invoice.AmountPaid,
 			"status":       invoice.Status,
+			"is_pos":       invoice.IsPOS,
 		},
 		"success",
 		"",
@@ -611,16 +728,27 @@ func DeleteInvoice(c *gin.Context) {
 
 func GetNextInvoiceNumber(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	c.JSON(http.StatusOK, gin.H{"invoice_number": allocateUniqueInvoiceNumber(userID, "")})
+}
 
-	var count int64
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID).Count(&count)
-
-	nextNum := fmt.Sprintf("INV-%04d", count+1)
-	c.JSON(http.StatusOK, gin.H{"invoice_number": nextNum})
+func invoiceListFilters(c *gin.Context) func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if from := c.Query("from"); from != "" {
+			db = db.Where("date >= ?", from)
+		}
+		if to := c.Query("to"); to != "" {
+			db = db.Where("date <= ?", to)
+		}
+		if status := c.Query("status"); status != "" {
+			db = db.Where("status = ?", status)
+		}
+		return db
+	}
 }
 
 func GetInvoiceStats(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	filters := invoiceListFilters(c)
 
 	var stats struct {
 		TotalSales float64 `json:"total_sales"`
@@ -629,66 +757,24 @@ func GetInvoiceStats(c *gin.Context) {
 		Cancelled  float64 `json:"cancelled"`
 	}
 
-	query := utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID)
-
-	// Apply date range filter if provided
-	if from := c.Query("from"); from != "" {
-		query = query.Where("date >= ?", from)
-	}
-	if to := c.Query("to"); to != "" {
-		query = query.Where("date <= ?", to)
-	}
-
 	// Total Sales (excluding cancelled)
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status != ?", userID, "cancelled").
-		Scopes(func(db *gorm.DB) *gorm.DB {
-			if from := c.Query("from"); from != "" {
-				db = db.Where("date >= ?", from)
-			}
-			if to := c.Query("to"); to != "" {
-				db = db.Where("date <= ?", to)
-			}
-			return db
-		}).
+		Scopes(filters).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.TotalSales)
 
 	// Paid
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "paid").
-		Scopes(func(db *gorm.DB) *gorm.DB {
-			if from := c.Query("from"); from != "" {
-				db = db.Where("date >= ?", from)
-			}
-			if to := c.Query("to"); to != "" {
-				db = db.Where("date <= ?", to)
-			}
-			return db
-		}).
+		Scopes(filters).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.Paid)
 
-	// Unpaid (draft, sent, overdue)
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ?", userID, []string{"draft", "sent", "overdue"}).
-		Scopes(func(db *gorm.DB) *gorm.DB {
-			if from := c.Query("from"); from != "" {
-				db = db.Where("date >= ?", from)
-			}
-			if to := c.Query("to"); to != "" {
-				db = db.Where("date <= ?", to)
-			}
-			return db
-		}).
-		Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.Unpaid)
+	// Unpaid (sent, partial, overdue — remaining balance on issued invoices)
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ?", userID, []string{"sent", "partial", "overdue"}).
+		Scopes(filters).
+		Select("COALESCE(SUM(total_amount - amount_paid), 0)").Scan(&stats.Unpaid)
 
 	// Cancelled
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "cancelled").
-		Scopes(func(db *gorm.DB) *gorm.DB {
-			if from := c.Query("from"); from != "" {
-				db = db.Where("date >= ?", from)
-			}
-			if to := c.Query("to"); to != "" {
-				db = db.Where("date <= ?", to)
-			}
-			return db
-		}).
+		Scopes(filters).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.Cancelled)
 
 	c.JSON(http.StatusOK, stats)
@@ -706,6 +792,7 @@ func GenerateInvoicePDF(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Invoice not found"})
 		return
 	}
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 
 	settings := loadPrintSettings(userID)
 	var business models.Business

@@ -1,12 +1,18 @@
 package utils
 
 import (
+	"crypto/tls"
+	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
 	"net/smtp"
 	"os"
 	"strconv"
 	"strings"
+	"truerp/models"
+
+	"github.com/google/uuid"
 )
 
 type EmailConfig struct {
@@ -37,6 +43,69 @@ func GetEmailConfig() EmailConfig {
 	}
 }
 
+// GetEmailConfigForUser loads SMTP settings from the DeveloperSettings
+// record belonging to the given user (store owner). The stored password is
+// decrypted before being returned. This is used for store-specific emails
+// such as email marketing campaigns, notifications, and quotations.
+func GetEmailConfigForUser(userID uuid.UUID) (EmailConfig, error) {
+	var settings models.DeveloperSettings
+	if err := DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
+		return EmailConfig{}, fmt.Errorf("developer settings not found for user: %w", err)
+	}
+
+	port := settings.SMTPPort
+	if port == 0 {
+		port = 587
+	}
+
+	password := ""
+	if settings.EncryptedSMTPPassword != "" {
+		decrypted, err := Decrypt(settings.EncryptedSMTPPassword)
+		if err != nil {
+			return EmailConfig{}, fmt.Errorf("failed to decrypt SMTP password: %w", err)
+		}
+		password = decrypted
+	}
+
+	fromName := settings.FromName
+	if fromName == "" {
+		fromName = "TruERP"
+	}
+
+	return EmailConfig{
+		Host:     strings.TrimSpace(settings.SMTPHost),
+		Port:     port,
+		Username: strings.TrimSpace(settings.SMTPUsername),
+		Password: password,
+		From:     strings.TrimSpace(settings.FromEmail),
+		FromName: fromName,
+	}, nil
+}
+
+// EmailConfiguredForUser reports whether the given user has SMTP settings
+// configured in DeveloperSettings.
+func EmailConfiguredForUser(userID uuid.UUID) bool {
+	cfg, err := GetEmailConfigForUser(userID)
+	if err != nil {
+		return false
+	}
+	return cfg.Host != "" && cfg.From != ""
+}
+
+// SendEmailForUser sends an email using the SMTP credentials configured in
+// the given user's DeveloperSettings. Returns an error if SMTP is not
+// configured for the user or the send fails.
+func SendEmailForUser(userID uuid.UUID, to, subject, body string) error {
+	cfg, err := GetEmailConfigForUser(userID)
+	if err != nil {
+		return err
+	}
+	if cfg.Host == "" || cfg.From == "" {
+		return fmt.Errorf("SMTP not configured for user in developer settings")
+	}
+	return SendEmailWithConfig(cfg, to, subject, body)
+}
+
 func EmailConfigured() bool {
 	cfg := GetEmailConfig()
 	return cfg.Host != "" && cfg.From != ""
@@ -55,6 +124,16 @@ func SendEmail(to, subject, body string) error {
 	if !EmailConfigured() {
 		return fmt.Errorf("email not configured")
 	}
+	return SendEmailWithConfig(cfg, to, subject, body)
+}
+
+func SendEmailWithConfig(cfg EmailConfig, to, subject, body string) error {
+	if cfg.Host == "" || cfg.From == "" {
+		return fmt.Errorf("email not configured")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 587
+	}
 
 	from := cfg.From
 	if cfg.FromName != "" {
@@ -71,21 +150,120 @@ func SendEmail(to, subject, body string) error {
 		body,
 	}, "\r\n")
 
-	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	if err := smtp.SendMail(addr, auth, cfg.From, []string{to}, []byte(msg)); err != nil {
+	client, err := dialSMTPClient(cfg)
+	if err != nil {
 		return err
 	}
+	defer client.Close()
+
+	if cfg.Username != "" {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+		if err = client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP authentication failed: %w", err)
+		}
+	}
+
+	if err = client.Mail(cfg.From); err != nil {
+		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
+	}
+	if err = client.Rcpt(to); err != nil {
+		return fmt.Errorf("SMTP RCPT TO failed: %w", err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("SMTP DATA failed: %w", err)
+	}
+	if _, err = w.Write([]byte(msg)); err != nil {
+		return fmt.Errorf("SMTP write failed: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("SMTP message close failed: %w", err)
+	}
+
+	return client.Quit()
+}
+
+// dialSMTPConn opens a TCP connection to the SMTP server.
+// Port 465 uses implicit TLS (SMTPS); other ports use plain TCP and STARTTLS when available.
+func dialSMTPConn(cfg EmailConfig) (net.Conn, error) {
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
+	if cfg.Port == 465 {
+		conn, err := tls.Dial("tcp", addr, &tls.Config{ServerName: cfg.Host})
+		if err != nil {
+			return nil, fmt.Errorf("failed to connect to SMTP server (TLS): %w", err)
+		}
+		return conn, nil
+	}
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to SMTP server: %w", err)
+	}
+	return conn, nil
+}
+
+func dialSMTPClient(cfg EmailConfig) (*smtp.Client, error) {
+	if cfg.Host == "" {
+		return nil, fmt.Errorf("SMTP host is required")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 587
+	}
+
+	conn, err := dialSMTPConn(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	client, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to create SMTP client: %w", err)
+	}
+
+	// Port 465 is already TLS-wrapped; other ports upgrade via STARTTLS when supported.
+	if cfg.Port != 465 {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			tlsConfig := &tls.Config{ServerName: cfg.Host}
+			if err = client.StartTLS(tlsConfig); err != nil {
+				client.Close()
+				return nil, fmt.Errorf("STARTTLS failed: %w", err)
+			}
+		}
+	}
+
+	return client, nil
+}
+
+func TestSMTPConnection(cfg EmailConfig) error {
+	if cfg.Port == 0 {
+		cfg.Port = 587
+	}
+
+	client, err := dialSMTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if cfg.Username != "" {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+		if err = client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP authentication failed: %w", err)
+		}
+	}
+
 	return nil
 }
 
-func SendPasswordResetEmail(to, resetURL string) error {
-	subject := "Reset your TruERP password"
+func SendPasswordResetOTPEmail(to, otp string) error {
+	subject := "Your TruERP password reset code"
 	body := fmt.Sprintf(`<p>Hello,</p>
 <p>We received a request to reset your TruERP account password.</p>
-<p><a href="%s">Reset your password</a></p>
-<p>This link expires in 1 hour. If you did not request a password reset, you can ignore this email.</p>
-<p>— TruERP</p>`, resetURL)
+<p>Your verification code is: <strong style="font-size:24px;letter-spacing:4px;">%s</strong></p>
+<p>This code expires in 15 minutes. If you did not request a password reset, you can ignore this email.</p>
+<p>— TruERP</p>`, otp)
 
 	if err := SendEmail(to, subject, body); err != nil {
 		return err
@@ -93,6 +271,119 @@ func SendPasswordResetEmail(to, resetURL string) error {
 	return nil
 }
 
-func LogPasswordResetLink(email, resetURL string) {
-	log.Printf("[password-reset] email=%s reset_url=%s (SMTP not configured — use this link for testing)", email, resetURL)
+func LogPasswordResetOTP(email, otp string) {
+	log.Printf("[password-reset] email=%s otp=%s (SMTP not configured — use this code for testing)", email, otp)
+}
+
+// PDFAttachment describes a single PDF file to attach to an email.
+type PDFAttachment struct {
+	Filename string
+	Content  []byte
+}
+
+// SendEmailWithPDFAttachmentForUser sends an HTML email with one or more PDF
+// attachments using the SMTP credentials configured in the given user's
+// DeveloperSettings. The message is encoded as multipart/mixed with a
+// text/html body part followed by base64-encoded PDF attachment parts.
+func SendEmailWithPDFAttachmentForUser(userID uuid.UUID, to, subject, body string, attachments []PDFAttachment) error {
+	cfg, err := GetEmailConfigForUser(userID)
+	if err != nil {
+		return err
+	}
+	if cfg.Host == "" || cfg.From == "" {
+		return fmt.Errorf("SMTP not configured for user in developer settings")
+	}
+	return SendEmailWithPDFAttachmentAndConfig(cfg, to, subject, body, attachments)
+}
+
+// SendEmailWithPDFAttachmentAndConfig sends an HTML email with PDF attachments
+// using the provided EmailConfig.
+func SendEmailWithPDFAttachmentAndConfig(cfg EmailConfig, to, subject, body string, attachments []PDFAttachment) error {
+	if cfg.Host == "" || cfg.From == "" {
+		return fmt.Errorf("email not configured")
+	}
+	if cfg.Port == 0 {
+		cfg.Port = 587
+	}
+
+	from := cfg.From
+	if cfg.FromName != "" {
+		from = fmt.Sprintf("%s <%s>", cfg.FromName, cfg.From)
+	}
+
+	boundary := "truerp_boundary_" + strings.ReplaceAll(uuid.New().String(), "-", "")
+
+	var msg strings.Builder
+	msg.WriteString(fmt.Sprintf("From: %s\r\n", from))
+	msg.WriteString(fmt.Sprintf("To: %s\r\n", to))
+	msg.WriteString(fmt.Sprintf("Subject: %s\r\n", subject))
+	msg.WriteString("MIME-Version: 1.0\r\n")
+	msg.WriteString(fmt.Sprintf("Content-Type: multipart/mixed; boundary=\"%s\"\r\n", boundary))
+	msg.WriteString("\r\n")
+
+	// HTML body part
+	msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	msg.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
+	msg.WriteString("Content-Transfer-Encoding: 8bit\r\n")
+	msg.WriteString("\r\n")
+	msg.WriteString(body)
+	msg.WriteString("\r\n")
+
+	// Attachment parts
+	for _, att := range attachments {
+		if len(att.Content) == 0 {
+			continue
+		}
+		msg.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+		msg.WriteString(fmt.Sprintf("Content-Type: application/pdf; name=\"%s\"\r\n", att.Filename))
+		msg.WriteString("Content-Transfer-Encoding: base64\r\n")
+		msg.WriteString(fmt.Sprintf("Content-Disposition: attachment; filename=\"%s\"\r\n", att.Filename))
+		msg.WriteString("\r\n")
+
+		encoded := base64.StdEncoding.EncodeToString(att.Content)
+		// Wrap base64 at 76 characters per RFC 2045.
+		for i := 0; i < len(encoded); i += 76 {
+			end := i + 76
+			if end > len(encoded) {
+				end = len(encoded)
+			}
+			msg.WriteString(encoded[i:end])
+			msg.WriteString("\r\n")
+		}
+	}
+
+	msg.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+
+	client, err := dialSMTPClient(cfg)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+
+	if cfg.Username != "" {
+		auth := smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
+		if err = client.Auth(auth); err != nil {
+			return fmt.Errorf("SMTP authentication failed: %w", err)
+		}
+	}
+
+	if err = client.Mail(cfg.From); err != nil {
+		return fmt.Errorf("SMTP MAIL FROM failed: %w", err)
+	}
+	if err = client.Rcpt(to); err != nil {
+		return fmt.Errorf("SMTP RCPT TO failed: %w", err)
+	}
+
+	w, err := client.Data()
+	if err != nil {
+		return fmt.Errorf("SMTP DATA failed: %w", err)
+	}
+	if _, err = w.Write([]byte(msg.String())); err != nil {
+		return fmt.Errorf("SMTP write failed: %w", err)
+	}
+	if err = w.Close(); err != nil {
+		return fmt.Errorf("SMTP message close failed: %w", err)
+	}
+
+	return client.Quit()
 }

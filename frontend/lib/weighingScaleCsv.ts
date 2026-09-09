@@ -1,21 +1,67 @@
 import {
   isWeightBasedUnit,
   type WeighingScaleCsvDelimiter,
+  type WeighingScaleCsvExtraField,
   type WeighingScaleCsvItemMatchField,
   type WeighingScaleSettings,
 } from '@/lib/weighingScale'
+import { downloadBlob } from '@/lib/accountingExport'
+import { desktopSaveFile, isDesktopApp } from '@/lib/desktopBridge'
 
 export interface WeighingScaleProductRef {
   id: string
   name: string
   sku?: string
   item_code?: string
+  plu?: string
   unit: string
 }
 
 export interface ScaleCatalogProduct extends WeighingScaleProductRef {
   sale_price: number
+  mrp?: number
+  category?: string
+  purchase_price?: number
+  hsn_code?: string
+  description?: string
+  tax_rate?: number
+  discount?: string
+  min_stock?: number
+  item_type?: string
 }
+
+/** Core columns always present in the scale catalog CSV. */
+export const SCALE_CSV_CORE_HEADERS = {
+  item_code: 'item_code',
+  plu: 'plu',
+  name: 'name',
+  price: 'price',
+  /** 1 = weight item, 2 = non-weight item (scale import convention). */
+  weight_type: 'weight_type',
+} as const
+
+/** Scale catalog value: weight-based unit → 1, piece/other → 2. */
+export function scaleCatalogWeightType(unit: string | undefined | null): '1' | '2' {
+  return isWeightBasedUnit(unit) ? '1' : '2'
+}
+
+export const SCALE_CSV_EXTRA_FIELD_OPTIONS: Array<{
+  key: WeighingScaleCsvExtraField
+  label: string
+}> = [
+  { key: 'slug', label: 'Slug (SKU)' },
+  { key: 'unit', label: 'Unit' },
+  { key: 'category', label: 'Category' },
+  { key: 'mrp', label: 'MRP' },
+  { key: 'purchase_price', label: 'Purchase price' },
+  { key: 'hsn_code', label: 'HSN code' },
+  { key: 'description', label: 'Description' },
+  { key: 'tax_rate', label: 'Tax rate %' },
+  { key: 'discount', label: 'Discount' },
+  { key: 'min_stock', label: 'Min stock' },
+  { key: 'item_type', label: 'Item type' },
+  { key: 'id', label: 'Product ID' },
+]
 
 function delimiterChar(delimiter: WeighingScaleCsvDelimiter): string {
   return delimiter === 'tab' ? '\t' : delimiter
@@ -28,17 +74,32 @@ function escapeCsvCell(value: string, delimiter: string): string {
   return value
 }
 
+function formatNumber(value: number | undefined | null, fallback = '0.00'): string {
+  if (value == null || !Number.isFinite(Number(value))) return fallback
+  return Number(value).toFixed(2)
+}
+
+/** PLU sent to scale catalog / used when matching scale scans. */
+export function getProductPlu(product: WeighingScaleProductRef): string {
+  return product.plu?.trim() || product.item_code?.trim() || ''
+}
+
+/** Barcode / item code used as PLU in the scale catalog and when matching scans. */
 export function getScaleItemCode(
   product: WeighingScaleProductRef,
   matchField: WeighingScaleCsvItemMatchField
 ): string {
+  if (matchField === 'plu') {
+    return product.plu?.trim() ?? ''
+  }
   if (matchField === 'item_code') {
     return product.item_code?.trim() ?? ''
   }
   if (matchField === 'sku') {
     return product.sku?.trim() ?? ''
   }
-  return product.sku?.trim() || product.item_code?.trim() || ''
+  // Prefer dedicated PLU, then barcode (item_code), then slug (SKU)
+  return getProductPlu(product) || product.sku?.trim() || ''
 }
 
 export function findProductByItemCode(
@@ -49,9 +110,13 @@ export function findProductByItemCode(
   const code = itemCode.trim()
   if (!code) return null
 
+  const byPlu = products.filter((p) => p.plu?.trim() === code)
   const bySku = products.filter((p) => p.sku?.trim() === code)
   const byItemCode = products.filter((p) => p.item_code?.trim() === code)
 
+  if (matchField === 'plu') {
+    return byPlu[0] ?? null
+  }
   if (matchField === 'sku') {
     return bySku[0] ?? null
   }
@@ -59,11 +124,56 @@ export function findProductByItemCode(
     return byItemCode[0] ?? null
   }
 
-  if (bySku.length === 1) return bySku[0]
+  if (byPlu.length === 1) return byPlu[0]
   if (byItemCode.length === 1) return byItemCode[0]
-  if (bySku.length > 1) return null
-  if (byItemCode.length > 1) return null
-  return bySku[0] ?? byItemCode[0] ?? null
+  if (bySku.length === 1) return bySku[0]
+  if (byPlu.length > 1 || byItemCode.length > 1 || bySku.length > 1) return null
+  return byPlu[0] ?? byItemCode[0] ?? bySku[0] ?? null
+}
+
+function extraFieldValue(
+  product: ScaleCatalogProduct,
+  field: WeighingScaleCsvExtraField
+): string {
+  switch (field) {
+    case 'slug':
+      return product.sku?.trim() ?? ''
+    case 'unit':
+      return product.unit?.trim() || 'KG'
+    case 'category':
+      return product.category?.trim() ?? ''
+    case 'mrp':
+      return formatNumber(product.mrp)
+    case 'purchase_price':
+      return formatNumber(product.purchase_price)
+    case 'hsn_code':
+      return product.hsn_code?.trim() ?? ''
+    case 'description':
+      return product.description?.trim() ?? ''
+    case 'tax_rate':
+      return formatNumber(product.tax_rate)
+    case 'discount':
+      return product.discount?.trim() ?? ''
+    case 'min_stock':
+      return formatNumber(product.min_stock)
+    case 'item_type':
+      return product.item_type?.trim() ?? ''
+    case 'id':
+      return product.id ?? ''
+    default:
+      return ''
+  }
+}
+
+export function resolveScaleCatalogExportFilename(
+  settings: Pick<WeighingScaleSettings, 'csv_export_filename'>,
+  dateStamp = new Date().toISOString().slice(0, 10)
+): string {
+  const template = settings.csv_export_filename.trim()
+  const base = template
+    ? template.replaceAll('{date}', dateStamp)
+    : `scale-product-catalog-${dateStamp}.csv`
+  return base.toLowerCase().endsWith('.csv') ? base : `${base}.csv`
 }
 
 export function buildScaleCatalogCsv(
@@ -72,47 +182,57 @@ export function buildScaleCatalogCsv(
     WeighingScaleSettings,
     | 'csv_delimiter'
     | 'csv_has_header'
-    | 'csv_item_match_field'
     | 'csv_item_code_column'
+    | 'csv_plu_column'
     | 'csv_name_column'
-    | 'csv_unit_column'
     | 'csv_price_column'
     | 'csv_export_weight_items_only'
+    | 'csv_extra_fields'
   >
 ): { csv: string; rowCount: number; skippedNoCode: number } {
   const delimiter = delimiterChar(settings.csv_delimiter)
-  const codeHeader = settings.csv_item_code_column.trim() || 'item_code'
-  const nameHeader = settings.csv_name_column.trim() || 'item_name'
-  const unitHeader = settings.csv_unit_column.trim() || 'unit'
-  const priceHeader = settings.csv_price_column.trim() || 'price'
+  const codeHeader = settings.csv_item_code_column.trim() || SCALE_CSV_CORE_HEADERS.item_code
+  const pluHeader = settings.csv_plu_column.trim() || SCALE_CSV_CORE_HEADERS.plu
+  const nameHeader = settings.csv_name_column.trim() || SCALE_CSV_CORE_HEADERS.name
+  const priceHeader = settings.csv_price_column.trim() || SCALE_CSV_CORE_HEADERS.price
+  const extraFields = settings.csv_extra_fields ?? []
 
   const candidates = settings.csv_export_weight_items_only
     ? products.filter((p) => isWeightBasedUnit(p.unit))
     : products
 
+  const weightTypeHeader = SCALE_CSV_CORE_HEADERS.weight_type
+  const headerCells = [
+    codeHeader,
+    pluHeader,
+    nameHeader,
+    priceHeader,
+    weightTypeHeader,
+    ...extraFields,
+  ]
+
   const lines: string[] = []
   if (settings.csv_has_header) {
-    lines.push(
-      [codeHeader, nameHeader, unitHeader, priceHeader]
-        .map((c) => escapeCsvCell(c, delimiter))
-        .join(delimiter)
-    )
+    lines.push(headerCells.map((c) => escapeCsvCell(c, delimiter)).join(delimiter))
   }
 
   let rowCount = 0
   let skippedNoCode = 0
 
   for (const product of candidates) {
-    const itemCode = getScaleItemCode(product, settings.csv_item_match_field)
-    if (!itemCode) {
+    const itemCode = product.item_code?.trim() ?? ''
+    const plu = product.plu?.trim() ?? ''
+    if (!itemCode && !plu) {
       skippedNoCode += 1
       continue
     }
     const row = [
       itemCode,
+      plu,
       product.name,
-      product.unit || 'KG',
-      product.sale_price.toFixed(2),
+      formatNumber(product.sale_price),
+      scaleCatalogWeightType(product.unit),
+      ...extraFields.map((field) => extraFieldValue(product, field)),
     ]
       .map((c) => escapeCsvCell(String(c), delimiter))
       .join(delimiter)
@@ -123,12 +243,40 @@ export function buildScaleCatalogCsv(
   return { csv: lines.join('\n'), rowCount, skippedNoCode }
 }
 
-export function downloadScaleCatalogCsv(filename: string, csv: string) {
+function uint8ToBase64(bytes: Uint8Array): string {
+  let binary = ''
+  const chunk = 0x8000
+  for (let i = 0; i < bytes.length; i += chunk) {
+    const slice = bytes.subarray(i, i + chunk)
+    for (let j = 0; j < slice.length; j += 1) {
+      binary += String.fromCharCode(slice[j])
+    }
+  }
+  return btoa(binary)
+}
+
+export async function downloadScaleCatalogCsv(
+  filename: string,
+  csv: string,
+  options?: { directory?: string }
+) {
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const anchor = document.createElement('a')
-  anchor.href = url
-  anchor.download = filename
-  anchor.click()
-  URL.revokeObjectURL(url)
+  const directory = options?.directory?.trim()
+
+  if (isDesktopApp()) {
+    const buffer = await blob.arrayBuffer()
+    const saved = await desktopSaveFile(
+      uint8ToBase64(new Uint8Array(buffer)),
+      filename,
+      false,
+      directory || undefined,
+      true
+    )
+    if (!saved) {
+      throw new Error('Desktop file save is unavailable. Rebuild or update the desktop app.')
+    }
+    return
+  }
+
+  await downloadBlob(filename, blob, { label: 'Exporting scale catalog' })
 }

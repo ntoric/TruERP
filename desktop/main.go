@@ -18,11 +18,12 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:     "TruERP",
-		Width:     1280,
-		Height:    800,
-		MinWidth:  1024,
-		MinHeight: 640,
+		Title:            "TruERP",
+		Width:            1280,
+		Height:           800,
+		MinWidth:         1024,
+		MinHeight:        640,
+		WindowStartState: options.Maximised,
 		AssetServer: &assetserver.Options{
 			// Splash assets until Next.js is ready; then middleware proxies all routes.
 			Assets:     assets,

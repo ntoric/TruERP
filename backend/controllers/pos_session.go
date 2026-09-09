@@ -1,11 +1,11 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"fmt"
 	"net/http"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -22,10 +22,19 @@ func GetPOSSessions(c *gin.Context) {
 	}
 
 	if fromDate := c.Query("from_date"); fromDate != "" {
-		query = query.Where("opened_at >= ?", fromDate)
+		if parsed, err := time.Parse("2006-01-02", fromDate); err == nil {
+			query = query.Where("opened_at >= ?", parsed)
+		} else {
+			query = query.Where("opened_at >= ?", fromDate)
+		}
 	}
 	if toDate := c.Query("to_date"); toDate != "" {
-		query = query.Where("opened_at <= ?", toDate)
+		if parsed, err := time.Parse("2006-01-02", toDate); err == nil {
+			endOfDay := parsed.Add(24*time.Hour - time.Nanosecond)
+			query = query.Where("opened_at <= ?", endOfDay)
+		} else {
+			query = query.Where("opened_at <= ?", toDate)
+		}
 	}
 
 	if err := query.Order("opened_at DESC").Find(&sessions).Error; err != nil {
@@ -65,8 +74,9 @@ func OpenPOSSession(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var input struct {
+		ID          uuid.UUID `json:"id"`
 		OutletID    uuid.UUID `json:"outlet_id"`
-		OpeningCash float64   `json:"opening_cash" binding:"required"`
+		OpeningCash float64   `json:"opening_cash"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -80,8 +90,13 @@ func OpenPOSSession(c *gin.Context) {
 		return
 	}
 
+	sessionID := uuid.New()
+	if input.ID != uuid.Nil {
+		sessionID = input.ID
+	}
+
 	session := models.POSSession{
-		ID:          uuid.New(),
+		ID:          sessionID,
 		UserID:      userID,
 		CashierID:   userID,
 		OutletID:    input.OutletID,
@@ -103,8 +118,8 @@ func ClosePOSSession(c *gin.Context) {
 	id := c.Param("id")
 
 	var input struct {
-		ClosingCash float64  `json:"closing_cash"`
-		Notes       string   `json:"notes"`
+		ClosingCash float64 `json:"closing_cash"`
+		Notes       string  `json:"notes"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -148,7 +163,7 @@ func GetPOSSessionSummary(c *gin.Context) {
 	}
 
 	var invoiceCount int64
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND created_at >= ? AND created_at <= ?", 
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND created_at >= ? AND created_at <= ?",
 		userID, session.OpenedAt, session.ClosedAt).Count(&invoiceCount)
 
 	c.JSON(http.StatusOK, gin.H{

@@ -11,6 +11,8 @@
 # next.js
 /.next/
 /out/
+.next
+.next/
 
 # production
 /build
@@ -33,3 +35,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Tauri desktop (lives in this frontend/ tree)
+.staging/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/bin/
+src-tauri/resources/server/
+src-tauri/resources/node/
+src-tauri/resources/runtime/
+src-tauri/resources/HSN_DATASET.csv
+src-tauri/icons/android/
+src-tauri/icons/ios/
+latest.json
+*.log

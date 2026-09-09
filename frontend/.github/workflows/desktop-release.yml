@@ -1,0 +1,200 @@
+name: Desktop Release
+
+# Same pipeline as the TruERP monorepo workflow, for when `frontend/` is the
+# Git repository root. Prefer the monorepo copy at:
+#   ../../.github/workflows/desktop-release.yml
+#
+# Builds TruERP Windows + macOS desktop apps and publishes a GitHub Release.
+# Trigger: push a semver tag, e.g. git tag v1.2.3 && git push origin v1.2.3
+#
+# Required repository secrets:
+#   NEXT_PUBLIC_API_URL          Cloud API base, e.g. https://truerp-backend.ntoric.com/api/v1
+#   TAURI_SIGNING_PRIVATE_KEY    Contents of the Tauri updater private key (minisign)
+# Optional:
+#   TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+#   RELEASE_TOKEN                PAT with repo scope if org policy blocks GITHUB_TOKEN releases
+#
+# Repository settings (required unless RELEASE_TOKEN is set):
+#   Settings → Actions → General → Workflow permissions → Read and write permissions
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # Major for actions/setup-node. Portable runtime uses BUNDLED_NODE_VERSION (full semver).
+  NODE_VERSION: "20"
+  BUNDLED_NODE_VERSION: "20.18.1"
+
+jobs:
+  prepare-release:
+    name: Prepare release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.release.outputs.release_id }}
+    steps:
+      - name: Create or resolve draft release
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          TITLE="TruERP ${TAG}"
+          BODY="Desktop release **${TAG}**.
+
+          Installers and updater signatures are attached below.
+          In-app updates use \`latest.json\` on this release."
+
+          if gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            RELEASE_ID="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json id --jq .id)"
+            echo "Release ${TAG} already exists (id=${RELEASE_ID})"
+          else
+            gh release create "${TAG}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --draft \
+              --title "${TITLE}" \
+              --notes "${BODY}"
+            RELEASE_ID="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json id --jq .id)"
+            echo "Created draft release ${TAG} (id=${RELEASE_ID})"
+          fi
+          echo "release_id=${RELEASE_ID}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build (${{ matrix.name }})
+    needs: prepare-release
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - name: macos-arm64
+          #   os: macos-latest
+          #   node_target: darwin-arm64
+          #   rust_targets: aarch64-apple-darwin
+          #   tauri_args: --target aarch64-apple-darwin
+          # - name: macos-x64
+          #   os: macos-latest
+          #   node_target: darwin-x64
+          #   rust_targets: x86_64-apple-darwin
+          #   tauri_args: --target x86_64-apple-darwin
+          - name: windows-x64
+            os: windows-latest
+            node_target: windows-x64
+            rust_targets: ""
+            tauri_args: ""
+
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          shared-key: desktop-${{ matrix.name }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Sync version from tag
+        run: |
+          chmod +x ./scripts/*.sh
+          ./scripts/sync-desktop-version.sh "${GITHUB_REF_NAME}"
+
+      - name: Prepare Next.js standalone UI
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+        run: |
+          if [[ -z "${NEXT_PUBLIC_API_URL}" ]]; then
+            echo "Missing secret NEXT_PUBLIC_API_URL" >&2
+            exit 1
+          fi
+          ./scripts/prepare-frontend.sh
+
+      - name: Prepare portable Node + resources
+        run: ./scripts/prepare-bundle.sh "${{ matrix.node_target }}"
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: .
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
+          tagName: ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          uploadUpdaterJson: true
+          updaterJsonPreferNsis: true
+          args: ${{ matrix.tauri_args }}
+
+  publish-release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          gh release edit "${TAG}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --prerelease=${{ contains(github.ref_name, '-') }}
+          echo "Published release ${TAG}"
+
+  verify-release:
+    name: Verify release assets
+    needs: publish-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check release assets
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          echo "Listing assets for ${TAG}"
+          gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets \
+            --jq '.assets[].name'
+          ASSETS="$(gh release view "${TAG}" --repo "${GITHUB_REPOSITORY}" --json assets --jq '.assets[].name')"
+          echo "${ASSETS}" | grep -q 'latest.json'
+          echo "${ASSETS}" | grep -Eiq '\.exe|\.msi|setup'
+          echo "Release ${TAG} looks good."

@@ -185,3 +185,7 @@ docker-compose.override.yml
 .sentryclirc
 *.orig
 *.rej
+
+
+truerp-data
+truerp-data/*

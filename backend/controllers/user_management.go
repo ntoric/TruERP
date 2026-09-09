@@ -28,24 +28,58 @@ func isProtectedRole(role string) bool {
 	return role == "owner" || role == "super_admin"
 }
 
-func userPublicResponse(u models.User) gin.H {
-	return gin.H{
-		"id":                 u.ID,
-		"name":               u.Name,
-		"email":              u.Email,
-		"phone":              u.Phone,
-		"role":               u.Role,
-		"is_active":          u.IsActive,
-		"two_factor_enabled": u.TwoFactorEnabled,
-		"created_at":         u.CreatedAt,
+// Roles a store admin may assign when creating/updating users.
+func isStoreAdminAssignableRole(role string) bool {
+	return role == "admin" || role == "staff"
+}
+
+func actorCanAccessUser(actor models.User, target models.User) bool {
+	if utils.IsSuperAdminRole(actor.Role) {
+		return true
 	}
+	if actor.Role != "admin" {
+		return false
+	}
+	if actor.StoreID == nil || target.StoreID == nil {
+		return false
+	}
+	return *actor.StoreID == *target.StoreID
+}
+
+func resolveManagedStoreID(c *gin.Context, actor models.User) (uuid.UUID, bool) {
+	if utils.IsSuperAdminRole(actor.Role) {
+		if storeID, ok := currentStoreID(c); ok {
+			return storeID, true
+		}
+		return uuid.Nil, false
+	}
+	if actor.StoreID != nil {
+		return *actor.StoreID, true
+	}
+	return uuid.Nil, false
+}
+
+func userPublicResponse(u models.User) gin.H {
+	resp := gin.H{
+		"id":                   u.ID,
+		"name":                 u.Name,
+		"email":                u.Email,
+		"phone":                u.Phone,
+		"role":                 u.Role,
+		"is_active":            u.IsActive,
+		"two_factor_enabled":   u.TwoFactorEnabled,
+		"must_change_password": u.MustChangePassword,
+		"created_at":           u.CreatedAt,
+	}
+	if u.StoreID != nil {
+		resp["store_id"] = u.StoreID
+	}
+	return resp
 }
 
 func GetUserManagementOverview(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
-
-	var actor models.User
-	if err := utils.DB.First(&actor, "id = ?", userID).Error; err != nil {
+	actor, err := loadActor(c)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
@@ -54,8 +88,24 @@ func GetUserManagementOverview(c *gin.Context) {
 		return
 	}
 
+	scopeID := c.MustGet("user_id").(uuid.UUID)
 	var users []models.User
-	utils.DB.Find(&users)
+	if utils.IsSuperAdminRole(actor.Role) {
+		if c.Query("all") == "true" {
+			utils.DB.Where("is_store_owner = ?", false).Find(&users)
+		} else if storeID, ok := currentStoreID(c); ok {
+			utils.DB.Where("store_id = ? AND is_store_owner = ?", storeID, false).Find(&users)
+		} else {
+			utils.DB.Where("is_store_owner = ?", false).Find(&users)
+		}
+	} else {
+		storeID, ok := resolveManagedStoreID(c, actor)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Store assignment required"})
+			return
+		}
+		utils.DB.Where("store_id = ? AND is_store_owner = ?", storeID, false).Find(&users)
+	}
 
 	countByRole := map[string]int64{}
 	var twoFactorCount int64
@@ -67,13 +117,13 @@ func GetUserManagementOverview(c *gin.Context) {
 	}
 
 	var roleCount int64
-	utils.DB.Model(&models.Role{}).Where("user_id = ?", userID).Count(&roleCount)
+	utils.DB.Model(&models.Role{}).Where("user_id = ?", scopeID).Count(&roleCount)
 
 	var activityToday int64
-	utils.DB.Model(&models.AuditLog{}).Where("user_id = ?", userID).Where("DATE(created_at) = DATE('now')").Count(&activityToday)
+	utils.DB.Model(&models.AuditLog{}).Where("user_id = ?", scopeID).Where("DATE(created_at) = DATE('now')").Count(&activityToday)
 
 	var auditTotal int64
-	utils.DB.Model(&models.AuditLog{}).Where("user_id = ?", userID).Count(&auditTotal)
+	utils.DB.Model(&models.AuditLog{}).Where("user_id = ?", scopeID).Count(&auditTotal)
 
 	c.JSON(http.StatusOK, gin.H{
 		"total_users":        len(users),
@@ -89,10 +139,8 @@ func GetUserManagementOverview(c *gin.Context) {
 
 func UpdateBusinessUser(c *gin.Context) {
 	targetID := c.Param("id")
-	userID := c.MustGet("user_id").(uuid.UUID)
-
-	var actor models.User
-	if err := utils.DB.First(&actor, "id = ?", userID).Error; err != nil {
+	actor, err := loadActor(c)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
@@ -107,17 +155,23 @@ func UpdateBusinessUser(c *gin.Context) {
 		return
 	}
 
-	if isProtectedRole(target.Role) && actor.ID != target.ID {
+	if !actorCanAccessUser(actor, target) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "User does not belong to your store"})
+		return
+	}
+
+	if (isProtectedRole(target.Role) || target.IsStoreOwner) && actor.ID != target.ID {
 		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot modify super admin accounts"})
 		return
 	}
 
 	var input struct {
-		Name     string `json:"name"`
-		Phone    string `json:"phone"`
-		Role     string `json:"role"`
-		IsActive *bool  `json:"is_active"`
-		Password string `json:"password"`
+		Name     string  `json:"name"`
+		Phone    string  `json:"phone"`
+		Role     string  `json:"role"`
+		IsActive *bool   `json:"is_active"`
+		Password string  `json:"password"`
+		StoreID  *string `json:"store_id"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -132,15 +186,24 @@ func UpdateBusinessUser(c *gin.Context) {
 		updates["phone"] = input.Phone
 	}
 	if input.Role != "" {
-		if isProtectedRole(input.Role) && actor.Role != "owner" && actor.Role != "super_admin" {
+		role, ok := normalizeAllowedRole(input.Role)
+		if !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid role"})
+			return
+		}
+		if isProtectedRole(role) && !utils.IsSuperAdminRole(actor.Role) {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Only super admins can assign super admin role"})
 			return
 		}
-		if target.Role == "owner" && input.Role != "owner" {
+		if !utils.IsSuperAdminRole(actor.Role) && !isStoreAdminAssignableRole(role) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Store admins can only assign admin or staff roles"})
+			return
+		}
+		if target.Role == "owner" && role != "owner" {
 			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot change business owner role"})
 			return
 		}
-		updates["role"] = input.Role
+		updates["role"] = role
 	}
 	if input.IsActive != nil {
 		if isProtectedRole(target.Role) {
@@ -161,6 +224,26 @@ func UpdateBusinessUser(c *gin.Context) {
 		}
 		updates["password"] = string(hashed)
 	}
+	if input.StoreID != nil {
+		if !utils.IsSuperAdminRole(actor.Role) {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Only super admins can change user stores"})
+			return
+		}
+		if isProtectedRole(target.Role) || target.IsStoreOwner {
+			c.JSON(http.StatusForbidden, gin.H{"error": "Cannot change store for super admin accounts"})
+			return
+		}
+		storeID, err := uuid.Parse(strings.TrimSpace(*input.StoreID))
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid store_id"})
+			return
+		}
+		if _, err := utils.FindStoreByID(utils.DB, storeID); err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Store not found"})
+			return
+		}
+		updates["store_id"] = storeID
+	}
 
 	if len(updates) == 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "No updates provided"})
@@ -174,7 +257,7 @@ func UpdateBusinessUser(c *gin.Context) {
 
 	utils.DB.First(&target, "id = ?", targetID)
 	CreateAuditLog(
-		userID,
+		actor.ID,
 		actor.Name,
 		"update",
 		"user",
@@ -192,20 +275,19 @@ func UpdateBusinessUser(c *gin.Context) {
 }
 
 func GetActivityLogs(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
-
-	var actor models.User
-	if err := utils.DB.First(&actor, "id = ?", userID).Error; err != nil {
+	actor, err := loadActor(c)
+	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
 		return
 	}
-	if !canManageUsers(actor.Role) {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Insufficient permissions"})
+	if !isProtectedRole(actor.Role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Super admin access required"})
 		return
 	}
 
+	scopeID := c.MustGet("user_id").(uuid.UUID)
 	var logs []models.AuditLog
-	q := utils.DB.Where("user_id = ?", userID).Order("created_at DESC").Limit(100)
+	q := utils.DB.Where("user_id = ?", scopeID).Order("created_at DESC").Limit(100)
 	if action := c.Query("action"); action != "" {
 		q = q.Where("action = ?", action)
 	}
@@ -227,7 +309,7 @@ func buildOtpAuthURL(email, secret string) string {
 }
 
 func GetTwoFactorStatus(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
+	userID := actorUserID(c)
 	var user models.User
 	if err := utils.DB.First(&user, "id = ?", userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
@@ -256,7 +338,7 @@ func pendingOtpAuthURL(user models.User) string {
 }
 
 func SetupTwoFactor(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
+	userID := actorUserID(c)
 	var user models.User
 	if err := utils.DB.First(&user, "id = ?", userID).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
@@ -287,7 +369,7 @@ func SetupTwoFactor(c *gin.Context) {
 }
 
 func EnableTwoFactor(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
+	userID := actorUserID(c)
 	var input struct {
 		Code string `json:"code" binding:"required"`
 	}
@@ -317,7 +399,7 @@ func EnableTwoFactor(c *gin.Context) {
 }
 
 func DisableTwoFactor(c *gin.Context) {
-	userID := c.MustGet("user_id").(uuid.UUID)
+	userID := actorUserID(c)
 	var input struct {
 		Password string `json:"password" binding:"required"`
 		Code     string `json:"code"`
@@ -358,4 +440,81 @@ func normalizeAllowedRole(role string) (string, bool) {
 	default:
 		return "", false
 	}
+}
+
+// ResetUserPassword generates a temporary password for a user (super admin only).
+func ResetUserPassword(c *gin.Context) {
+	actor, err := loadActor(c)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if !utils.IsSuperAdminRole(actor.Role) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Super admin access required"})
+		return
+	}
+
+	targetID, parseErr := uuid.Parse(c.Param("id"))
+	if parseErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid user ID"})
+		return
+	}
+
+	var target models.User
+	if err := utils.DB.First(&target, "id = ?", targetID).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "User not found"})
+		return
+	}
+
+	if target.IsStoreOwner {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot reset password for internal store owner accounts"})
+		return
+	}
+
+	if isProtectedRole(target.Role) && target.ID != actor.ID {
+		c.JSON(http.StatusForbidden, gin.H{"error": "Cannot reset password for super admin accounts"})
+		return
+	}
+
+	tempPassword, err := generateTemporaryPassword()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate temporary password"})
+		return
+	}
+
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(tempPassword), bcrypt.DefaultCost)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to hash password"})
+		return
+	}
+
+	if err := utils.DB.Model(&target).Updates(map[string]interface{}{
+		"password":             string(hashedPassword),
+		"must_change_password": true,
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reset password"})
+		return
+	}
+
+	CreateAuditLog(
+		actor.ID,
+		actor.Name,
+		"update",
+		"user",
+		&target.ID,
+		target.Email,
+		"Super admin generated temporary password for user",
+		c.ClientIP(),
+		c.GetHeader("User-Agent"),
+		nil,
+		"success",
+		"",
+	)
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":             "Temporary password generated. Share it securely with the user.",
+		"temporary_password":  tempPassword,
+		"user":                storeUserResponse(target),
+	})
 }

@@ -411,6 +411,7 @@ func UpdateInvoiceStatus(c *gin.Context) {
 		return
 	}
 
+	previousInvoice := invoiceCashSnapshot(invoice)
 	prevStatus := invoice.Status
 	invoice.Status = input.Status
 	if input.AmountPaid != nil {
@@ -429,11 +430,17 @@ func UpdateInvoiceStatus(c *gin.Context) {
 		return
 	}
 
+	if err := resyncLinkedInvoicePayments(utils.DB, userID, &previousInvoice, &invoice); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Status updated but failed to update cash/bank"})
+		return
+	}
+
 	changedBy := userName
 	if changedBy == "" {
 		changedBy = "user"
 	}
 	recordInvoiceStatusHistory(invoice.ID, userID, prevStatus, invoice.Status, input.Note, changedBy)
 
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 	c.JSON(http.StatusOK, invoice)
 }

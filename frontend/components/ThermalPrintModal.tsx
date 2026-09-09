@@ -6,6 +6,13 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { printDocument } from '@/lib/printDocument'
+import {
+  THERMAL_PRINT_SIZE_OPTIONS,
+  normalizeThermalPrintSize,
+  thermalPreviewWidthPx,
+  type ThermalPrintSize,
+} from '@/lib/printSizes'
+import { stripThermalMarkers } from '@/lib/thermalEscPos'
 import { Printer, X, Eye, Loader2 } from 'lucide-react'
 
 interface ThermalPrintModalProps {
@@ -23,9 +30,10 @@ export default function ThermalPrintModal({
   documentId,
   documentNumber
 }: ThermalPrintModalProps) {
-  const [printSize, setPrintSize] = useState<'2inch' | '3inch'>('2inch')
+  const [printSize, setPrintSize] = useState<ThermalPrintSize>('2inch')
   const [printContent, setPrintContent] = useState<string>('')
   const [printWidth, setPrintWidth] = useState<number>(58)
+  const [logoUrl, setLogoUrl] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [printing, setPrinting] = useState(false)
   const [previewMode, setPreviewMode] = useState(false)
@@ -39,9 +47,7 @@ export default function ThermalPrintModal({
         const res = await apiFetch('/settings/print')
         if (res.ok) {
           const data = await res.json()
-          if (data.thermal_print_size === '3inch' || data.thermal_print_size === '2inch') {
-            setPrintSize(data.thermal_print_size)
-          }
+          setPrintSize(normalizeThermalPrintSize(data.thermal_print_size))
         }
       } catch {
         /* keep default */
@@ -67,6 +73,13 @@ export default function ThermalPrintModal({
         const data = await res.json()
         setPrintContent(data.content)
         setPrintWidth(data.width)
+        setLogoUrl(
+          typeof data.logo_base64 === 'string' && data.logo_base64
+            ? data.logo_base64
+            : typeof data.logo_url === 'string'
+              ? data.logo_url
+              : ''
+        )
         setPreviewMode(true)
       } else {
         const data = await res.json().catch(() => ({}))
@@ -100,6 +113,10 @@ export default function ThermalPrintModal({
 
   if (!isOpen) return null
 
+  const previewWidth = thermalPreviewWidthPx(printSize)
+  const fontSize =
+    printSize === '1inch' ? 9 : printSize === '1.5inch' ? 10 : printSize === '3inch' ? 12 : 11
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
       <Card className="w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto">
@@ -119,13 +136,19 @@ export default function ThermalPrintModal({
           <div className="flex items-center gap-4">
             <div className="flex-1">
               <label className="text-sm font-medium text-gray-700 mb-1 block">Print Size</label>
-              <Select value={printSize} onValueChange={(value: '2inch' | '3inch') => setPrintSize(value)}>
+              <Select
+                value={printSize}
+                onValueChange={(value) => setPrintSize(normalizeThermalPrintSize(value))}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="2inch">2-inch (58mm)</SelectItem>
-                  <SelectItem value="3inch">3-inch (80mm)</SelectItem>
+                  {THERMAL_PRINT_SIZE_OPTIONS.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -154,16 +177,61 @@ export default function ThermalPrintModal({
                 </div>
               </div>
               <div
-                className="bg-white border-2 border-gray-300 p-4 mx-auto overflow-auto"
+                className="bg-white border-2 border-gray-300 p-4 mx-auto overflow-auto text-black"
                 style={{
-                  width: printSize === '2inch' ? '232px' : '320px',
+                  width: previewWidth,
                   fontFamily: 'Courier New, monospace',
-                  fontSize: '12px',
-                  whiteSpace: 'pre',
+                  fontSize,
                   lineHeight: '1.2'
                 }}
               >
-                {printContent}
+                {logoUrl ? (
+                  <div className="mb-2 flex justify-center">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img
+                      src={logoUrl}
+                      alt=""
+                      className="max-h-[48px] max-w-[70%] object-contain"
+                    />
+                  </div>
+                ) : null}
+                {printContent.split('\n').map((raw, idx) => {
+                  let center = false
+                  let bold = false
+                  let rest = raw
+                  while (true) {
+                    if (rest.startsWith('@C@')) {
+                      center = true
+                      rest = rest.slice(3)
+                      continue
+                    }
+                    if (rest.startsWith('@B@')) {
+                      bold = true
+                      rest = rest.slice(3)
+                      continue
+                    }
+                    if (rest.startsWith('@N@')) {
+                      center = false
+                      bold = false
+                      rest = rest.slice(3)
+                      continue
+                    }
+                    break
+                  }
+                  return (
+                    <div
+                      key={`${idx}-${rest.slice(0, 12)}`}
+                      style={{
+                        textAlign: center ? 'center' : 'left',
+                        fontWeight: bold ? 700 : 400,
+                        whiteSpace: 'pre-wrap',
+                        wordBreak: 'break-word',
+                      }}
+                    >
+                      {stripThermalMarkers(rest) || '\u00a0'}
+                    </div>
+                  )
+                })}
               </div>
               <p className="text-xs text-muted-foreground">
                 Document: {documentNumber}. On desktop, print goes to the thermal printer configured in

@@ -13,7 +13,25 @@ import ThermalInvoicePreviewSample, {
   type ThermalPreviewBusiness,
 } from '@/components/ThermalInvoicePreviewSample'
 import { hasNativePrinting, listDesktopPrinters, type DesktopPrinterInfo } from '@/lib/desktopBridge'
+import {
+  BARCODE_LABEL_SIZE_OPTIONS,
+  THERMAL_PRINT_SIZE_OPTIONS,
+  normalizeThermalPrintSize,
+  thermalWidthMM,
+  type BarcodeLabelSize,
+  type ThermalPrintSize,
+} from '@/lib/printSizes'
+import {
+  A4_LABEL_SHEET_PRESETS,
+  layoutFromPresetKey,
+  labelsPerSheet,
+  normalizeA4SheetPreset,
+  type A4LabelSheetPresetKey,
+} from '@/lib/a4LabelSheets'
 import { Check, Loader2, Printer, RefreshCw, Save } from 'lucide-react'
+
+export type { BarcodeLabelSize, ThermalPrintSize }
+export { BARCODE_LABEL_SIZE_OPTIONS }
 
 export interface PrintSettings {
   invoice_print_mode: 'a4' | 'thermal'
@@ -26,11 +44,24 @@ export interface PrintSettings {
   font_size: number
   print_header: boolean
   print_footer: boolean
-  thermal_print_size: '2inch' | '3inch'
+  thermal_print_size: ThermalPrintSize
   barcode_print_mode: 'label' | 'a4'
+  barcode_label_size: BarcodeLabelSize
   thermal_printer_name: string
   document_printer_name: string
   auto_print_on_pos: boolean
+  /** A4 barcode sheet layout (persisted on business) */
+  label_paper_size: string
+  label_sheet_preset: A4LabelSheetPresetKey
+  label_width_mm: number
+  label_height_mm: number
+  label_columns: number
+  label_rows: number
+  label_margin_mm: number
+  label_margin_top_mm: number
+  label_margin_left_mm: number
+  label_gap_h_mm: number
+  label_gap_v_mm: number
 }
 
 const DEFAULT_PRINT_SETTINGS: PrintSettings = {
@@ -46,9 +77,25 @@ const DEFAULT_PRINT_SETTINGS: PrintSettings = {
   print_footer: true,
   thermal_print_size: '2inch',
   barcode_print_mode: 'a4',
+  barcode_label_size: '2inch',
   thermal_printer_name: '',
   document_printer_name: '',
   auto_print_on_pos: true,
+  label_paper_size: 'A4',
+  label_sheet_preset: '48.5x25.4',
+  label_width_mm: 48.5,
+  label_height_mm: 25.4,
+  label_columns: 4,
+  label_rows: 11,
+  label_margin_mm: 5,
+  label_margin_top_mm: 8.8,
+  label_margin_left_mm: 5,
+  label_gap_h_mm: 2,
+  label_gap_v_mm: 0,
+}
+
+function normalizeBarcodeLabelSize(value: unknown): BarcodeLabelSize {
+  return normalizeThermalPrintSize(value)
 }
 
 function mergePrintSettings(raw: Partial<PrintSettings>): PrintSettings {
@@ -57,13 +104,63 @@ function mergePrintSettings(raw: Partial<PrintSettings>): PrintSettings {
     ...raw,
     invoice_print_mode:
       raw.invoice_print_mode === 'thermal' ? 'thermal' : DEFAULT_PRINT_SETTINGS.invoice_print_mode,
-    thermal_print_size:
-      raw.thermal_print_size === '3inch' ? '3inch' : DEFAULT_PRINT_SETTINGS.thermal_print_size,
+    thermal_print_size: normalizeThermalPrintSize(raw.thermal_print_size),
     barcode_print_mode:
       raw.barcode_print_mode === 'label' ? 'label' : DEFAULT_PRINT_SETTINGS.barcode_print_mode,
+    barcode_label_size: normalizeBarcodeLabelSize(raw.barcode_label_size),
     thermal_printer_name: raw.thermal_printer_name || '',
     document_printer_name: raw.document_printer_name || '',
     auto_print_on_pos: raw.auto_print_on_pos !== false,
+    label_paper_size: raw.label_paper_size || DEFAULT_PRINT_SETTINGS.label_paper_size,
+    label_sheet_preset: normalizeA4SheetPreset(raw.label_sheet_preset),
+    label_width_mm: Number(raw.label_width_mm) > 0 ? Number(raw.label_width_mm) : DEFAULT_PRINT_SETTINGS.label_width_mm,
+    label_height_mm: Number(raw.label_height_mm) > 0 ? Number(raw.label_height_mm) : DEFAULT_PRINT_SETTINGS.label_height_mm,
+    label_columns: Number(raw.label_columns) > 0 ? Number(raw.label_columns) : DEFAULT_PRINT_SETTINGS.label_columns,
+    label_rows: Number(raw.label_rows) > 0 ? Number(raw.label_rows) : DEFAULT_PRINT_SETTINGS.label_rows,
+    label_margin_mm:
+      raw.label_margin_mm !== undefined && raw.label_margin_mm !== null && !Number.isNaN(Number(raw.label_margin_mm))
+        ? Number(raw.label_margin_mm)
+        : DEFAULT_PRINT_SETTINGS.label_margin_mm,
+    label_margin_top_mm:
+      raw.label_margin_top_mm !== undefined && !Number.isNaN(Number(raw.label_margin_top_mm))
+        ? Number(raw.label_margin_top_mm)
+        : DEFAULT_PRINT_SETTINGS.label_margin_top_mm,
+    label_margin_left_mm:
+      raw.label_margin_left_mm !== undefined && !Number.isNaN(Number(raw.label_margin_left_mm))
+        ? Number(raw.label_margin_left_mm)
+        : DEFAULT_PRINT_SETTINGS.label_margin_left_mm,
+    label_gap_h_mm:
+      raw.label_gap_h_mm !== undefined && !Number.isNaN(Number(raw.label_gap_h_mm))
+        ? Number(raw.label_gap_h_mm)
+        : DEFAULT_PRINT_SETTINGS.label_gap_h_mm,
+    label_gap_v_mm:
+      raw.label_gap_v_mm !== undefined && !Number.isNaN(Number(raw.label_gap_v_mm))
+        ? Number(raw.label_gap_v_mm)
+        : DEFAULT_PRINT_SETTINGS.label_gap_v_mm,
+  }
+}
+
+function applyA4PresetToSettings(
+  preset: A4LabelSheetPresetKey,
+  prev: PrintSettings
+): PrintSettings {
+  if (preset === 'custom') {
+    return { ...prev, label_sheet_preset: 'custom' }
+  }
+  const layout = layoutFromPresetKey(preset)
+  return {
+    ...prev,
+    label_sheet_preset: preset,
+    label_paper_size: layout.paperSize,
+    label_width_mm: layout.labelWidthMm,
+    label_height_mm: layout.labelHeightMm,
+    label_columns: layout.columns,
+    label_rows: layout.rows,
+    label_margin_mm: layout.marginLeftMm,
+    label_margin_top_mm: layout.marginTopMm,
+    label_margin_left_mm: layout.marginLeftMm,
+    label_gap_h_mm: layout.gapHMm,
+    label_gap_v_mm: layout.gapVMm,
   }
 }
 
@@ -118,6 +215,15 @@ export default function PrintSettingsCard() {
     setSettings((prev) => ({ ...prev, [key]: value }))
   }
 
+  /** A4 sheet layout edits invalidate the named preset — persist as custom. */
+  const updateLabelLayout = <K extends keyof PrintSettings>(key: K, value: PrintSettings[K]) => {
+    setSettings((prev) => ({
+      ...prev,
+      [key]: value,
+      label_sheet_preset: 'custom',
+    }))
+  }
+
   const refreshPrinters = useCallback(async () => {
     setPrintersLoading(true)
     try {
@@ -134,17 +240,22 @@ export default function PrintSettingsCard() {
     }
   }, [])
 
-  const loadBarcodePreview = useCallback(async (mode: PrintSettings['barcode_print_mode']) => {
-    try {
-      const res = await apiFetch(`/printer/barcode/preview?mode=${mode}`)
-      if (res.ok) {
-        const data = await res.json()
-        setBarcodePreviewHtml(data.html || '')
+  const loadBarcodePreview = useCallback(
+    async (mode: PrintSettings['barcode_print_mode'], size: BarcodeLabelSize) => {
+      try {
+        const res = await apiFetch(
+          `/printer/barcode/preview?mode=${encodeURIComponent(mode)}&size=${encodeURIComponent(size)}`
+        )
+        if (res.ok) {
+          const data = await res.json()
+          setBarcodePreviewHtml(data.html || '')
+        }
+      } catch {
+        setBarcodePreviewHtml('')
       }
-    } catch {
-      setBarcodePreviewHtml('')
-    }
-  }, [])
+    },
+    []
+  )
 
   useEffect(() => {
     const load = async () => {
@@ -169,7 +280,7 @@ export default function PrintSettingsCard() {
           const merged = mergePrintSettings(await printRes.json())
           setSettings(merged)
           setPreviewLoading(true)
-          await loadBarcodePreview(merged.barcode_print_mode)
+          await loadBarcodePreview(merged.barcode_print_mode, merged.barcode_label_size)
           setPreviewLoading(false)
         }
         await refreshPrinters()
@@ -184,8 +295,8 @@ export default function PrintSettingsCard() {
 
   useEffect(() => {
     if (loading) return
-    void loadBarcodePreview(settings.barcode_print_mode)
-  }, [loading, loadBarcodePreview, settings.barcode_print_mode])
+    void loadBarcodePreview(settings.barcode_print_mode, settings.barcode_label_size)
+  }, [loading, loadBarcodePreview, settings.barcode_print_mode, settings.barcode_label_size])
 
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -198,8 +309,12 @@ export default function PrintSettingsCard() {
         body: JSON.stringify(settings),
       })
       if (res.ok) {
-        setSettings(mergePrintSettings(await res.json()))
+        const merged = mergePrintSettings(await res.json())
+        setSettings(merged)
         setMessage('Print settings saved successfully')
+        setPreviewLoading(true)
+        await loadBarcodePreview(merged.barcode_print_mode, merged.barcode_label_size)
+        setPreviewLoading(false)
       } else {
         const data = await res.json().catch(() => ({}))
         setMessage(data.error || 'Failed to update print settings')
@@ -221,7 +336,10 @@ export default function PrintSettingsCard() {
     )
   }
 
-  const thermalWidthLabel = settings.thermal_print_size === '3inch' ? '80mm (3 inch)' : '58mm (2 inch)'
+  const thermalWidthLabel = `${thermalWidthMM(settings.thermal_print_size)}mm (${
+    THERMAL_PRINT_SIZE_OPTIONS.find((o) => o.value === settings.thermal_print_size)?.label ??
+    settings.thermal_print_size
+  })`
   const printerOptions = [
     { value: '__default__', label: 'System default printer' },
     ...printers.map((p) => ({
@@ -231,8 +349,32 @@ export default function PrintSettingsCard() {
   ]
 
   const printerSelectValue = (name: string) => (name ? name : '__default__')
-  const onPrinterChange = (key: 'thermal_printer_name' | 'document_printer_name', value: string) => {
+  const onPrinterChange = (key: 'thermal_printer_name', value: string) => {
     update(key, value === '__default__' ? '' : value)
+  }
+
+  const invoicePaperSelectValue =
+    settings.invoice_print_mode === 'thermal' ? settings.thermal_print_size : settings.paper_size
+
+  const onInvoicePaperSizeChange = (value: string) => {
+    if (
+      value === '1inch' ||
+      value === '1.5inch' ||
+      value === '2inch' ||
+      value === '3inch'
+    ) {
+      setSettings((prev) => ({
+        ...prev,
+        invoice_print_mode: 'thermal',
+        thermal_print_size: value as ThermalPrintSize,
+      }))
+      return
+    }
+    setSettings((prev) => ({
+      ...prev,
+      invoice_print_mode: 'a4',
+      paper_size: value,
+    }))
   }
 
   return (
@@ -288,25 +430,49 @@ export default function PrintSettingsCard() {
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <ThemeOption
-                    label="A4 / Normal printer"
-                    description="Full tax invoice on A4, Letter, or Legal paper"
+                    label="A4 / PDF"
+                    description="Download full tax invoice as PDF (A4, Letter, or Legal)"
                     selected={settings.invoice_print_mode === 'a4'}
                     onSelect={() => update('invoice_print_mode', 'a4')}
                   />
                   <ThemeOption
                     label="Thermal printer"
-                    description="Compact receipt for 58mm / 80mm thermal printers"
+                    description="Compact receipt for 25–80mm thermal printers (1″ / 1.5″ / 2″ / 3″)"
                     selected={settings.invoice_print_mode === 'thermal'}
                     onSelect={() => update('invoice_print_mode', 'thermal')}
                   />
                 </div>
               </div>
 
+              <div className="space-y-2">
+                <Label htmlFor="invoice_paper_size">Paper Size</Label>
+                <Select value={invoicePaperSelectValue} onValueChange={onInvoicePaperSizeChange}>
+                  <SelectTrigger id="invoice_paper_size">
+                    <SelectValue placeholder="Select paper size" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="a4">A4 (210 × 297 mm)</SelectItem>
+                    <SelectItem value="letter">Letter (216 × 279 mm)</SelectItem>
+                    <SelectItem value="legal">Legal (216 × 356 mm)</SelectItem>
+                    {THERMAL_PRINT_SIZE_OPTIONS.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        Thermal · {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {settings.invoice_print_mode === 'thermal'
+                    ? `POS & invoice bills print on ${thermalWidthLabel} thermal paper.`
+                    : 'POS & invoice actions download a full tax invoice PDF in the selected sheet size.'}
+                </p>
+              </div>
+
               <div className="flex items-center justify-between rounded-lg border px-4 py-3">
                 <div>
                   <Label htmlFor="auto_print_on_pos">Auto-print after POS sale</Label>
                   <p className="text-xs text-muted-foreground">
-                    Uses the default printer type above when a sale completes
+                    Thermal prints the receipt; A4 / PDF downloads the invoice PDF
                   </p>
                 </div>
                 <Switch
@@ -339,54 +505,41 @@ export default function PrintSettingsCard() {
                       )}
                     </Button>
                   </div>
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-2">
-                      <Label>Thermal printer</Label>
-                      <Select
-                        value={printerSelectValue(settings.thermal_printer_name)}
-                        onValueChange={(v) => onPrinterChange('thermal_printer_name', v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="System default" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {printerOptions.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>
-                              {p.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>A4 / document printer</Label>
-                      <Select
-                        value={printerSelectValue(settings.document_printer_name)}
-                        onValueChange={(v) => onPrinterChange('document_printer_name', v)}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="System default" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {printerOptions.map((p) => (
-                            <SelectItem key={p.value} value={p.value}>
-                              {p.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                  <div className="space-y-2">
+                    <Label>Thermal printer</Label>
+                    <Select
+                      value={printerSelectValue(settings.thermal_printer_name)}
+                      onValueChange={(v) => onPrinterChange('thermal_printer_name', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="System default" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {printerOptions.map((p) => (
+                          <SelectItem key={p.value} value={p.value}>
+                            {p.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                   {printers.length === 0 ? (
                     <p className="text-xs text-muted-foreground">
                       No printers detected. Install a printer in system settings, then refresh.
                     </p>
-                  ) : null}
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Thermal jobs print silently via ESC/POS (no Windows print dialog). Set Thermal
+                      printer for instant Checkout &amp; Print. A4 invoices are downloaded as PDF
+                      only.
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="rounded-lg border border-dashed px-4 py-3 text-xs text-muted-foreground">
-                  Running in browser: print uses the system print dialog. In the TruERP desktop app you
-                  can pick specific thermal and A4 printers here.
+                  Running in browser: thermal print uses the system print dialog. In the TruERP
+                  desktop app you can pick a specific thermal printer here. A4 invoices are
+                  downloaded as PDF only.
                 </div>
               )}
             </TabsContent>
@@ -397,16 +550,24 @@ export default function PrintSettingsCard() {
                   <div>
                     <p className="mb-3 text-sm font-semibold text-gray-900">Thermal paper width</p>
                     <div className="space-y-2">
-                      <ThemeOption
-                        label="2 Inch (58mm)"
-                        selected={settings.thermal_print_size === '2inch'}
-                        onSelect={() => update('thermal_print_size', '2inch')}
-                      />
-                      <ThemeOption
-                        label="3 Inch (80mm)"
-                        selected={settings.thermal_print_size === '3inch'}
-                        onSelect={() => update('thermal_print_size', '3inch')}
-                      />
+                      {THERMAL_PRINT_SIZE_OPTIONS.map((option) => (
+                        <ThemeOption
+                          key={option.value}
+                          label={option.label}
+                          description={option.description}
+                          selected={
+                            settings.invoice_print_mode === 'thermal' &&
+                            settings.thermal_print_size === option.value
+                          }
+                          onSelect={() =>
+                            setSettings((prev) => ({
+                              ...prev,
+                              invoice_print_mode: 'thermal',
+                              thermal_print_size: option.value,
+                            }))
+                          }
+                        />
+                      ))}
                     </div>
                   </div>
                   <div>
@@ -447,25 +608,33 @@ export default function PrintSettingsCard() {
 
             <TabsContent value="document" className="mt-0 space-y-4">
               <p className="text-sm text-muted-foreground">
-                Paper size, margins, and header/footer apply when printing invoices on a normal A4
-                printer or saving as PDF.
+                Paper size, margins, and header/footer apply when downloading invoices as PDF. For
+                POS thermal bills, pick a thermal size under Invoice Printer or Thermal.
               </p>
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
                   <Label htmlFor="paper_size">Paper Size</Label>
-                  <Select
-                    value={settings.paper_size}
-                    onValueChange={(value) => update('paper_size', value)}
-                  >
-                    <SelectTrigger>
+                  <Select value={invoicePaperSelectValue} onValueChange={onInvoicePaperSizeChange}>
+                    <SelectTrigger id="paper_size">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="a4">A4</SelectItem>
-                      <SelectItem value="letter">Letter</SelectItem>
-                      <SelectItem value="legal">Legal</SelectItem>
+                      <SelectItem value="a4">A4 (210 × 297 mm)</SelectItem>
+                      <SelectItem value="letter">Letter (216 × 279 mm)</SelectItem>
+                      <SelectItem value="legal">Legal (216 × 356 mm)</SelectItem>
+                      {THERMAL_PRINT_SIZE_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          Thermal · {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
+                  {settings.invoice_print_mode === 'thermal' ? (
+                    <p className="text-xs text-muted-foreground">
+                      Thermal · {thermalWidthLabel} selected. Margins below apply only to A4 PDF
+                      downloads.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="orientation">Orientation</Label>
@@ -555,29 +724,213 @@ export default function PrintSettingsCard() {
             </TabsContent>
 
             <TabsContent value="barcode" className="mt-0">
-              <div className="grid gap-6 lg:grid-cols-[minmax(240px,280px)_1fr]">
-                <div className="space-y-4 rounded-lg bg-gray-50 p-4">
-                  <p className="text-sm font-semibold text-gray-900">Barcode print mode</p>
-                  <div className="space-y-2">
-                    <ThemeOption
-                      label="Label Print"
-                      selected={settings.barcode_print_mode === 'label'}
-                      onSelect={() => update('barcode_print_mode', 'label')}
-                    />
-                    <ThemeOption
-                      label="A4 Print"
-                      selected={settings.barcode_print_mode === 'a4'}
-                      onSelect={() => update('barcode_print_mode', 'a4')}
-                    />
+              <div className="grid gap-6 lg:grid-cols-[minmax(240px,300px)_1fr]">
+                <div className="space-y-6 rounded-lg bg-gray-50 p-4">
+                  <div>
+                    <p className="mb-3 text-sm font-semibold text-gray-900">Barcode print mode</p>
+                    <div className="space-y-2">
+                      <ThemeOption
+                        label="Thermal Label Print"
+                        description="Single labels for barcode / thermal printers"
+                        selected={settings.barcode_print_mode === 'label'}
+                        onSelect={() => update('barcode_print_mode', 'label')}
+                      />
+                      <ThemeOption
+                        label="A4 Sheet Print"
+                        description="Multi-label grid on office paper"
+                        selected={settings.barcode_print_mode === 'a4'}
+                        onSelect={() => update('barcode_print_mode', 'a4')}
+                      />
+                    </div>
                   </div>
-                  <p className="text-xs text-muted-foreground">
-                    A4 layout uses label size and grid from Business → Label Printing Settings.
-                  </p>
+
+                  {settings.barcode_print_mode === 'label' ? (
+                    <div>
+                      <p className="mb-3 text-sm font-semibold text-gray-900">Thermal paper size</p>
+                      <div className="space-y-2">
+                        {BARCODE_LABEL_SIZE_OPTIONS.map((option) => (
+                          <ThemeOption
+                            key={option.value}
+                            label={option.label}
+                            description={option.description}
+                            selected={settings.barcode_label_size === option.value}
+                            onSelect={() => update('barcode_label_size', option.value)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-sm font-semibold text-gray-900">A4 sheet layout</p>
+                      <div className="space-y-2">
+                        <Label htmlFor="label_sheet_preset">Sticker sheet preset</Label>
+                        <Select
+                          value={settings.label_sheet_preset}
+                          onValueChange={(value) =>
+                            setSettings((prev) => applyA4PresetToSettings(value as A4LabelSheetPresetKey, prev))
+                          }
+                        >
+                          <SelectTrigger id="label_sheet_preset">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {A4_LABEL_SHEET_PRESETS.map((preset) => (
+                              <SelectItem key={preset.key} value={preset.key}>
+                                {preset.label}
+                              </SelectItem>
+                            ))}
+                            <SelectItem value="custom">Custom layout</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          {A4_LABEL_SHEET_PRESETS.find((p) => p.key === settings.label_sheet_preset)?.description ??
+                            `${labelsPerSheet(settings)} labels per sheet · adjust fields below`}
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="label_paper_size">Paper Size</Label>
+                        <Select
+                          value={settings.label_paper_size}
+                          onValueChange={(value) => updateLabelLayout('label_paper_size', value)}
+                        >
+                          <SelectTrigger id="label_paper_size">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="A4">A4</SelectItem>
+                            <SelectItem value="Letter">Letter</SelectItem>
+                            <SelectItem value="Legal">Legal</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="label_columns">Columns</Label>
+                          <Input
+                            id="label_columns"
+                            type="number"
+                            min={1}
+                            max={6}
+                            value={settings.label_columns}
+                            onChange={(e) =>
+                              updateLabelLayout('label_columns', parseInt(e.target.value) || 4)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_rows">Rows</Label>
+                          <Input
+                            id="label_rows"
+                            type="number"
+                            min={1}
+                            max={20}
+                            value={settings.label_rows}
+                            onChange={(e) => updateLabelLayout('label_rows', parseInt(e.target.value) || 11)}
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_width_mm">Width (mm)</Label>
+                          <Input
+                            id="label_width_mm"
+                            type="number"
+                            min={10}
+                            max={200}
+                            step={0.1}
+                            value={settings.label_width_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_width_mm', parseFloat(e.target.value) || 48.5)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_height_mm">Height (mm)</Label>
+                          <Input
+                            id="label_height_mm"
+                            type="number"
+                            min={10}
+                            max={200}
+                            step={0.1}
+                            value={settings.label_height_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_height_mm', parseFloat(e.target.value) || 25.4)
+                            }
+                          />
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-2">
+                          <Label htmlFor="label_margin_left_mm">Side margin (mm)</Label>
+                          <Input
+                            id="label_margin_left_mm"
+                            type="number"
+                            min={0}
+                            max={50}
+                            step={0.1}
+                            value={settings.label_margin_left_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_margin_left_mm', parseFloat(e.target.value) || 0)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_margin_top_mm">Top/bottom margin (mm)</Label>
+                          <Input
+                            id="label_margin_top_mm"
+                            type="number"
+                            min={0}
+                            max={50}
+                            step={0.1}
+                            value={settings.label_margin_top_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_margin_top_mm', parseFloat(e.target.value) || 0)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_gap_h_mm">Horizontal gap (mm)</Label>
+                          <Input
+                            id="label_gap_h_mm"
+                            type="number"
+                            min={0}
+                            max={20}
+                            step={0.1}
+                            value={settings.label_gap_h_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_gap_h_mm', parseFloat(e.target.value) || 0)
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="label_gap_v_mm">Vertical gap (mm)</Label>
+                          <Input
+                            id="label_gap_v_mm"
+                            type="number"
+                            min={0}
+                            max={20}
+                            step={0.1}
+                            value={settings.label_gap_v_mm}
+                            onChange={(e) =>
+                              updateLabelLayout('label_gap_v_mm', parseFloat(e.target.value) || 0)
+                            }
+                          />
+                        </div>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {labelsPerSheet(settings)} stickers per sheet · Save print settings to refresh preview.
+                      </p>
+                    </div>
+                  )}
                 </div>
                 <div>
                   <div className="mb-2 flex items-center justify-between">
                     <span className="text-sm font-medium text-gray-700">
-                      {settings.barcode_print_mode === 'label' ? 'Label preview' : 'A4 sheet preview'}
+                      {settings.barcode_print_mode === 'label'
+                        ? `Label preview · ${
+                            BARCODE_LABEL_SIZE_OPTIONS.find(
+                              (o) => o.value === settings.barcode_label_size
+                            )?.label ?? settings.barcode_label_size
+                          }`
+                        : 'A4 sheet preview'}
                     </span>
                     <Button
                       type="button"
@@ -586,9 +939,10 @@ export default function PrintSettingsCard() {
                       disabled={previewLoading}
                       onClick={() => {
                         setPreviewLoading(true)
-                        void loadBarcodePreview(settings.barcode_print_mode).finally(() =>
-                          setPreviewLoading(false)
-                        )
+                        void loadBarcodePreview(
+                          settings.barcode_print_mode,
+                          settings.barcode_label_size
+                        ).finally(() => setPreviewLoading(false))
                       }}
                     >
                       {previewLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Refresh'}

@@ -1,0 +1,34 @@
+# Keep the API image build context small (context = repo root).
+.git
+.github
+**/.DS_Store
+**/node_modules
+**/.next
+**/out
+**/dist
+**/target
+**/.staging
+**/*.log
+
+# Desktop / frontend / unrelated trees
+desktop/
+frontend/
+logo.png
+
+# Local secrets & data
+**/.env
+**/.env.*
+!**/.env.example
+**/*.db
+**/*.sqlite
+**/uploads
+backend/data/
+# ML weights only — do not exclude backend/models (Go package)
+models/**/*.bin
+
+# Build artifacts
+backend/truerp
+backend/billbook
+backend/main
+**/*.exe
+**/*.test

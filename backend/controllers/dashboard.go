@@ -1,10 +1,11 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
+	"fmt"
 	"net/http"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -35,6 +36,10 @@ func parseDashboardPeriod(c *gin.Context) (start time.Time, end time.Time, filte
 	switch c.DefaultQuery("period", "month") {
 	case "today":
 		start = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	case "yesterday":
+		yesterday := now.AddDate(0, 0, -1)
+		start = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, loc)
+		end = time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 23, 59, 59, 999999999, loc)
 	case "week":
 		weekday := int(now.Weekday())
 		if weekday == 0 {
@@ -55,7 +60,11 @@ func GetDashboardStats(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	start, end, filterDates := parseDashboardPeriod(c)
 
+	// Keep overdue status in sync before snapshot metrics
+	syncOverdueInvoices(userID)
+
 	var stats models.DashboardStats
+	unpaidStatuses := []string{"sent", "partial", "overdue"}
 
 	salesQuery := utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "paid")
 	invoiceQuery := utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID)
@@ -67,16 +76,28 @@ func GetDashboardStats(c *gin.Context) {
 	invoiceQuery.Count(&stats.TotalInvoices)
 
 	utils.DB.Model(&models.Party{}).Where("user_id = ?", userID).Count(&stats.TotalParties)
+	utils.DB.Model(&models.Party{}).Where("user_id = ? AND party_type = ?", userID, "customer").Count(&stats.TotalCustomers)
 
-	// Pending amount (unpaid invoices) — current snapshot, not period-filtered
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ?", userID, []string{"sent", "overdue"}).Select("COALESCE(SUM(total_amount - amount_paid), 0)").Scan(&stats.PendingAmount)
+	// Catalog snapshot — same scope as GET /products (user_id, GORM soft-delete)
+	utils.DB.Model(&models.Product{}).Where("user_id = ?", userID).Count(&stats.TotalProducts)
+
+	stats.LowStockProducts = countConsolidatedLowStockProducts(userID, true)
+
+	// Pending receivables — issued invoices with remaining balance (excludes drafts/cancelled/paid)
+	utils.DB.Model(&models.Invoice{}).
+		Where("user_id = ? AND status IN ? AND total_amount > amount_paid", userID, unpaidStatuses).
+		Select("COALESCE(SUM(total_amount - amount_paid), 0)").
+		Scan(&stats.PendingAmount)
 
 	// Period paid sales and invoice count (mirrors filtered totals for dashboard cards)
 	stats.TodaySales = stats.TotalSales
 	stats.TodayInvoices = stats.TotalInvoices
 
-	// Overdue invoices — current snapshot
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ? AND due_date < ?", userID, "sent", time.Now()).Count(&stats.OverdueInvoices)
+	// Overdue — unpaid issued invoices past due (includes status=overdue and past-due partial/sent)
+	utils.DB.Model(&models.Invoice{}).
+		Where("user_id = ? AND status IN ? AND due_date IS NOT NULL AND due_date < ? AND total_amount > amount_paid",
+			userID, unpaidStatuses, time.Now()).
+		Count(&stats.OverdueInvoices)
 
 	c.JSON(http.StatusOK, stats)
 }
@@ -121,18 +142,12 @@ func GetSalesReport(c *gin.Context) {
 	}
 
 	var results []ReportItem
-	var query string
-
-	switch period {
-	case "daily":
-		query = "SELECT DATE(date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count FROM invoices WHERE user_id = ? AND status = 'paid' GROUP BY DATE(date) ORDER BY period DESC LIMIT 30"
-	case "weekly":
-		query = "SELECT strftime('%Y-W%W', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count FROM invoices WHERE user_id = ? AND status = 'paid' GROUP BY strftime('%Y-W%W', date) ORDER BY period DESC LIMIT 12"
-	case "yearly":
-		query = "SELECT strftime('%Y', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count FROM invoices WHERE user_id = ? AND status = 'paid' GROUP BY strftime('%Y', date) ORDER BY period DESC LIMIT 5"
-	default: // monthly
-		query = "SELECT strftime('%Y-%m', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count FROM invoices WHERE user_id = ? AND status = 'paid' GROUP BY strftime('%Y-%m', date) ORDER BY period DESC LIMIT 12"
-	}
+	periodExpr := utils.SQLPeriodExpr("date", period)
+	limit := utils.SQLPeriodLimit(period)
+	query := fmt.Sprintf(
+		"SELECT %s as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count FROM invoices WHERE user_id = ? AND status = 'paid' GROUP BY %s ORDER BY period DESC LIMIT %s",
+		periodExpr, periodExpr, limit,
+	)
 
 	if err := utils.DB.Raw(query, userID).Scan(&results).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate sales report"})
@@ -146,9 +161,10 @@ func GetGSTReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var reports []models.GSTReport
-	query := `
+	periodExpr := utils.SQLPeriodExpr("date", "monthly")
+	query := fmt.Sprintf(`
 		SELECT 
-			strftime('%Y-%m', date) as month,
+			%s as month,
 			COALESCE(SUM(cgst_total), 0) as cgst,
 			COALESCE(SUM(sgst_total), 0) as sgst,
 			COALESCE(SUM(igst_total), 0) as igst,
@@ -156,10 +172,10 @@ func GetGSTReport(c *gin.Context) {
 			COALESCE(SUM(total_amount), 0) as total_value
 		FROM invoices 
 		WHERE user_id = ? AND status IN ('paid', 'sent')
-		GROUP BY strftime('%Y-%m', date)
+		GROUP BY %s
 		ORDER BY month DESC
 		LIMIT 12
-	`
+	`, periodExpr, periodExpr)
 
 	if err := utils.DB.Raw(query, userID).Scan(&reports).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate GST report"})

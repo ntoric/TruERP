@@ -1,8 +1,8 @@
 import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
-import { AuthProvider } from '@/hooks/useAuth'
-import { Toaster } from '@/components/ui/toaster'
+import { Providers } from './providers'
+import { COLOR_THEME_BOOTSTRAP_SCRIPT } from '@/lib/colorThemes'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -17,12 +17,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className={inter.className}>
-        <AuthProvider>
-          {children}
-          <Toaster />
-        </AuthProvider>
+        <script dangerouslySetInnerHTML={{ __html: COLOR_THEME_BOOTSTRAP_SCRIPT }} />
+        <Providers>{children}</Providers>
       </body>
     </html>
   )

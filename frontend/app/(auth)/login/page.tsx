@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
-import { IndianRupee, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
 import { cn } from '@/lib/utils'
@@ -42,7 +42,11 @@ export default function LoginPage() {
     }
     setLoading(true)
     try {
-      await login(email.trim(), password, needs2fa ? totpCode.trim() : undefined)
+      const result = await login(email.trim(), password, needs2fa ? totpCode.trim() : undefined)
+      if (result.requiresPasswordChange) {
+        window.location.href = '/change-password-required'
+        return
+      }
       const params = new URLSearchParams(window.location.search)
       const next = params.get('next')
       const dest = next && next.startsWith('/') && !next.startsWith('//') ? next : '/dashboard'
@@ -65,9 +69,13 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="space-y-1 text-center">
           <div className="flex justify-center">
-            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-blue-600 text-white">
-              <IndianRupee className="h-7 w-7" />
-            </div>
+            <img
+              src="/logo.png"
+              alt="TruERP"
+              className="h-16 w-16 object-contain"
+              width={64}
+              height={64}
+            />
           </div>
           <CardTitle className="text-2xl font-bold">Welcome back</CardTitle>
           <CardDescription>Login to your TruERP account</CardDescription>
@@ -141,12 +149,6 @@ export default function LoginPage() {
               {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               Login
             </Button>
-            <p className="text-sm text-muted-foreground">
-              Don't have an account?{' '}
-              <Link href="/register" className="text-blue-600 hover:underline">
-                Register
-              </Link>
-            </p>
           </CardFooter>
         </form>
       </Card>

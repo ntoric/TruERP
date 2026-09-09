@@ -5,6 +5,7 @@ import (
 	"truerp/utils"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -55,19 +56,20 @@ func CreateSalesReturn(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var input struct {
-		PartyID      uuid.UUID  `json:"party_id" binding:"required"`
-		InvoiceID    uuid.UUID  `json:"invoice_id"`
-		Date         time.Time  `json:"date" binding:"required"`
-		Reason       string     `json:"reason"`
-		RefundMode   string     `json:"refund_mode"`
-		Notes        string     `json:"notes"`
-		Items        []struct {
-			InvoiceItemID uuid.UUID `json:"invoice_item_id"`
-			Description   string    `json:"description" binding:"required"`
-			Quantity      float64   `json:"quantity" binding:"required,gt=0"`
-			UnitPrice     float64   `json:"unit_price" binding:"required"`
-			TaxRate       float64   `json:"tax_rate"`
-			Reason        string    `json:"reason"`
+		PartyID    uuid.UUID `json:"party_id" binding:"required"`
+		InvoiceID  uuid.UUID `json:"invoice_id"`
+		Date       time.Time `json:"date" binding:"required"`
+		Reason     string    `json:"reason"`
+		RefundMode string    `json:"refund_mode"`
+		Notes      string    `json:"notes"`
+		Items      []struct {
+			InvoiceItemID uuid.UUID  `json:"invoice_item_id"`
+			ProductID     *uuid.UUID `json:"product_id"`
+			Description   string     `json:"description"`
+			Quantity      float64    `json:"quantity" binding:"required,gt=0"`
+			UnitPrice     float64    `json:"unit_price" binding:"required"`
+			TaxRate       float64    `json:"tax_rate"`
+			Reason        string     `json:"reason"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
@@ -94,6 +96,35 @@ func CreateSalesReturn(c *gin.Context) {
 
 	var totalAmount float64
 	for _, item := range input.Items {
+		productID := item.ProductID
+		description := item.Description
+
+		if productID != nil && *productID != uuid.Nil {
+			var product models.Product
+			if err := utils.DB.Where("user_id = ? AND id = ?", userID, *productID).First(&product).Error; err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product in return items"})
+				return
+			}
+			if description == "" {
+				description = product.Name
+			}
+		} else if item.InvoiceItemID != uuid.Nil {
+			var invoiceItem models.InvoiceItem
+			if err := utils.DB.Where("id = ?", item.InvoiceItemID).First(&invoiceItem).Error; err == nil {
+				if invoiceItem.ProductID != nil {
+					productID = invoiceItem.ProductID
+				}
+				if description == "" {
+					description = invoiceItem.Description
+				}
+			}
+		}
+
+		if description == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Item description or product_id is required"})
+			return
+		}
+
 		taxAmount := item.UnitPrice * item.Quantity * (item.TaxRate / 100)
 		total := item.UnitPrice*item.Quantity + taxAmount
 
@@ -101,7 +132,8 @@ func CreateSalesReturn(c *gin.Context) {
 			ID:            uuid.New(),
 			ReturnID:      salesReturn.ID,
 			InvoiceItemID: item.InvoiceItemID,
-			Description:   item.Description,
+			ProductID:     productID,
+			Description:   description,
 			Quantity:      item.Quantity,
 			UnitPrice:     item.UnitPrice,
 			TaxRate:       item.TaxRate,
@@ -179,19 +211,66 @@ func ProcessSalesReturn(c *gin.Context) {
 		return
 	}
 
-	// Update stock entries for returned items
+	outletID := resolveDefaultWarehouseID(userID)
+	now := time.Now()
+
+	// Restore inventory for returned items
 	for _, item := range salesReturn.Items {
-		entry := models.StockEntry{
-			ID:         uuid.New(),
-			UserID:     userID,
-			ItemName:   item.Description,
-			EntryType:  "return",
-			Quantity:   item.Quantity,
-			BalanceQty: 0,
-			CostPrice:  item.UnitPrice,
-			EntryDate:  salesReturn.Date,
+		productID := item.ProductID
+		batchNo := strings.TrimSpace(item.BatchNo)
+		var expDate *time.Time
+		if (productID == nil || *productID == uuid.Nil || batchNo == "") && item.InvoiceItemID != uuid.Nil {
+			var invoiceItem models.InvoiceItem
+			if err := utils.DB.Where("id = ?", item.InvoiceItemID).First(&invoiceItem).Error; err == nil {
+				if productID == nil || *productID == uuid.Nil {
+					productID = invoiceItem.ProductID
+				}
+				if batchNo == "" {
+					batchNo = invoiceItem.BatchNo
+				}
+				expDate = invoiceItem.ExpDate
+			}
 		}
-		utils.DB.Create(&entry)
+
+		restoreOutlet := outletID
+		if productID != nil && *productID != uuid.Nil && batchNo != "" {
+			var stock models.InventoryStock
+			if err := utils.DB.Where(
+				"user_id = ? AND product_id = ? AND batch_no = ?",
+				userID, *productID, batchNo,
+			).Order("available_qty DESC").First(&stock).Error; err == nil {
+				restoreOutlet = stock.OutletID
+			}
+		}
+
+		entry := models.StockEntry{
+			ID:             uuid.New(),
+			UserID:         userID,
+			ItemName:       item.Description,
+			ProductID:      productID,
+			OutletID:       restoreOutlet,
+			EntryType:      "return",
+			Quantity:       item.Quantity,
+			BalanceQty:     0,
+			CostPrice:      item.UnitPrice,
+			BatchNo:        batchNo,
+			ExpDate:        expDate,
+			ReferenceID:    salesReturn.ID,
+			ReferenceType:  "sales_return",
+			Notes:          fmt.Sprintf("Sales return %s", salesReturn.ReturnNumber),
+			ApprovalStatus: "approved",
+			ApprovedBy:     &userID,
+			ApprovedAt:     &now,
+			EntryDate:      salesReturn.Date,
+		}
+		if err := utils.DB.Create(&entry).Error; err != nil {
+			fmt.Printf("[DEBUG] ProcessSalesReturn - Failed to create stock entry: %v\n", err)
+			continue
+		}
+
+		if productID != nil && *productID != uuid.Nil && restoreOutlet != uuid.Nil {
+			updateInventoryStock(userID, *productID, restoreOutlet, "return", item.Quantity, item.UnitPrice, batchNo, nil, expDate)
+		}
 	}
 
 	salesReturn.Status = "processed"

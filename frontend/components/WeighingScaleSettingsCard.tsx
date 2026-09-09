@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   DEFAULT_WEIGHING_SCALE_SETTINGS,
@@ -14,6 +15,7 @@ import {
   mergeWeighingScaleSettings,
   type WeighingScaleSettings,
 } from '@/lib/weighingScale'
+import { SCALE_CSV_EXTRA_FIELD_OPTIONS } from '@/lib/weighingScaleCsv'
 import { Loader2, Save, Scale } from 'lucide-react'
 import WeighingScaleCatalogExport from '@/components/WeighingScaleCatalogExport'
 
@@ -314,9 +316,12 @@ export default function WeighingScaleSettingsCard() {
           <div className="space-y-4 rounded-lg border p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-medium text-gray-900">Scale barcode (POS scan)</p>
+                <p className="font-medium text-gray-900">Scale barcode (POS &amp; sales invoice)</p>
                 <p className="text-xs text-muted-foreground">
-                  Variable-weight EAN labels (prefix 20–29): PLU + weight auto-adds to POS cart.
+                  Works independently of live scale connection. Format: prefix + PLU + weight — e.g.{' '}
+                  <span className="font-mono">w0000112500</span> (prefix <span className="font-mono">w</span>,
+                  PLU <span className="font-mono">00001</span>, weight <span className="font-mono">12500</span> g
+                  = 12.5 kg). Scan adds item with quantity automatically.
                 </p>
               </div>
               <Switch
@@ -328,25 +333,14 @@ export default function WeighingScaleSettingsCard() {
 
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
               <div className="space-y-2">
-                <Label htmlFor="barcode_prefix_start">Prefix from</Label>
+                <Label htmlFor="barcode_prefix">Prefix character</Label>
                 <Input
-                  id="barcode_prefix_start"
-                  type="number"
-                  min={0}
-                  max={99}
-                  value={settings.barcode_prefix_start}
-                  onChange={(e) => update('barcode_prefix_start', parseInt(e.target.value, 10) || 20)}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="barcode_prefix_end">Prefix to</Label>
-                <Input
-                  id="barcode_prefix_end"
-                  type="number"
-                  min={0}
-                  max={99}
-                  value={settings.barcode_prefix_end}
-                  onChange={(e) => update('barcode_prefix_end', parseInt(e.target.value, 10) || 29)}
+                  id="barcode_prefix"
+                  value={settings.barcode_prefix}
+                  maxLength={4}
+                  className="font-mono"
+                  onChange={(e) => update('barcode_prefix', e.target.value || 'w')}
+                  placeholder="w"
                 />
               </div>
               <div className="space-y-2">
@@ -355,23 +349,32 @@ export default function WeighingScaleSettingsCard() {
                   id="barcode_plu_digits"
                   type="number"
                   min={3}
-                  max={6}
+                  max={5}
                   value={settings.barcode_plu_digits}
-                  onChange={(e) => update('barcode_plu_digits', parseInt(e.target.value, 10) || 5)}
+                  onChange={(e) => {
+                    const n = parseInt(e.target.value, 10) || 5
+                    update('barcode_plu_digits', Math.min(5, Math.max(3, n)))
+                  }}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="barcode_payload_digits">Weight/price digits</Label>
+                <Label htmlFor="barcode_payload_digits">Weight digits</Label>
                 <Input
                   id="barcode_payload_digits"
                   type="number"
-                  min={4}
-                  max={6}
+                  min={3}
+                  max={8}
                   value={settings.barcode_payload_digits}
                   onChange={(e) =>
                     update('barcode_payload_digits', parseInt(e.target.value, 10) || 5)
                   }
                 />
+              </div>
+              <div className="space-y-2">
+                <Label>Example barcode</Label>
+                <p className="flex h-10 items-center rounded-md border bg-muted/40 px-3 font-mono text-sm">
+                  {`${(settings.barcode_prefix || 'w').trim() || 'w'}${'1'.padStart(settings.barcode_plu_digits, '0')}${'1250'.padStart(settings.barcode_payload_digits, '0').slice(-settings.barcode_payload_digits)}`}
+                </p>
               </div>
             </div>
 
@@ -394,9 +397,48 @@ export default function WeighingScaleSettingsCard() {
               </Select>
             </div>
 
+            <details className="rounded-md border bg-muted/20 p-3">
+              <summary className="cursor-pointer text-sm font-medium text-gray-800">
+                Legacy EAN prefix range (optional)
+              </summary>
+              <p className="mt-2 text-xs text-muted-foreground mb-3">
+                Also accept numeric EAN-style labels (prefix 20–29) if your machine prints those instead of a
+                letter prefix.
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="barcode_prefix_start">EAN prefix from</Label>
+                  <Input
+                    id="barcode_prefix_start"
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={settings.barcode_prefix_start}
+                    onChange={(e) =>
+                      update('barcode_prefix_start', parseInt(e.target.value, 10) || 20)
+                    }
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="barcode_prefix_end">EAN prefix to</Label>
+                  <Input
+                    id="barcode_prefix_end"
+                    type="number"
+                    min={0}
+                    max={99}
+                    value={settings.barcode_prefix_end}
+                    onChange={(e) =>
+                      update('barcode_prefix_end', parseInt(e.target.value, 10) || 29)
+                    }
+                  />
+                </div>
+              </div>
+            </details>
+
             <p className="text-xs text-muted-foreground">
-              PLU is matched to product SKU/item code using the same rule as CSV import above. Map scale
-              item codes to product SKU (e.g. PLU 00123 → SKU 123).
+              Scale PLU is matched to the product PLU when set, otherwise to barcode (item code).
+              Export the catalog, import it on the weighing machine, then scan printed labels on POS
+              or sales invoices.
             </p>
           </div>
 
@@ -406,6 +448,7 @@ export default function WeighingScaleSettingsCard() {
                 <p className="font-medium text-gray-900">CSV catalog for scale import</p>
                 <p className="text-xs text-muted-foreground">
                   Generate a product file to import on the weighing machine (not uploaded from the scale).
+                  Default columns: item_code, plu, name, price (sale price).
                 </p>
               </div>
               <Switch
@@ -417,7 +460,7 @@ export default function WeighingScaleSettingsCard() {
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Item code in CSV comes from</Label>
+                <Label>Match scale PLU to product by</Label>
                 <Select
                   value={settings.csv_item_match_field}
                   onValueChange={(value) =>
@@ -428,9 +471,10 @@ export default function WeighingScaleSettingsCard() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="auto">Auto (SKU, then item code)</SelectItem>
-                    <SelectItem value="sku">SKU only</SelectItem>
-                    <SelectItem value="item_code">Item code only</SelectItem>
+                    <SelectItem value="plu">PLU</SelectItem>
+                    <SelectItem value="item_code">Barcode (item code)</SelectItem>
+                    <SelectItem value="auto">Auto (PLU, barcode, then slug/SKU)</SelectItem>
+                    <SelectItem value="sku">Slug (SKU) only</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -462,31 +506,60 @@ export default function WeighingScaleSettingsCard() {
                 />
               </div>
               <div className="space-y-2">
+                <Label htmlFor="csv_plu_column">PLU column header</Label>
+                <Input
+                  id="csv_plu_column"
+                  value={settings.csv_plu_column}
+                  onChange={(e) => update('csv_plu_column', e.target.value)}
+                  placeholder="Default: plu"
+                />
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="csv_name_column">Name column header</Label>
                 <Input
                   id="csv_name_column"
                   value={settings.csv_name_column}
                   onChange={(e) => update('csv_name_column', e.target.value)}
-                  placeholder="Default: item_name"
+                  placeholder="Default: name"
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="csv_unit_column">Unit column header</Label>
-                <Input
-                  id="csv_unit_column"
-                  value={settings.csv_unit_column}
-                  onChange={(e) => update('csv_unit_column', e.target.value)}
-                  placeholder="Default: unit"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="csv_price_column">Price column header</Label>
+                <Label htmlFor="csv_price_column">Sale price column header</Label>
                 <Input
                   id="csv_price_column"
                   value={settings.csv_price_column}
                   onChange={(e) => update('csv_price_column', e.target.value)}
                   placeholder="Default: price"
                 />
+              </div>
+            </div>
+
+            <div className="space-y-2 rounded-md border p-3">
+              <Label>Additional product fields</Label>
+              <p className="text-xs text-muted-foreground">
+                Optional columns appended after item_code, plu, name, price, and weight_type.
+              </p>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {SCALE_CSV_EXTRA_FIELD_OPTIONS.map(({ key, label }) => {
+                  const checked = settings.csv_extra_fields.includes(key)
+                  return (
+                    <label
+                      key={key}
+                      className="flex cursor-pointer items-center gap-2 text-sm text-gray-800"
+                    >
+                      <Checkbox
+                        checked={checked}
+                        onCheckedChange={(value) => {
+                          const next = value
+                            ? [...settings.csv_extra_fields, key]
+                            : settings.csv_extra_fields.filter((f) => f !== key)
+                          update('csv_extra_fields', next)
+                        }}
+                      />
+                      {label}
+                    </label>
+                  )
+                })}
               </div>
             </div>
 
@@ -508,7 +581,7 @@ export default function WeighingScaleSettingsCard() {
               />
             </div>
 
-            <WeighingScaleCatalogExport settings={settings} />
+            <WeighingScaleCatalogExport settings={settings} onUpdate={update} />
           </div>
 
           <div className="rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground space-y-1">
@@ -517,7 +590,7 @@ export default function WeighingScaleSettingsCard() {
             <p>2. On POS or invoice, click Connect and select your scale when prompted.</p>
             <p>3. For scales that print weight into any field, use Keyboard wedge mode.</p>
             <p>4. Download the product catalog CSV here and import it on the weighing machine.</p>
-            <p>5. On POS, scan scale barcodes — item and weight are added automatically.</p>
+            <p>5. Enable scale barcode below (no live scale needed), then scan labels (e.g. w0000112500) on POS or sales invoice.</p>
           </div>
 
           <Button type="submit" disabled={saving}>

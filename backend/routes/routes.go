@@ -19,10 +19,26 @@ func SetupRoutes(r *gin.Engine) {
 		auth.POST("/register", controllers.Register)
 		auth.POST("/login", controllers.Login)
 		auth.POST("/forgot-password", controllers.ForgotPassword)
-		auth.GET("/reset-password/validate", controllers.ValidateResetToken)
+		auth.POST("/verify-reset-otp", controllers.VerifyResetOTP)
 		auth.POST("/reset-password", controllers.ResetPassword)
+		auth.POST("/set-password", middleware.AuthRequired(), controllers.SetPassword)
 		auth.GET("/profile", middleware.AuthRequired(), controllers.GetProfile)
 		auth.PUT("/profile", middleware.AuthRequired(), controllers.UpdateProfile)
+		auth.GET("/my-stores", middleware.AuthRequired(), controllers.MyStores)
+	}
+
+	// Store management (super admin)
+	stores := r.Group("/api/v1/stores")
+	stores.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
+	{
+		stores.GET("", controllers.ListStores)
+		stores.POST("", controllers.CreateStore)
+		stores.GET("/:id", controllers.GetStore)
+		stores.PUT("/:id", controllers.UpdateStore)
+		stores.DELETE("/:id", controllers.DeleteStore)
+		stores.POST("/:id/reset", controllers.ResetStore)
+		stores.GET("/:id/users", controllers.ListStoreUsers)
+		stores.POST("/:id/users", controllers.CreateStoreUser)
 	}
 
 	// Business routes
@@ -32,6 +48,7 @@ func SetupRoutes(r *gin.Engine) {
 		business.GET("", controllers.GetBusiness)
 		business.PUT("", controllers.UpdateBusiness)
 		business.POST("/upload-logo", controllers.UploadLogo)
+		business.DELETE("/logo", controllers.RemoveLogo)
 		business.POST("/upload-signature", controllers.UploadSignature)
 	}
 
@@ -49,10 +66,10 @@ func SetupRoutes(r *gin.Engine) {
 		invoices.GET("/:id/attachments", controllers.GetInvoiceAttachments)
 		invoices.POST("/:id/attachments", controllers.UploadInvoiceAttachment)
 		invoices.DELETE("/:id/attachments/:attachmentId", controllers.DeleteInvoiceAttachment)
+		invoices.GET("/:id/pdf", controllers.GenerateInvoicePDF)
 		invoices.GET("/:id", controllers.GetInvoice)
 		invoices.PUT("/:id", controllers.UpdateInvoice)
 		invoices.DELETE("/:id", controllers.DeleteInvoice)
-		invoices.GET("/:id/pdf", controllers.GenerateInvoicePDF)
 	}
 
 	invoiceTemplates := r.Group("/api/v1/invoice-templates")
@@ -101,6 +118,7 @@ func SetupRoutes(r *gin.Engine) {
 	payments.Use(middleware.AuthRequired())
 	{
 		payments.GET("", controllers.GetPayments)
+		payments.GET("/next-number", controllers.GetNextPaymentInNumber)
 		payments.POST("", controllers.CreatePayment)
 		payments.DELETE("/:id", controllers.DeletePayment)
 		payments.GET("/:id/pdf", controllers.GenerateReceiptPDF)
@@ -131,8 +149,20 @@ func SetupRoutes(r *gin.Engine) {
 		expenses.GET("", controllers.GetExpenses)
 		expenses.POST("", controllers.CreateExpense)
 		expenses.GET("/next-number", controllers.GetNextExpenseNumber)
+		expenses.GET("/:id", controllers.GetExpense)
 		expenses.PUT("/:id", controllers.UpdateExpense)
 		expenses.DELETE("/:id", controllers.DeleteExpense)
+	}
+
+	// Expense category routes (separate from product categories)
+	expenseCategories := r.Group("/api/v1/expense-categories")
+	expenseCategories.Use(middleware.AuthRequired())
+	{
+		expenseCategories.GET("", controllers.GetExpenseCategories)
+		expenseCategories.POST("", controllers.CreateExpenseCategory)
+		expenseCategories.GET("/:id", controllers.GetExpenseCategory)
+		expenseCategories.PUT("/:id", controllers.UpdateExpenseCategory)
+		expenseCategories.DELETE("/:id", controllers.DeleteExpenseCategory)
 	}
 
 	// Dashboard routes
@@ -147,6 +177,16 @@ func SetupRoutes(r *gin.Engine) {
 		dashboard.GET("/top-parties", controllers.GetTopParties)
 		dashboard.GET("/daily-report", controllers.GetDailyReport)
 		dashboard.GET("/daily-report/export", controllers.ExportDailyReportCSV)
+		dashboard.GET("/daily-report/pdf", controllers.ExportDailyReportPDF)
+		dashboard.GET("/periodic-report", controllers.GetPeriodicReport)
+		dashboard.GET("/periodic-report/export", controllers.ExportPeriodicReportCSV)
+		dashboard.GET("/periodic-report/pdf", controllers.ExportPeriodicReportPDF)
+
+		// Daily report email automation (auto-mail PDF export to configured recipients)
+		dashboard.GET("/report-email-settings", controllers.GetDailyReportEmailSettingsHandler)
+		dashboard.PUT("/report-email-settings", controllers.UpdateDailyReportEmailSettingsHandler)
+		dashboard.POST("/report-email-settings/send-now", controllers.SendDailyReportEmailNowHandler)
+		dashboard.GET("/report-email-settings/server-time", controllers.GetServerTimeHandler)
 	}
 
 	reports := r.Group("/api/v1/reports")
@@ -159,6 +199,7 @@ func SetupRoutes(r *gin.Engine) {
 		reports.GET("/outstanding", controllers.GetOutstandingInvoicesReport)
 		reports.GET("/customers", controllers.GetCustomerWiseReport)
 		reports.GET("/products", controllers.GetProductWiseReport)
+		reports.GET("/categories", controllers.GetCategoryWiseReport)
 		reports.GET("/payments", controllers.GetPaymentsReport)
 		reports.GET("/inventory", controllers.GetInventoryReport)
 		reports.GET("/custom", controllers.GetCustomReport)
@@ -214,7 +255,10 @@ func SetupRoutes(r *gin.Engine) {
 		// Stock Entries
 		inventory.GET("/entries", controllers.GetStockEntries)
 		inventory.POST("/entries", controllers.CreateStockEntry)
+		inventory.POST("/entries/approve-all", controllers.ApproveAllPendingStockEntries)
 		inventory.PUT("/entries/:id", controllers.UpdateStockEntry)
+		inventory.POST("/entries/:id/approve", controllers.ApproveStockEntry)
+		inventory.POST("/entries/:id/reject", controllers.RejectStockEntry)
 
 		// Stock Transfers
 		inventory.GET("/transfers", controllers.GetStockTransfers)
@@ -286,6 +330,7 @@ func SetupRoutes(r *gin.Engine) {
 		purchase.GET("/bills/:id/download-pdf", controllers.DownloadPurchaseBillPDF)
 		purchase.PUT("/bills/:id", controllers.UpdatePurchaseBill)
 		purchase.DELETE("/bills/:id", controllers.DeletePurchaseBill)
+		purchase.GET("/bills/vendor/:vendorId/recent-products", controllers.GetVendorRecentProducts)
 		purchase.POST("/bills/labels", controllers.PrintPurchaseBillLabels)
 		purchase.POST("/parse-bill-ai", controllers.ParseBillWithAI)
 	}
@@ -573,7 +618,7 @@ func SetupRoutes(r *gin.Engine) {
 		cashBank.POST("/transactions/add", controllers.AddMoney)
 		cashBank.POST("/transactions/reduce", controllers.ReduceMoney)
 		cashBank.POST("/transactions/transfer", controllers.TransferMoney)
-		cashBank.DELETE("/transactions/:id", controllers.DeleteCashTransaction)
+		cashBank.DELETE("/transactions/:id", middleware.SuperAdminRequired(), controllers.DeleteCashTransaction)
 	}
 
 	// Staff routes
@@ -643,6 +688,10 @@ func SetupRoutes(r *gin.Engine) {
 		// Invoice Settings
 		settings.GET("/invoice", controllers.GetInvoiceSettings)
 		settings.PUT("/invoice", controllers.UpdateInvoiceSettings)
+
+		// App appearance (colour theme)
+		settings.GET("/appearance", controllers.GetAppearanceSettings)
+		settings.PUT("/appearance", controllers.UpdateAppearanceSettings)
 		settings.GET("/invoice-custom-fields", controllers.GetInvoiceCustomFieldDefinitions)
 		settings.POST("/invoice-custom-fields", controllers.CreateInvoiceCustomFieldDefinition)
 		settings.PUT("/invoice-custom-fields/:id", controllers.UpdateInvoiceCustomFieldDefinition)
@@ -670,7 +719,8 @@ func SetupRoutes(r *gin.Engine) {
 		
 		// Account Settings
 		settings.POST("/change-password", controllers.ChangePassword)
-		
+		settings.POST("/users/:id/reset-password", controllers.ResetUserPassword)
+
 		// User Management
 		settings.GET("/users", controllers.GetBusinessUsers)
 		settings.POST("/users", controllers.CreateBusinessUser)
@@ -695,6 +745,10 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		products.GET("", controllers.GetProducts)
 		products.POST("", controllers.CreateProduct)
+		products.GET("/generate-item-code", controllers.GenerateProductItemCode)
+		products.GET("/next-plu", controllers.NextProductPLU)
+		products.GET("/check-item-code", controllers.CheckProductItemCode)
+		products.GET("/check-plu", controllers.CheckProductPLU)
 		products.GET("/:id", controllers.GetProduct)
 		products.PUT("/:id", controllers.UpdateProduct)
 		products.DELETE("/:id", controllers.DeleteProduct)
@@ -703,6 +757,7 @@ func SetupRoutes(r *gin.Engine) {
 		products.POST("/import/csv", controllers.ImportProductsCSV)
 		products.POST("/import/excel", controllers.ImportProductsExcel)
 		products.GET("/:id/print-label", controllers.PrintProductLabel)
+		products.POST("/:id/print-label", controllers.PrintProductLabel)
 		products.GET("/:id/images", controllers.GetProductImages)
 		products.POST("/:id/images", controllers.CreateProductImage)
 		products.GET("/:id/variants", controllers.GetProductVariants)
@@ -774,6 +829,7 @@ func SetupRoutes(r *gin.Engine) {
 		emailMarketing.PUT("/:id", controllers.UpdateEmailCampaign)
 		emailMarketing.DELETE("/:id", controllers.DeleteEmailCampaign)
 		emailMarketing.POST("/:id/send", controllers.SendEmailCampaign)
+		emailMarketing.POST("/:id/resend", controllers.ResendEmailCampaign)
 		emailMarketing.POST("/:id/schedule", controllers.ScheduleEmailCampaign)
 	}
 
@@ -791,9 +847,9 @@ func SetupRoutes(r *gin.Engine) {
 		whatsappMarketing.POST("/:id/schedule", controllers.ScheduleWhatsAppCampaign)
 	}
 
-	// Developer Settings routes
+	// Developer Settings routes (super admin only)
 	developerSettings := r.Group("/api/v1/developer-settings")
-	developerSettings.Use(middleware.AuthRequired())
+	developerSettings.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
 	{
 		developerSettings.GET("", controllers.GetDeveloperSettings)
 		developerSettings.PUT("", controllers.UpdateDeveloperSettings)
@@ -802,9 +858,17 @@ func SetupRoutes(r *gin.Engine) {
 		developerSettings.POST("/test-sms", controllers.TestSMSConnection)
 	}
 
-	// Audit Log routes
+	// Page / menu feature flags (read: any auth user; write: super admin)
+	pageFeatures := r.Group("/api/v1/page-features")
+	pageFeatures.Use(middleware.AuthRequired())
+	{
+		pageFeatures.GET("", controllers.GetPageFeatures)
+		pageFeatures.PUT("", middleware.SuperAdminRequired(), controllers.UpdatePageFeatures)
+	}
+
+	// Audit Log routes (super admin only)
 	audit := r.Group("/api/v1/audit")
-	audit.Use(middleware.AuthRequired())
+	audit.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
 	{
 		audit.GET("/logs", controllers.GetAuditLogs)
 		audit.GET("/logs/:id", controllers.GetAuditLog)
@@ -827,9 +891,9 @@ func SetupRoutes(r *gin.Engine) {
 		printer.GET("/barcode/preview", controllers.GetBarcodePrintPreview)
 	}
 
-	// Customer portal — business admin
+	// Customer portal — business admin (super admin only)
 	customerPortalAdmin := r.Group("/api/v1/customer-portal")
-	customerPortalAdmin.Use(middleware.AuthRequired())
+	customerPortalAdmin.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
 	{
 		customerPortalAdmin.GET("/settings", controllers.GetCustomerPortalSettings)
 		customerPortalAdmin.PUT("/settings", controllers.UpdateCustomerPortalSettings)

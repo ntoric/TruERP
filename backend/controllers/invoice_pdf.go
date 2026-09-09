@@ -1,12 +1,12 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"encoding/json"
 	"fmt"
 	"html"
 	"strings"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/google/uuid"
 )
@@ -75,6 +75,17 @@ func documentPageCSS(ps models.PrintSettings) (pageRule string, bodyFontSize int
 	return pageRule, fontSize, bodyPadding
 }
 
+func logoImgStyle(aspect string) string {
+	switch strings.ToLower(strings.TrimSpace(aspect)) {
+	case "landscape":
+		return "max-height:60px;max-width:90px;width:auto;height:auto;object-fit:contain;margin-bottom:8px;"
+	case "portrait":
+		return "max-height:90px;max-width:60px;width:auto;height:auto;object-fit:contain;margin-bottom:8px;"
+	default:
+		return "max-height:60px;max-width:60px;width:auto;height:auto;object-fit:contain;margin-bottom:8px;"
+	}
+}
+
 func InvoicePDFHTML(invoice models.Invoice) string {
 	return InvoicePDFHTMLWithOptions(invoice, buildInvoicePDFOptions(invoice.UserID, invoice))
 }
@@ -122,7 +133,7 @@ func InvoicePDFHTMLWithOptions(invoice models.Invoice, opts invoicePDFOptions) s
 
 	logoHTML := ""
 	if printSettings.PrintHeader && settings.ShowLogo && opts.Business != nil && opts.Business.LogoURL != "" {
-		logoHTML = fmt.Sprintf(`<img src="%s" alt="Logo" style="max-height:60px;margin-bottom:8px;" />`, html.EscapeString(opts.Business.LogoURL))
+		logoHTML = fmt.Sprintf(`<img src="%s" alt="Logo" style="%s" />`, html.EscapeString(opts.Business.LogoURL), logoImgStyle(opts.Business.LogoAspectRatio))
 	}
 
 	showBank := settings.ShowBankDetails && custom.Miscellaneous.ShowBankDetails
@@ -319,6 +330,9 @@ func renderInvoiceMetaSection(invoice models.Invoice, custom models.InvoiceTempl
 	if custom.InvoiceDetails.ShowPlaceOfSupply && invoice.PlaceOfSupply != "" {
 		cells = append(cells, fmt.Sprintf("<div>Place of Supply: %s</div>", html.EscapeString(invoice.PlaceOfSupply)))
 	}
+	if label := formatPaymentSplitsLabel(invoice.PaymentSplits, invoice.PaymentMode); label != "" {
+		cells = append(cells, fmt.Sprintf("<div>Payment: %s</div>", html.EscapeString(label)))
+	}
 	if len(cells) == 0 {
 		return ""
 	}
@@ -333,6 +347,9 @@ func renderInvoiceItemTable(items []models.InvoiceItem, custom models.InvoiceTem
 	}
 	if cols.HSN {
 		headers = append(headers, "<th>HSN</th>")
+	}
+	if cols.Batch {
+		headers = append(headers, "<th>Batch</th>")
 	}
 	if cols.Qty {
 		headers = append(headers, "<th>Qty</th>")
@@ -383,6 +400,17 @@ func renderInvoiceItemRows(items []models.InvoiceItem, custom models.InvoiceTemp
 		}
 		if cols.HSN {
 			cells = append(cells, fmt.Sprintf("<td>%s</td>", html.EscapeString(item.HSNCode)))
+		}
+		if cols.Batch {
+			batchLabel := html.EscapeString(item.BatchNo)
+			if item.ExpDate != nil {
+				batchLabel = fmt.Sprintf("%s<br/><span style=\"font-size:10px;color:#666\">Exp %s</span>",
+					batchLabel, item.ExpDate.Format("02/01/2006"))
+			}
+			if batchLabel == "" {
+				batchLabel = "-"
+			}
+			cells = append(cells, fmt.Sprintf("<td>%s</td>", batchLabel))
 		}
 		if cols.Qty {
 			cells = append(cells, fmt.Sprintf("<td>%.2f %s</td>", item.Quantity, html.EscapeString(item.Unit)))

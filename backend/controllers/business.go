@@ -1,24 +1,53 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/services"
-	"truerp/utils"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"strings"
+	"truerp/models"
+	"truerp/services"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
+
+// ensureBusinessForUser returns the user's business, creating a default one if missing.
+func ensureBusinessForUser(userID uuid.UUID) (models.Business, error) {
+	var business models.Business
+	err := utils.DB.Where("user_id = ?", userID).First(&business).Error
+	if err == nil {
+		return business, nil
+	}
+	if err != gorm.ErrRecordNotFound {
+		return business, err
+	}
+
+	name := "My Business"
+	var user models.User
+	if utils.DB.Select("id", "name").First(&user, "id = ?", userID).Error == nil && strings.TrimSpace(user.Name) != "" {
+		name = strings.TrimSpace(user.Name) + "'s Business"
+	}
+
+	business = models.Business{
+		ID:     uuid.New(),
+		UserID: userID,
+		Name:   name,
+	}
+	if err := utils.DB.Create(&business).Error; err != nil {
+		return business, err
+	}
+	return business, nil
+}
 
 func GetBusiness(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
-	var business models.Business
-	if err := utils.DB.Where("user_id = ?", userID).First(&business).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Business not found"})
+	business, err := ensureBusinessForUser(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load business"})
 		return
 	}
 
@@ -26,6 +55,9 @@ func GetBusiness(c *gin.Context) {
 	// Send a masked version instead
 	if business.GeminiAPIKey != "" {
 		business.GeminiAPIKey = "********"
+	}
+	if business.LogoAspectRatio == "" {
+		business.LogoAspectRatio = "square"
 	}
 
 	c.JSON(http.StatusOK, business)
@@ -42,31 +74,32 @@ func UpdateBusiness(c *gin.Context) {
 	}
 	fmt.Println("DEBUG: Input received:", input.Name, "EnableAIHSNSearch:", input.EnableAIHSNSearch, "EnableAIBillParsing:", input.EnableAIBillParsing, "HasAPIKey:", input.GeminiAPIKey != "")
 
-	var business models.Business
-	if err := utils.DB.Where("user_id = ?", userID).First(&business).Error; err != nil {
-		fmt.Println("ERROR: Business not found for user:", userID, "Error:", err)
-		c.JSON(http.StatusNotFound, gin.H{"error": "Business not found"})
+	business, err := ensureBusinessForUser(userID)
+	if err != nil {
+		fmt.Println("ERROR: Failed to ensure business for user:", userID, "Error:", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load business"})
 		return
 	}
 	fmt.Println("DEBUG: Business found:", business.ID)
 
 	updates := map[string]interface{}{
-		"name":                 input.Name,
-		"gstin":                input.GSTIN,
-		"address":              input.Address,
-		"city":                 input.City,
-		"state":                input.State,
-		"pincode":              input.Pincode,
-		"phone":                input.Phone,
-		"email":                input.Email,
-		"logo_url":             input.LogoURL,
-		"signature_url":        input.SignatureURL,
-		"state_code":           input.StateCode,
-		"bank_name":            input.BankName,
-		"account_number":       input.AccountNumber,
-		"ifsc_code":            input.IFSCCode,
-		"upi_id":               input.UPIID,
-		"enable_aihsn_search":  input.EnableAIHSNSearch,
+		"name":                   input.Name,
+		"gstin":                  input.GSTIN,
+		"address":                input.Address,
+		"city":                   input.City,
+		"state":                  input.State,
+		"pincode":                input.Pincode,
+		"phone":                  input.Phone,
+		"email":                  input.Email,
+		"logo_url":               input.LogoURL,
+		"logo_aspect_ratio":      normalizeLogoAspectRatio(input.LogoAspectRatio),
+		"signature_url":          input.SignatureURL,
+		"state_code":             input.StateCode,
+		"bank_name":              input.BankName,
+		"account_number":         input.AccountNumber,
+		"ifsc_code":              input.IFSCCode,
+		"upi_id":                 input.UPIID,
+		"enable_aihsn_search":    input.EnableAIHSNSearch,
 		"enable_ai_bill_parsing": input.EnableAIBillParsing,
 	}
 	fmt.Println("DEBUG: Updates map created")
@@ -147,13 +180,55 @@ func UploadLogo(c *gin.Context) {
 		return
 	}
 
-	// Update business record
-	if err := utils.DB.Model(&models.Business{}).Where("user_id = ?", userID).Update("logo_url", publicURL).Error; err != nil {
+	business, err := ensureBusinessForUser(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load business"})
+		return
+	}
+	if err := utils.DB.Model(&business).Updates(map[string]interface{}{
+		"logo_url":          publicURL,
+		"logo_aspect_ratio": normalizeLogoAspectRatio(c.PostForm("aspect_ratio")),
+	}).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update logo"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"logo_url": publicURL})
+	c.JSON(http.StatusOK, gin.H{
+		"logo_url":          publicURL,
+		"logo_aspect_ratio": normalizeLogoAspectRatio(c.PostForm("aspect_ratio")),
+	})
+}
+
+func RemoveLogo(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	business, err := ensureBusinessForUser(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load business"})
+		return
+	}
+
+	if business.LogoURL == "" {
+		c.JSON(http.StatusOK, gin.H{"logo_url": ""})
+		return
+	}
+
+	logoURL := business.LogoURL
+	if err := utils.DB.Model(&business).Update("logo_url", "").Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove logo"})
+		return
+	}
+
+	var mediaFile models.MediaFile
+	if err := utils.DB.Where("user_id = ? AND entity_type = ? AND public_url = ?", userID, "logo", logoURL).
+		Order("created_at DESC").
+		First(&mediaFile).Error; err == nil {
+		storageService := services.GetDefaultStorageService()
+		_ = storageService.DeleteFile(mediaFile.FilePath)
+		_ = utils.DB.Delete(&mediaFile).Error
+	}
+
+	c.JSON(http.StatusOK, gin.H{"logo_url": ""})
 }
 
 func UploadSignature(c *gin.Context) {
@@ -203,8 +278,12 @@ func UploadSignature(c *gin.Context) {
 		return
 	}
 
-	// Update business record
-	if err := utils.DB.Model(&models.Business{}).Where("user_id = ?", userID).Update("signature_url", publicURL).Error; err != nil {
+	business, err := ensureBusinessForUser(userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load business"})
+		return
+	}
+	if err := utils.DB.Model(&business).Update("signature_url", publicURL).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update signature"})
 		return
 	}
@@ -222,4 +301,13 @@ func isValidImageFile(file *multipart.FileHeader) bool {
 		".webp": true,
 	}
 	return allowedExts[ext]
+}
+
+func normalizeLogoAspectRatio(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "landscape", "portrait":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "square"
+	}
 }

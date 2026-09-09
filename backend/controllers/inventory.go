@@ -5,6 +5,7 @@ import (
 	"truerp/utils"
 	"encoding/csv"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tealeg/xlsx/v3"
+	"gorm.io/gorm"
 )
 
 type StockBalance struct {
@@ -44,7 +46,7 @@ func GetStockBalance(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("[DEBUG] GetStockBalance - Found %d stocks\n", len(stocks))
+	fmt.Printf("[DEBUG] GetStockBalance - Found %d stock rows (before consolidation)\n", len(stocks))
 
 	// Fetch outlet names
 	var outletIDs []uuid.UUID
@@ -60,20 +62,41 @@ func GetStockBalance(c *gin.Context) {
 		warehouseMap[wh.ID] = wh.Name
 	}
 
-	var balances []StockBalance
+	// Consolidate batches into one row per product + outlet.
+	type balanceKey struct {
+		ProductID uuid.UUID
+		OutletID  uuid.UUID
+	}
+	balanceMap := make(map[balanceKey]*StockBalance)
 	for _, stock := range stocks {
-		balances = append(balances, StockBalance{
+		key := balanceKey{ProductID: stock.ProductID, OutletID: stock.OutletID}
+		lineValue := stock.Quantity * stock.AverageCost
+		if existing, ok := balanceMap[key]; ok {
+			existing.StockQty += stock.Quantity
+			existing.Value += lineValue
+			if existing.StockQty > 0 {
+				existing.CostPrice = existing.Value / existing.StockQty
+			}
+			continue
+		}
+		balanceMap[key] = &StockBalance{
 			ProductID:   stock.ProductID,
 			ProductName: stock.Product.Name,
 			SKU:         stock.Product.SKU,
 			StockQty:    stock.Quantity,
 			CostPrice:   stock.AverageCost,
-			Value:       stock.Quantity * stock.AverageCost,
+			Value:       lineValue,
 			OutletID:    stock.OutletID,
 			OutletName:  warehouseMap[stock.OutletID],
-		})
+		}
 	}
 
+	balances := make([]StockBalance, 0, len(balanceMap))
+	for _, balance := range balanceMap {
+		balances = append(balances, *balance)
+	}
+
+	fmt.Printf("[DEBUG] GetStockBalance - Returning %d consolidated balances\n", len(balances))
 	c.JSON(http.StatusOK, gin.H{"data": balances})
 }
 
@@ -82,6 +105,7 @@ func GetStockEntries(c *gin.Context) {
 	productID := c.Query("product_id")
 	entryType := c.Query("entry_type")
 	outletID := c.Query("outlet_id")
+	approvalStatus := c.Query("approval_status")
 	fromDate := c.Query("from_date")
 	toDate := c.Query("to_date")
 
@@ -100,6 +124,14 @@ func GetStockEntries(c *gin.Context) {
 
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
+	}
+
+	if approvalStatus != "" {
+		if approvalStatus == "approved" {
+			query = query.Where("approval_status = ? OR approval_status = ? OR approval_status IS NULL", "approved", "")
+		} else {
+			query = query.Where("approval_status = ?", approvalStatus)
+		}
 	}
 
 	if fromDate != "" {
@@ -136,7 +168,7 @@ func GetStockEntries(c *gin.Context) {
 		models.StockEntry
 		OutletName string `json:"outlet_name"`
 	}
-	var entriesWithDetails []StockEntryWithDetails
+	entriesWithDetails := make([]StockEntryWithDetails, 0, len(entries))
 	for _, entry := range entries {
 		entriesWithDetails = append(entriesWithDetails, StockEntryWithDetails{
 			StockEntry: entry,
@@ -159,8 +191,8 @@ func CreateStockEntry(c *gin.Context) {
 		CostPrice     float64    `json:"cost_price"`
 		BatchNo       string     `json:"batch_no"`
 		ItemCode      string     `json:"item_code"`
-		MfgDate       *time.Time `json:"mfg_date"`
-		ExpDate       *time.Time `json:"exp_date"`
+		MfgDate       string     `json:"mfg_date"`
+		ExpDate       string     `json:"exp_date"`
 		Notes         string     `json:"notes"`
 		ReferenceID   uuid.UUID  `json:"reference_id"`
 		ReferenceType string     `json:"reference_type"`
@@ -170,6 +202,18 @@ func CreateStockEntry(c *gin.Context) {
 		fmt.Printf("[DEBUG] CreateStockEntry - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	var mfgDate, expDate *time.Time
+	if input.MfgDate != "" {
+		if t, err := time.Parse("2006-01-02", input.MfgDate); err == nil {
+			mfgDate = &t
+		}
+	}
+	if input.ExpDate != "" {
+		if t, err := time.Parse("2006-01-02", input.ExpDate); err == nil {
+			expDate = &t
+		}
 	}
 
 	fmt.Printf("[DEBUG] CreateStockEntry - UserID: %s, ItemName: %s, EntryType: %s, Quantity: %f\n", userID, input.ItemName, input.EntryType, input.Quantity)
@@ -184,24 +228,28 @@ func CreateStockEntry(c *gin.Context) {
 		}
 	}
 
+	now := time.Now()
 	entry := models.StockEntry{
-		ID:            uuid.New(),
-		UserID:        userID,
-		ItemName:      input.ItemName,
-		ProductID:     input.ProductID,
-		OutletID:      input.OutletID,
-		EntryType:     input.EntryType,
-		Quantity:      input.Quantity,
-		BalanceQty:    0,
-		CostPrice:     input.CostPrice,
-		BatchNo:       input.BatchNo,
-		ItemCode:      input.ItemCode,
-		MfgDate:       input.MfgDate,
-		ExpDate:       input.ExpDate,
-		ReferenceID:   input.ReferenceID,
-		ReferenceType: input.ReferenceType,
-		Notes:         input.Notes,
-		EntryDate:     time.Now(),
+		ID:             uuid.New(),
+		UserID:         userID,
+		ItemName:       input.ItemName,
+		ProductID:      input.ProductID,
+		OutletID:       input.OutletID,
+		EntryType:      input.EntryType,
+		Quantity:       input.Quantity,
+		BalanceQty:     0,
+		CostPrice:      input.CostPrice,
+		BatchNo:        input.BatchNo,
+		ItemCode:       input.ItemCode,
+		MfgDate:        mfgDate,
+		ExpDate:        expDate,
+		ReferenceID:    input.ReferenceID,
+		ReferenceType:  input.ReferenceType,
+		Notes:          input.Notes,
+		ApprovalStatus: "approved",
+		ApprovedBy:     &userID,
+		ApprovedAt:     &now,
+		EntryDate:      now,
 	}
 
 	if err := utils.DB.Create(&entry).Error; err != nil {
@@ -214,7 +262,7 @@ func CreateStockEntry(c *gin.Context) {
 
 	// Update inventory stock if product is linked
 	if input.ProductID != nil {
-		updateInventoryStock(userID, *input.ProductID, input.OutletID, input.EntryType, input.Quantity, input.CostPrice)
+		updateInventoryStock(userID, *input.ProductID, input.OutletID, input.EntryType, input.Quantity, input.CostPrice, input.BatchNo, mfgDate, expDate)
 	}
 
 	c.JSON(http.StatusCreated, entry)
@@ -262,18 +310,22 @@ func UpdateStockEntry(c *gin.Context) {
 		}
 	}
 
-	// Calculate the difference in quantity
-	quantityDiff := input.Quantity - entry.Quantity
+	oldBatch := strings.TrimSpace(entry.BatchNo)
+	oldQty := entry.Quantity
+	newBatch := strings.TrimSpace(input.BatchNo)
+	if newBatch == "" {
+		newBatch = oldBatch
+	}
 
 	// Update the entry
 	updates := map[string]interface{}{
 		"quantity":   input.Quantity,
 		"cost_price": input.CostPrice,
-		"batch_no":   input.BatchNo,
+		"batch_no":   newBatch,
 		"item_code":  input.ItemCode,
 		"notes":      input.Notes,
 	}
-	
+
 	// Only include dates if they are provided
 	if mfgDate != nil {
 		updates["mfg_date"] = mfgDate
@@ -288,57 +340,664 @@ func UpdateStockEntry(c *gin.Context) {
 		return
 	}
 
-	// Update inventory stock if product is linked
-	if entry.ProductID != nil {
-		// Adjust the inventory stock by the difference
-		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", quantityDiff, input.CostPrice)
+	// Only adjust available stock for already-approved entries
+	if entry.ProductID != nil && stockEntryIsApproved(entry.ApprovalStatus) {
+		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -oldQty, entry.CostPrice, oldBatch, nil, nil)
+		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", input.Quantity, input.CostPrice, newBatch, mfgDate, expDate)
 	}
 
 	fmt.Printf("[DEBUG] UpdateStockEntry - Entry updated successfully: %s\n", entry.ID)
 	c.JSON(http.StatusOK, entry)
 }
 
-func updateInventoryStock(userID, productID, outletID uuid.UUID, entryType string, quantity, costPrice float64) {
-	fmt.Printf("[DEBUG] updateInventoryStock - UserID: %s, ProductID: %s, OutletID: %s, EntryType: %s, Quantity: %f\n", userID, productID, outletID, entryType, quantity)
+func stockEntryIsApproved(status string) bool {
+	return status == "" || status == "approved"
+}
 
+func resolveDefaultWarehouseID(userID uuid.UUID) uuid.UUID {
+	var defaultWarehouse models.Warehouse
+	if err := utils.DB.Where("user_id = ? AND is_default = ?", userID, true).First(&defaultWarehouse).Error; err == nil {
+		return defaultWarehouse.ID
+	}
+
+	defaultWarehouse = models.Warehouse{
+		ID:        uuid.New(),
+		UserID:    userID,
+		Name:      "Default Warehouse",
+		Code:      "DEFAULT",
+		IsDefault: true,
+		IsActive:  true,
+	}
+	if err := utils.DB.Create(&defaultWarehouse).Error; err != nil {
+		var fallback models.Warehouse
+		if err := utils.DB.Where("user_id = ?", userID).Order("created_at ASC").First(&fallback).Error; err == nil {
+			return fallback.ID
+		}
+		return uuid.Nil
+	}
+	return defaultWarehouse.ID
+}
+
+// resolveSaleWarehouseID picks the warehouse that currently holds stock for the product.
+// Falls back to the user's default warehouse when no stock row exists yet.
+func resolveSaleWarehouseID(userID, productID uuid.UUID) uuid.UUID {
 	var stock models.InventoryStock
-	err := utils.DB.Where("user_id = ? AND product_id = ? AND outlet_id = ?", userID, productID, outletID).First(&stock).Error
+	if err := utils.DB.Where("user_id = ? AND product_id = ? AND available_qty > 0", userID, productID).
+		Order("available_qty DESC").First(&stock).Error; err == nil && stock.OutletID != uuid.Nil {
+		return stock.OutletID
+	}
+	if err := utils.DB.Where("user_id = ? AND product_id = ?", userID, productID).
+		Order("last_updated DESC").First(&stock).Error; err == nil && stock.OutletID != uuid.Nil {
+		return stock.OutletID
+	}
+	return resolveDefaultWarehouseID(userID)
+}
 
-	if err != nil {
-		fmt.Printf("[DEBUG] updateInventoryStock - Creating new stock record\n")
-		// Create new stock record
-		stock = models.InventoryStock{
-			ID:           uuid.New(),
-			UserID:       userID,
-			ProductID:    productID,
-			OutletID:     outletID,
-			Quantity:     0,
-			ReservedQty:  0,
-			AvailableQty: 0,
-			AverageCost:  costPrice,
-			LastUpdated:  time.Now(),
+// ensureProductForAdhocItem auto-creates a Product when a PurchaseBillItem has
+// no product_id but has a non-empty description. When IsNewItem is true the
+// line's category/prices/HSN/batch flags are used to build a full product
+// record (matching what the frontend used to create via POST /products).
+//
+// Idempotency: before creating, it looks up an existing product for the user
+// by item_code. If found, the existing product_id is reused — this prevents
+// duplicate products when a previous save created the product but the
+// response was lost and the client retried.
+//
+// On success the new/existing product_id is written back to the bill item row
+// and is_new_item is cleared so a reload treats the line as a regular product.
+func ensureProductForAdhocItem(tx *gorm.DB, userID uuid.UUID, item *models.PurchaseBillItem) error {
+	if item.ProductID != nil {
+		return nil
+	}
+	desc := strings.TrimSpace(item.Description)
+	if desc == "" {
+		return nil
+	}
+
+	// Dedup by item_code (natural key per user) — mirrors the check in
+	// CreateProduct. This catches retries after a lost response even when
+	// client_item_ref is absent (e.g. legacy bills).
+	itemCode := strings.TrimSpace(item.ItemCode)
+	if itemCode != "" {
+		var existing models.Product
+		if err := tx.Where("user_id = ? AND TRIM(item_code) = ?", userID, itemCode).First(&existing).Error; err == nil {
+			item.ProductID = &existing.ID
+			item.IsNewItem = false
+			return tx.Model(item).Updates(map[string]interface{}{
+				"product_id":   existing.ID,
+				"is_new_item":  false,
+			}).Error
 		}
 	}
 
-	// Update quantity based on entry type
+	product := models.Product{
+		ID:                   uuid.New(),
+		UserID:               userID,
+		Name:                 desc,
+		Unit:                 item.Unit,
+		HSNCode:              item.HSNCode,
+		TaxRate:              item.TaxRate,
+		ItemCode:             item.ItemCode,
+		IsActive:             true,
+		PurchasePrice:        item.UnitPrice,
+		SalePrice:            item.SalePrice,
+		MRP:                  item.MRP,
+		EnableBatching:       item.BatchNo != "",
+		SalePriceWithTax:     true,
+		PurchasePriceWithTax: false,
+	}
+	// Generate a unique SKU — Product.SKU has a uniqueIndex, so leaving it
+	// empty ("") would cause the second new-item product in the same
+	// transaction to fail with a duplicate-key error. Mirrors CreateProduct.
+	product.SKU = utils.GenerateUniqueProductSKU(desc)
+	// GenerateUniqueProductSKU checks the global DB, but within a transaction
+	// a previous product with the same name may not be committed yet. Check
+	// within the tx and append a short suffix if the SKU already exists here.
+	var skuCount int64
+	tx.Model(&models.Product{}).Where("sku = ?", product.SKU).Count(&skuCount)
+	if skuCount > 0 {
+		product.SKU = product.SKU + "-" + uuid.New().String()[:8]
+	}
+	if item.IsNewItem && strings.TrimSpace(item.Category) != "" {
+		product.Category = utils.ResolveCategoryName(item.Category)
+	} else {
+		product.Category = utils.ResolveCategoryName("")
+	}
+	_ = utils.EnsureDefaultCategories(tx, userID)
+	if product.Unit == "" {
+		product.Unit = "PCS"
+	}
+	if err := utils.AssignProductPLU(userID, &product); err != nil {
+		return err
+	}
+	if err := tx.Create(&product).Error; err != nil {
+		return err
+	}
+
+	item.ProductID = &product.ID
+	item.IsNewItem = false
+	return tx.Model(item).Updates(map[string]interface{}{
+		"product_id":  product.ID,
+		"is_new_item": false,
+	}).Error
+}
+
+// createPendingPurchaseStockEntries is the legacy entry point that runs on the
+// global DB handle. Kept for any callers outside the bill save flow.
+func createPendingPurchaseStockEntries(userID uuid.UUID, bill *models.PurchaseBill) error {
+	return createPendingPurchaseStockEntriesTx(utils.DB, userID, bill)
+}
+
+// createPendingPurchaseStockEntriesTx is the transaction-aware variant used by
+// CreatePurchaseBill / UpdatePurchaseBill so product creation, stock entries,
+// and the bill row all commit or roll back together.
+func createPendingPurchaseStockEntriesTx(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill) error {
+	if bill == nil || bill.Status == "draft" {
+		bill.StockStatus = "none"
+		return tx.Model(bill).Update("stock_status", "none").Error
+	}
+
+	warehouseID := uuid.Nil
+	if bill.WarehouseID != nil {
+		warehouseID = *bill.WarehouseID
+	}
+	if warehouseID == uuid.Nil {
+		warehouseID = resolveDefaultWarehouseID(userID)
+		if warehouseID != uuid.Nil {
+			bill.WarehouseID = &warehouseID
+			tx.Model(bill).Update("warehouse_id", warehouseID)
+		}
+	}
+	if warehouseID == uuid.Nil {
+		bill.StockStatus = "none"
+		return tx.Model(bill).Update("stock_status", "none").Error
+	}
+
+	// Auto-create products for ad-hoc line items that have no product_id.
+	for i := range bill.Items {
+		if err := ensureProductForAdhocItem(tx, userID, &bill.Items[i]); err != nil {
+			return fmt.Errorf("failed to auto-create product for '%s': %w", bill.Items[i].Description, err)
+		}
+	}
+
+	now := time.Now()
+	created := 0
+	for _, item := range bill.Items {
+		if item.ProductID == nil || item.Quantity <= 0 {
+			continue
+		}
+
+		entry := models.StockEntry{
+			ID:             uuid.New(),
+			UserID:         userID,
+			ItemName:       item.Description,
+			ProductID:      item.ProductID,
+			OutletID:       warehouseID,
+			EntryType:      "purchase",
+			Quantity:       item.Quantity,
+			CostPrice:      item.UnitPrice,
+			BatchNo:        item.BatchNo,
+			ItemCode:       item.ItemCode,
+			MfgDate:        item.MfgDate,
+			ExpDate:        item.ExpDate,
+			ReferenceID:    bill.ID,
+			ReferenceType:  "purchase_bill",
+			Notes:          fmt.Sprintf("From purchase bill %s", bill.BillNumber),
+			ApprovalStatus: "approved",
+			ApprovedBy:     &userID,
+			ApprovedAt:     &now,
+			EntryDate:      bill.BillDate,
+		}
+		if err := tx.Create(&entry).Error; err != nil {
+			return err
+		}
+		updateInventoryStock(userID, *item.ProductID, warehouseID, "purchase", item.Quantity, item.UnitPrice, item.BatchNo, item.MfgDate, item.ExpDate, tx)
+		created++
+	}
+
+	stockStatus := "none"
+	if created > 0 {
+		stockStatus = "approved"
+	}
+	bill.StockStatus = stockStatus
+	return tx.Model(bill).Update("stock_status", stockStatus).Error
+}
+
+func removePurchaseStockEntries(userID, billID uuid.UUID) error {
+	return removePurchaseStockEntriesTx(utils.DB, userID, billID)
+}
+
+// removePurchaseStockEntriesTx is the transaction-aware variant used inside
+// the bill save transaction so stock-entry cleanup commits/rolls back with
+// the bill update.
+func removePurchaseStockEntriesTx(tx *gorm.DB, userID, billID uuid.UUID) error {
+	var entries []models.StockEntry
+	if err := tx.Where("user_id = ? AND reference_id = ? AND reference_type = ?", userID, billID, "purchase_bill").Find(&entries).Error; err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if stockEntryIsApproved(entry.ApprovalStatus) && entry.ProductID != nil {
+			// Reverse previously applied stock
+			updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -entry.Quantity, entry.CostPrice, entry.BatchNo, entry.MfgDate, entry.ExpDate, tx)
+		}
+		if err := tx.Delete(&entry).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func syncPurchaseBillStockStatus(userID, billID uuid.UUID) {
+	var entries []models.StockEntry
+	if err := utils.DB.Where("user_id = ? AND reference_id = ? AND reference_type = ?", userID, billID, "purchase_bill").Find(&entries).Error; err != nil {
+		return
+	}
+
+	status := "none"
+	if len(entries) > 0 {
+		pending, approved, rejected := 0, 0, 0
+		for _, e := range entries {
+			switch e.ApprovalStatus {
+			case "pending":
+				pending++
+			case "rejected":
+				rejected++
+			default:
+				approved++
+			}
+		}
+		switch {
+		case pending > 0 && (approved > 0 || rejected > 0):
+			status = "partial"
+		case pending > 0:
+			status = "pending"
+		case approved > 0 && rejected > 0:
+			status = "partial"
+		case approved > 0:
+			status = "approved"
+		case rejected > 0:
+			status = "rejected"
+		}
+	}
+
+	utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND id = ?", userID, billID).Update("stock_status", status)
+}
+
+func ApproveStockEntry(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+	id := c.Param("id")
+
+	var entry models.StockEntry
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).First(&entry).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Stock entry not found"})
+		return
+	}
+
+	if stockEntryIsApproved(entry.ApprovalStatus) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Stock entry is already approved"})
+		return
+	}
+	if entry.ApprovalStatus == "rejected" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Rejected stock entry cannot be approved"})
+		return
+	}
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"approval_status": "approved",
+		"approved_by":     userID,
+		"approved_at":     now,
+	}
+	if strings.HasPrefix(entry.Notes, "Pending approval from purchase bill ") {
+		updates["notes"] = "From " + strings.TrimPrefix(entry.Notes, "Pending approval from ")
+	}
+	if err := utils.DB.Model(&entry).Updates(updates).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to approve stock entry"})
+		return
+	}
+
+	if entry.ProductID != nil {
+		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, entry.EntryType, entry.Quantity, entry.CostPrice, entry.BatchNo, entry.MfgDate, entry.ExpDate)
+	}
+
+	if entry.ReferenceType == "purchase_bill" && entry.ReferenceID != uuid.Nil {
+		syncPurchaseBillStockStatus(userID, entry.ReferenceID)
+	}
+
+	entry.ApprovalStatus = "approved"
+	entry.ApprovedBy = &userID
+	entry.ApprovedAt = &now
+	c.JSON(http.StatusOK, entry)
+}
+
+func RejectStockEntry(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+	id := c.Param("id")
+
+	var entry models.StockEntry
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).First(&entry).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Stock entry not found"})
+		return
+	}
+
+	if stockEntryIsApproved(entry.ApprovalStatus) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Approved stock entry cannot be rejected"})
+		return
+	}
+	if entry.ApprovalStatus == "rejected" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Stock entry is already rejected"})
+		return
+	}
+
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	_ = c.ShouldBindJSON(&input)
+
+	notes := entry.Notes
+	if input.Reason != "" {
+		notes = "Rejected: " + input.Reason
+	} else if !strings.HasPrefix(notes, "Rejected:") {
+		notes = "Rejected"
+	}
+
+	if err := utils.DB.Model(&entry).Updates(map[string]interface{}{
+		"approval_status": "rejected",
+		"notes":           notes,
+	}).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reject stock entry"})
+		return
+	}
+
+	if entry.ReferenceType == "purchase_bill" && entry.ReferenceID != uuid.Nil {
+		syncPurchaseBillStockStatus(userID, entry.ReferenceID)
+	}
+
+	entry.ApprovalStatus = "rejected"
+	entry.Notes = notes
+	c.JSON(http.StatusOK, entry)
+}
+
+func ApproveAllPendingStockEntries(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		ReferenceID   string `json:"reference_id"`
+		ReferenceType string `json:"reference_type"`
+	}
+	_ = c.ShouldBindJSON(&input)
+
+	query := utils.DB.Where("user_id = ? AND approval_status = ?", userID, "pending")
+	if input.ReferenceID != "" {
+		query = query.Where("reference_id = ?", input.ReferenceID)
+	}
+	if input.ReferenceType != "" {
+		query = query.Where("reference_type = ?", input.ReferenceType)
+	}
+
+	var entries []models.StockEntry
+	if err := query.Find(&entries).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch pending entries"})
+		return
+	}
+
+	now := time.Now()
+	approvedCount := 0
+	billIDs := map[uuid.UUID]bool{}
+
+	for _, entry := range entries {
+		if err := utils.DB.Model(&entry).Updates(map[string]interface{}{
+			"approval_status": "approved",
+			"approved_by":     userID,
+			"approved_at":     now,
+		}).Error; err != nil {
+			continue
+		}
+		if entry.ProductID != nil {
+			updateInventoryStock(userID, *entry.ProductID, entry.OutletID, entry.EntryType, entry.Quantity, entry.CostPrice, entry.BatchNo, entry.MfgDate, entry.ExpDate)
+		}
+		if entry.ReferenceType == "purchase_bill" && entry.ReferenceID != uuid.Nil {
+			billIDs[entry.ReferenceID] = true
+		}
+		approvedCount++
+	}
+
+	for billID := range billIDs {
+		syncPurchaseBillStockStatus(userID, billID)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":        "Pending stock entries approved",
+		"approved_count": approvedCount,
+	})
+}
+
+// updateInventoryStock updates the InventoryStock row for a product/batch.
+// The optional tx argument lets callers run the update on the same DB
+// connection as an enclosing transaction — required for SQLite, where a
+// second connection would deadlock waiting for the write lock the
+// transaction already holds. When omitted, the global utils.DB is used.
+func updateInventoryStock(userID, productID, outletID uuid.UUID, entryType string, quantity, costPrice float64, batchNo string, mfgDate, expDate *time.Time, tx ...*gorm.DB) {
+	db := utils.DB
+	if len(tx) > 0 && tx[0] != nil {
+		db = tx[0]
+	}
+	batchNo = strings.TrimSpace(batchNo)
+	fmt.Printf("[DEBUG] updateInventoryStock - UserID: %s, ProductID: %s, OutletID: %s, BatchNo: %q, EntryType: %s, Quantity: %f\n", userID, productID, outletID, batchNo, entryType, quantity)
+
+	var stock models.InventoryStock
+	err := db.Where(
+		"user_id = ? AND product_id = ? AND outlet_id = ? AND batch_no = ?",
+		userID, productID, outletID, batchNo,
+	).First(&stock).Error
+
+	if err != nil {
+		fmt.Printf("[DEBUG] updateInventoryStock - Creating new stock record\n")
+		initialQty := 0.0
+		if quantity > 0 {
+			switch entryType {
+			case "opening", "purchase", "adjustment", "return":
+				initialQty = quantity
+			}
+		}
+		stock = models.InventoryStock{
+			ID:              uuid.New(),
+			UserID:          userID,
+			ProductID:       productID,
+			OutletID:        outletID,
+			BatchNo:         batchNo,
+			MfgDate:         mfgDate,
+			ExpDate:         expDate,
+			Quantity:        0,
+			InitialQuantity: initialQty,
+			ReservedQty:     0,
+			AvailableQty:    0,
+			AverageCost:     costPrice,
+			LastUpdated:     time.Now(),
+		}
+	} else {
+		if mfgDate != nil {
+			stock.MfgDate = mfgDate
+		}
+		if expDate != nil {
+			stock.ExpDate = expDate
+		}
+	}
+
+	// Update quantity based on entry type.
+	// Sale/transfer always reduce by absolute quantity so callers can pass signed or unsigned qty.
 	switch entryType {
-	case "purchase", "opening", "adjustment":
+	case "purchase", "opening", "adjustment", "return":
 		stock.Quantity += quantity
-		// Update weighted average cost
-		if stock.Quantity > 0 && costPrice > 0 {
-			stock.AverageCost = ((stock.AverageCost * (stock.Quantity - quantity)) + (costPrice * quantity)) / stock.Quantity
+		// Update weighted average cost (only when adding stock with a cost)
+		if quantity > 0 && stock.Quantity > 0 && costPrice > 0 {
+			prevQty := stock.Quantity - quantity
+			if prevQty < 0 {
+				prevQty = 0
+			}
+			stock.AverageCost = ((stock.AverageCost * prevQty) + (costPrice * quantity)) / stock.Quantity
 		}
 	case "sale", "transfer":
-		stock.Quantity -= quantity
+		stock.Quantity -= math.Abs(quantity)
 	}
 
 	stock.AvailableQty = stock.Quantity - stock.ReservedQty
 	stock.LastUpdated = time.Now()
 
-	if err := utils.DB.Save(&stock).Error; err != nil {
+	if err := db.Save(&stock).Error; err != nil {
 		fmt.Printf("[DEBUG] updateInventoryStock - DB save error: %v\n", err)
 	} else {
-		fmt.Printf("[DEBUG] updateInventoryStock - Stock updated successfully: Quantity=%f, Available=%f\n", stock.Quantity, stock.AvailableQty)
+		fmt.Printf("[DEBUG] updateInventoryStock - Stock updated successfully: Batch=%q Quantity=%f, Available=%f\n", batchNo, stock.Quantity, stock.AvailableQty)
+	}
+}
+
+// pickFEFOBatch finds the earliest-expiring batch with enough available qty.
+// Falls back to the first available batch (even if qty is partial) when none cover the full qty alone.
+func pickFEFOBatch(userID, productID, outletID uuid.UUID, qty float64) (models.InventoryStock, bool) {
+	var stocks []models.InventoryStock
+	query := utils.DB.Where("user_id = ? AND product_id = ? AND available_qty > 0", userID, productID)
+	if outletID != uuid.Nil {
+		query = query.Where("outlet_id = ?", outletID)
+	}
+	query.Order("CASE WHEN exp_date IS NULL THEN 1 ELSE 0 END ASC, exp_date ASC, available_qty DESC").Find(&stocks)
+
+	for _, s := range stocks {
+		if s.AvailableQty+1e-9 >= qty {
+			return s, true
+		}
+	}
+	if len(stocks) > 0 {
+		return stocks[0], true
+	}
+	return models.InventoryStock{}, false
+}
+
+// validateBatchedProductRequiresBatch returns an error when the product has batching enabled but batch is empty.
+func validateBatchedProductRequiresBatch(userID uuid.UUID, productID *uuid.UUID, batchNo, productLabel string) error {
+	if productID == nil || *productID == uuid.Nil {
+		return nil
+	}
+	var product models.Product
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, *productID).First(&product).Error; err != nil {
+		return nil
+	}
+	if product.EnableBatching && strings.TrimSpace(batchNo) == "" {
+		name := product.Name
+		if productLabel != "" {
+			name = productLabel
+		}
+		return fmt.Errorf("batch number is required for %s (batching enabled)", name)
+	}
+	return nil
+}
+
+// applyInvoiceSaleStock reduces available inventory for invoice line items linked to products.
+func applyInvoiceSaleStock(userID uuid.UUID, invoice *models.Invoice) {
+	if invoice == nil || invoice.Status == "cancelled" || invoice.Status == "draft" {
+		return
+	}
+
+	now := time.Now()
+	for i := range invoice.Items {
+		item := &invoice.Items[i]
+		if item.ProductID == nil || *item.ProductID == uuid.Nil || item.Quantity == 0 {
+			continue
+		}
+
+		batchNo := strings.TrimSpace(item.BatchNo)
+		outletID := resolveSaleWarehouseID(userID, *item.ProductID)
+		if outletID == uuid.Nil {
+			fmt.Printf("[DEBUG] applyInvoiceSaleStock - No warehouse for user %s product %s\n", userID, *item.ProductID)
+			continue
+		}
+
+		var product models.Product
+		_ = utils.DB.Where("user_id = ? AND id = ?", userID, *item.ProductID).First(&product).Error
+
+		if product.EnableBatching && batchNo == "" {
+			if stock, ok := pickFEFOBatch(userID, *item.ProductID, outletID, math.Abs(item.Quantity)); ok {
+				batchNo = stock.BatchNo
+				outletID = stock.OutletID
+				item.BatchNo = batchNo
+				if stock.ExpDate != nil {
+					item.ExpDate = stock.ExpDate
+				}
+				utils.DB.Model(item).Updates(map[string]interface{}{
+					"batch_no": batchNo,
+					"exp_date": item.ExpDate,
+				})
+			}
+		} else if batchNo != "" {
+			var stock models.InventoryStock
+			if err := utils.DB.Where(
+				"user_id = ? AND product_id = ? AND batch_no = ? AND available_qty > 0",
+				userID, *item.ProductID, batchNo,
+			).Order("available_qty DESC").First(&stock).Error; err == nil {
+				outletID = stock.OutletID
+				if item.ExpDate == nil && stock.ExpDate != nil {
+					item.ExpDate = stock.ExpDate
+					utils.DB.Model(item).Update("exp_date", item.ExpDate)
+				}
+			}
+		}
+
+		qty := math.Abs(item.Quantity)
+		entry := models.StockEntry{
+			ID:             uuid.New(),
+			UserID:         userID,
+			ItemName:       item.Description,
+			ProductID:      item.ProductID,
+			OutletID:       outletID,
+			EntryType:      "sale",
+			Quantity:       -qty,
+			BalanceQty:     0,
+			CostPrice:      item.UnitPrice,
+			BatchNo:        batchNo,
+			ExpDate:        item.ExpDate,
+			ReferenceID:    invoice.ID,
+			ReferenceType:  "invoice",
+			Notes:          fmt.Sprintf("Sale via invoice %s", invoice.InvoiceNumber),
+			ApprovalStatus: "approved",
+			ApprovedBy:     &userID,
+			ApprovedAt:     &now,
+			EntryDate:      invoice.Date,
+		}
+		if err := utils.DB.Create(&entry).Error; err != nil {
+			fmt.Printf("[DEBUG] applyInvoiceSaleStock - Failed to create stock entry: %v\n", err)
+			continue
+		}
+		updateInventoryStock(userID, *item.ProductID, outletID, "sale", qty, 0, batchNo, nil, item.ExpDate)
+	}
+}
+
+// restoreInvoiceSaleStockQuantities puts sold quantities back without removing stock entries.
+func restoreInvoiceSaleStockQuantities(userID, invoiceID uuid.UUID) {
+	var entries []models.StockEntry
+	if err := utils.DB.Where(
+		"user_id = ? AND reference_id = ? AND reference_type = ?",
+		userID, invoiceID, "invoice",
+	).Find(&entries).Error; err != nil {
+		fmt.Printf("[DEBUG] restoreInvoiceSaleStockQuantities - Failed to load entries: %v\n", err)
+		return
+	}
+
+	for _, entry := range entries {
+		if entry.ProductID != nil && stockEntryIsApproved(entry.ApprovalStatus) {
+			// Sale entries store negative quantity; -entry.Quantity restores stock.
+			updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -entry.Quantity, entry.CostPrice, entry.BatchNo, entry.MfgDate, entry.ExpDate)
+		}
+	}
+}
+
+// reverseInvoiceSaleStock restores inventory and removes stock entries (used when editing an invoice).
+func reverseInvoiceSaleStock(userID, invoiceID uuid.UUID) {
+	restoreInvoiceSaleStockQuantities(userID, invoiceID)
+	if err := utils.DB.Where(
+		"user_id = ? AND reference_id = ? AND reference_type = ?",
+		userID, invoiceID, "invoice",
+	).Delete(&models.StockEntry{}).Error; err != nil {
+		fmt.Printf("[DEBUG] reverseInvoiceSaleStock - Failed to delete entries: %v\n", err)
 	}
 }
 
@@ -576,6 +1235,9 @@ func GetInventoryStocks(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	productID := c.Query("product_id")
 	outletID := c.Query("outlet_id")
+	batchNo := c.Query("batch_no")
+	availableOnly := c.Query("available_only") == "true" || c.Query("available_only") == "1"
+	expiringWithinDays := c.Query("expiring_within_days")
 
 	fmt.Printf("[DEBUG] GetInventoryStocks - UserID: %s, ProductID: %s, OutletID: %s\n", userID, productID, outletID)
 
@@ -588,6 +1250,21 @@ func GetInventoryStocks(c *gin.Context) {
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
 	}
+	if batchNo != "" {
+		query = query.Where("batch_no = ?", batchNo)
+	}
+	if availableOnly {
+		query = query.Where("available_qty > 0")
+	}
+	if expiringWithinDays != "" {
+		var days int
+		if _, err := fmt.Sscanf(expiringWithinDays, "%d", &days); err == nil && days >= 0 {
+			cutoff := time.Now().AddDate(0, 0, days)
+			query = query.Where("exp_date IS NOT NULL AND exp_date <= ?", cutoff)
+		}
+	}
+
+	query = query.Order("CASE WHEN exp_date IS NULL THEN 1 ELSE 0 END ASC, exp_date ASC, batch_no ASC")
 
 	if err := query.Find(&stocks).Error; err != nil {
 		fmt.Printf("[DEBUG] GetInventoryStocks - DB error: %v\n", err)
@@ -596,6 +1273,34 @@ func GetInventoryStocks(c *gin.Context) {
 	}
 
 	fmt.Printf("[DEBUG] GetInventoryStocks - Found %d stocks\n", len(stocks))
+
+	// Backfill initial quantity from opening stock entries for legacy rows.
+	type openingKey struct {
+		ProductID uuid.UUID
+		OutletID  uuid.UUID
+		BatchNo   string
+	}
+	openingQtyMap := make(map[openingKey]float64)
+	if len(stocks) > 0 {
+		var openingRows []struct {
+			ProductID uuid.UUID
+			OutletID  uuid.UUID
+			BatchNo   string
+			TotalQty  float64
+		}
+		utils.DB.Model(&models.StockEntry{}).
+			Select("product_id, outlet_id, batch_no, COALESCE(SUM(quantity), 0) as total_qty").
+			Where("user_id = ? AND entry_type = ? AND product_id IS NOT NULL", userID, "opening").
+			Group("product_id, outlet_id, batch_no").
+			Scan(&openingRows)
+		for _, row := range openingRows {
+			openingQtyMap[openingKey{
+				ProductID: row.ProductID,
+				OutletID:  row.OutletID,
+				BatchNo:   strings.TrimSpace(row.BatchNo),
+			}] = row.TotalQty
+		}
+	}
 
 	// Fetch outlet names
 	var outletIDs []uuid.UUID
@@ -616,8 +1321,17 @@ func GetInventoryStocks(c *gin.Context) {
 		models.InventoryStock
 		OutletName string `json:"outlet_name"`
 	}
-	var stocksWithOutlet []InventoryStockWithOutlet
+	stocksWithOutlet := make([]InventoryStockWithOutlet, 0, len(stocks))
 	for _, stock := range stocks {
+		if stock.InitialQuantity == 0 {
+			if qty, ok := openingQtyMap[openingKey{
+				ProductID: stock.ProductID,
+				OutletID:  stock.OutletID,
+				BatchNo:   strings.TrimSpace(stock.BatchNo),
+			}]; ok {
+				stock.InitialQuantity = qty
+			}
+		}
 		stocksWithOutlet = append(stocksWithOutlet, InventoryStockWithOutlet{
 			InventoryStock: stock,
 			OutletName:     warehouseMap[stock.OutletID],
@@ -639,6 +1353,8 @@ func GetProductStock(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch product stock"})
 		return
 	}
+
+	c.JSON(http.StatusOK, gin.H{"data": stocks})
 }
 
 func SearchByItemCode(c *gin.Context) {
@@ -656,8 +1372,45 @@ func SearchByItemCode(c *gin.Context) {
 		return
 	}
 
+	itemClause, itemArgs := utils.ItemCodeLookupClause("item_code", itemCode)
+	skuClause, skuArgs := utils.ItemCodeLookupClause("sku", itemCode)
+	pluClause, pluArgs := utils.ItemCodeLookupClause("plu", itemCode)
+
+	// Prefer live product.item_code so updated/generated barcodes resolve
+	// even when stock entries still hold an old or empty code.
+	var products []models.Product
+	productQuery := utils.DB.Where(
+		"user_id = ? AND ("+itemClause+" OR "+skuClause+" OR "+pluClause+")",
+		append([]interface{}{userID}, append(itemArgs, append(skuArgs, pluArgs...)...)...)...,
+	)
+	if err := productQuery.Find(&products).Error; err != nil {
+		fmt.Printf("[DEBUG] SearchByItemCode - Product lookup error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search by item code"})
+		return
+	}
+	if len(products) > 0 {
+		results := make([]map[string]interface{}, 0, len(products))
+		for _, product := range products {
+			results = append(results, map[string]interface{}{
+				"product_id":     product.ID,
+				"product_name":   product.Name,
+				"sku":            product.SKU,
+				"item_code":      product.ItemCode,
+				"plu":            product.PLU,
+				"unit":           product.Unit,
+				"purchase_price": product.PurchasePrice,
+				"sale_price":     product.SalePrice,
+				"tax_rate":       product.TaxRate,
+				"hsn_code":       product.HSNCode,
+			})
+		}
+		c.JSON(http.StatusOK, gin.H{"data": results})
+		return
+	}
+
 	var entries []models.StockEntry
-	query := utils.DB.Where("user_id = ? AND TRIM(item_code) = ?", userID, itemCode).Preload("Product")
+	stockClause, stockArgs := utils.ItemCodeLookupClause("item_code", itemCode)
+	query := utils.DB.Where("user_id = ? AND "+stockClause, append([]interface{}{userID}, stockArgs...)...).Preload("Product")
 
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
@@ -672,34 +1425,7 @@ func SearchByItemCode(c *gin.Context) {
 	fmt.Printf("[DEBUG] SearchByItemCode - Found %d entries\n", len(entries))
 
 	if len(entries) == 0 {
-		var products []models.Product
-		if err := utils.DB.Where(
-			"user_id = ? AND (TRIM(item_code) = ? OR TRIM(sku) = ?)",
-			userID, itemCode, itemCode,
-		).Find(&products).Error; err != nil {
-			fmt.Printf("[DEBUG] SearchByItemCode - Product fallback error: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to search by item code"})
-			return
-		}
-		if len(products) == 0 {
-			c.JSON(http.StatusNotFound, gin.H{"error": "No products found with this item code"})
-			return
-		}
-		results := make([]map[string]interface{}, 0, len(products))
-		for _, product := range products {
-			results = append(results, map[string]interface{}{
-				"product_id":     product.ID,
-				"product_name":   product.Name,
-				"sku":            product.SKU,
-				"item_code":      product.ItemCode,
-				"unit":           product.Unit,
-				"purchase_price": product.PurchasePrice,
-				"sale_price":     product.SalePrice,
-				"tax_rate":       product.TaxRate,
-				"hsn_code":       product.HSNCode,
-			})
-		}
-		c.JSON(http.StatusOK, gin.H{"data": results})
+		c.JSON(http.StatusOK, gin.H{"data": []map[string]interface{}{}})
 		return
 	}
 
@@ -707,19 +1433,19 @@ func SearchByItemCode(c *gin.Context) {
 	results := make([]map[string]interface{}, 0)
 	for _, entry := range entries {
 		result := map[string]interface{}{
-			"product_id":   entry.ProductID,
-			"product_name": entry.Product.Name,
-			"sku":          entry.Product.SKU,
-			"item_code":    entry.ItemCode,
-			"outlet_id":    entry.OutletID,
-			"quantity":     entry.Quantity,
-			"cost_price":   entry.CostPrice,
-			"batch_no":     entry.BatchNo,
-			"unit":         entry.Product.Unit,
+			"product_id":     entry.ProductID,
+			"product_name":   entry.Product.Name,
+			"sku":            entry.Product.SKU,
+			"item_code":      entry.ItemCode,
+			"outlet_id":      entry.OutletID,
+			"quantity":       entry.Quantity,
+			"cost_price":     entry.CostPrice,
+			"batch_no":       entry.BatchNo,
+			"unit":           entry.Product.Unit,
 			"purchase_price": entry.Product.PurchasePrice,
-			"sale_price":   entry.Product.SalePrice,
-			"tax_rate":     entry.Product.TaxRate,
-			"hsn_code":     entry.Product.HSNCode,
+			"sale_price":     entry.Product.SalePrice,
+			"tax_rate":       entry.Product.TaxRate,
+			"hsn_code":       entry.Product.HSNCode,
 		}
 		results = append(results, result)
 	}
@@ -734,13 +1460,20 @@ func AdjustStock(c *gin.Context) {
 		ItemName  string     `json:"item_name" binding:"required"`
 		ProductID *uuid.UUID `json:"product_id"`
 		OutletID  uuid.UUID  `json:"outlet_id" binding:"required"`
-		Quantity  float64   `json:"quantity" binding:"required"`
+		Quantity  float64    `json:"quantity" binding:"required"`
+		BatchNo   string     `json:"batch_no"`
 		Reason    string     `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fmt.Printf("[DEBUG] AdjustStock - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reason is required for stock adjustment"})
 		return
 	}
 
@@ -756,6 +1489,8 @@ func AdjustStock(c *gin.Context) {
 		}
 	}
 
+	batchNo := strings.TrimSpace(input.BatchNo)
+
 	// Create stock entry
 	entry := models.StockEntry{
 		ID:         uuid.New(),
@@ -766,6 +1501,7 @@ func AdjustStock(c *gin.Context) {
 		EntryType:  "adjustment",
 		Quantity:   input.Quantity,
 		BalanceQty: 0,
+		BatchNo:    batchNo,
 		Notes:      input.Reason,
 		EntryDate:  time.Now(),
 	}
@@ -780,7 +1516,7 @@ func AdjustStock(c *gin.Context) {
 
 	// Update inventory stock if product is linked
 	if input.ProductID != nil {
-		updateInventoryStock(userID, *input.ProductID, input.OutletID, "adjustment", input.Quantity, 0)
+		updateInventoryStock(userID, *input.ProductID, input.OutletID, "adjustment", input.Quantity, 0, batchNo, nil, nil)
 	}
 
 	c.JSON(http.StatusCreated, entry)
@@ -792,13 +1528,20 @@ func ReserveStock(c *gin.Context) {
 	var input struct {
 		ProductID uuid.UUID `json:"product_id" binding:"required"`
 		OutletID  uuid.UUID `json:"outlet_id" binding:"required"`
-		Quantity  float64  `json:"quantity" binding:"required"`
+		Quantity  float64   `json:"quantity" binding:"required"`
+		BatchNo   string    `json:"batch_no"`
 		Reason    string    `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fmt.Printf("[DEBUG] ReserveStock - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reason is required for stock reservation"})
 		return
 	}
 
@@ -812,9 +1555,34 @@ func ReserveStock(c *gin.Context) {
 		return
 	}
 
-	// Get inventory stock
+	batchNo := strings.TrimSpace(input.BatchNo)
 	var stock models.InventoryStock
-	if err := utils.DB.Where("user_id = ? AND product_id = ? AND outlet_id = ?", userID, input.ProductID, input.OutletID).First(&stock).Error; err != nil {
+	var err error
+	if batchNo != "" {
+		err = utils.DB.Where(
+			"user_id = ? AND product_id = ? AND outlet_id = ? AND batch_no = ?",
+			userID, input.ProductID, input.OutletID, batchNo,
+		).First(&stock).Error
+	} else if product.EnableBatching {
+		var ok bool
+		stock, ok = pickFEFOBatch(userID, input.ProductID, input.OutletID, input.Quantity)
+		if !ok {
+			err = fmt.Errorf("no batch stock")
+		}
+	} else {
+		err = utils.DB.Where(
+			"user_id = ? AND product_id = ? AND outlet_id = ? AND batch_no = ?",
+			userID, input.ProductID, input.OutletID, "",
+		).First(&stock).Error
+		if err != nil {
+			// Fallback: any stock row for product+outlet (legacy unbatched rows)
+			err = utils.DB.Where(
+				"user_id = ? AND product_id = ? AND outlet_id = ?",
+				userID, input.ProductID, input.OutletID,
+			).Order("available_qty DESC").First(&stock).Error
+		}
+	}
+	if err != nil {
 		fmt.Printf("[DEBUG] ReserveStock - Stock not found: %v\n", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found for this product and outlet"})
 		return
@@ -827,8 +1595,11 @@ func ReserveStock(c *gin.Context) {
 		return
 	}
 
-	// Update reserved quantity
-	if err := utils.DB.Model(&stock).Update("reserved_qty", stock.ReservedQty+input.Quantity).Error; err != nil {
+	// Update reserved quantity and recompute available
+	stock.ReservedQty += input.Quantity
+	stock.AvailableQty = stock.Quantity - stock.ReservedQty
+	stock.LastUpdated = time.Now()
+	if err := utils.DB.Save(&stock).Error; err != nil {
 		fmt.Printf("[DEBUG] ReserveStock - DB update error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reserve stock"})
 		return
@@ -854,7 +1625,7 @@ func ReserveStock(c *gin.Context) {
 	}
 
 	fmt.Printf("[DEBUG] ReserveStock - Stock reserved successfully\n")
-	c.JSON(http.StatusOK, gin.H{"message": "Stock reserved successfully", "reserved_qty": stock.ReservedQty + input.Quantity})
+	c.JSON(http.StatusOK, gin.H{"message": "Stock reserved successfully", "reserved_qty": stock.ReservedQty, "available_qty": stock.AvailableQty})
 }
 
 func ReleaseStock(c *gin.Context) {
@@ -863,13 +1634,20 @@ func ReleaseStock(c *gin.Context) {
 	var input struct {
 		ProductID uuid.UUID `json:"product_id" binding:"required"`
 		OutletID  uuid.UUID `json:"outlet_id" binding:"required"`
-		Quantity  float64  `json:"quantity" binding:"required"`
+		Quantity  float64   `json:"quantity" binding:"required"`
+		BatchNo   string    `json:"batch_no"`
 		Reason    string    `json:"reason"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		fmt.Printf("[DEBUG] ReleaseStock - JSON bind error: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	input.Reason = strings.TrimSpace(input.Reason)
+	if input.Reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Reason is required for stock release"})
 		return
 	}
 
@@ -883,9 +1661,21 @@ func ReleaseStock(c *gin.Context) {
 		return
 	}
 
-	// Get inventory stock
+	batchNo := strings.TrimSpace(input.BatchNo)
 	var stock models.InventoryStock
-	if err := utils.DB.Where("user_id = ? AND product_id = ? AND outlet_id = ?", userID, input.ProductID, input.OutletID).First(&stock).Error; err != nil {
+	var err error
+	if batchNo != "" {
+		err = utils.DB.Where(
+			"user_id = ? AND product_id = ? AND outlet_id = ? AND batch_no = ?",
+			userID, input.ProductID, input.OutletID, batchNo,
+		).First(&stock).Error
+	} else {
+		err = utils.DB.Where(
+			"user_id = ? AND product_id = ? AND outlet_id = ? AND reserved_qty > 0",
+			userID, input.ProductID, input.OutletID,
+		).Order("reserved_qty DESC").First(&stock).Error
+	}
+	if err != nil {
 		fmt.Printf("[DEBUG] ReleaseStock - Stock not found: %v\n", err)
 		c.JSON(http.StatusNotFound, gin.H{"error": "Stock not found for this product and outlet"})
 		return
@@ -898,8 +1688,14 @@ func ReleaseStock(c *gin.Context) {
 		return
 	}
 
-	// Update reserved quantity
-	if err := utils.DB.Model(&stock).Update("reserved_qty", stock.ReservedQty-input.Quantity).Error; err != nil {
+	// Update reserved quantity and recompute available
+	stock.ReservedQty -= input.Quantity
+	if stock.ReservedQty < 0 {
+		stock.ReservedQty = 0
+	}
+	stock.AvailableQty = stock.Quantity - stock.ReservedQty
+	stock.LastUpdated = time.Now()
+	if err := utils.DB.Save(&stock).Error; err != nil {
 		fmt.Printf("[DEBUG] ReleaseStock - DB update error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to release stock"})
 		return
@@ -916,6 +1712,7 @@ func ReleaseStock(c *gin.Context) {
 		Quantity:   input.Quantity,
 		BalanceQty: 0,
 		CostPrice:  stock.AverageCost,
+		BatchNo:    stock.BatchNo,
 		Notes:      input.Reason,
 		EntryDate:  time.Now(),
 	}
@@ -925,7 +1722,29 @@ func ReleaseStock(c *gin.Context) {
 	}
 
 	fmt.Printf("[DEBUG] ReleaseStock - Stock released successfully\n")
-	c.JSON(http.StatusOK, gin.H{"message": "Stock released successfully", "reserved_qty": stock.ReservedQty - input.Quantity})
+	c.JSON(http.StatusOK, gin.H{"message": "Stock released successfully", "reserved_qty": stock.ReservedQty, "available_qty": stock.AvailableQty})
+}
+
+// countConsolidatedLowStockProducts counts distinct products where consolidated stock
+// (summed across batches per outlet, matching stock balance) is at or below min_stock.
+func countConsolidatedLowStockProducts(userID uuid.UUID, excludeDeleted bool) int64 {
+	var count int64
+	deletedFilter := ""
+	if excludeDeleted {
+		deletedFilter = " AND p.deleted_at IS NULL"
+	}
+	query := `
+		SELECT COUNT(DISTINCT product_id) FROM (
+			SELECT p.id AS product_id
+			FROM products p
+			INNER JOIN inventory_stocks s ON p.id = s.product_id
+			WHERE p.user_id = ? AND p.low_stock_alert = true` + deletedFilter + `
+			GROUP BY p.id, p.min_stock, s.outlet_id
+			HAVING SUM(s.quantity) <= p.min_stock
+		) consolidated
+	`
+	utils.DB.Raw(query, userID).Scan(&count)
+	return count
 }
 
 func GetLowStockAlerts(c *gin.Context) {
@@ -943,13 +1762,17 @@ func GetLowStockAlerts(c *gin.Context) {
 		OutletName   string    `json:"outlet_name"`
 	}
 
-	var results []LowStockItem
+	results := make([]LowStockItem, 0)
+	// Consolidate batches per product + outlet (same as GetStockBalance).
 	query := `
-		SELECT p.id as product_id, p.name as product_name, p.sku, p.min_stock, s.outlet_id, s.quantity as current_stock, w.name as outlet_name
+		SELECT p.id as product_id, p.name as product_name, p.sku, p.min_stock, s.outlet_id,
+			SUM(s.quantity) as current_stock, w.name as outlet_name
 		FROM products p
 		INNER JOIN inventory_stocks s ON p.id = s.product_id
 		LEFT JOIN warehouses w ON s.outlet_id = w.id
-		WHERE p.user_id = ? AND p.low_stock_alert = true AND s.quantity <= p.min_stock
+		WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.low_stock_alert = true
+		GROUP BY p.id, p.name, p.sku, p.min_stock, s.outlet_id, w.name
+		HAVING SUM(s.quantity) <= p.min_stock
 	`
 
 	if err := utils.DB.Raw(query, userID).Scan(&results).Error; err != nil {
@@ -969,14 +1792,15 @@ func GetInventoryItems(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetInventoryItems - UserID: %s\n", userID)
 
 	type InventoryItem struct {
-		ID       uuid.UUID `json:"id"`
-		Name     string    `json:"name"`
-		SKU      string    `json:"sku"`
-		Type     string    `json:"type"` // "product" or "standalone"
-		IsActive bool      `json:"is_active"`
+		ID              uuid.UUID `json:"id"`
+		Name            string    `json:"name"`
+		SKU             string    `json:"sku"`
+		Type            string    `json:"type"` // "product" or "standalone"
+		IsActive        bool      `json:"is_active"`
+		EnableBatching  bool      `json:"enable_batching"`
 	}
 
-	var items []InventoryItem
+	items := make([]InventoryItem, 0)
 
 	// Get all active products
 	var products []models.Product
@@ -985,11 +1809,12 @@ func GetInventoryItems(c *gin.Context) {
 	} else {
 		for _, p := range products {
 			items = append(items, InventoryItem{
-				ID:       p.ID,
-				Name:     p.Name,
-				SKU:      p.SKU,
-				Type:     "product",
-				IsActive: p.IsActive,
+				ID:             p.ID,
+				Name:           p.Name,
+				SKU:            p.SKU,
+				Type:           "product",
+				IsActive:       p.IsActive,
+				EnableBatching: p.EnableBatching,
 			})
 		}
 	}
@@ -1089,8 +1914,12 @@ func processBulkStockRow(
 	switch mode {
 	case "set":
 		currentQty := 0.0
+		batchKey := strings.TrimSpace(batchNo)
 		var stock models.InventoryStock
-		if err := utils.DB.Where("user_id = ? AND product_id = ? AND outlet_id = ?", userID, product.ID, warehouse.ID).First(&stock).Error; err == nil {
+		if err := utils.DB.Where(
+			"user_id = ? AND product_id = ? AND outlet_id = ? AND batch_no = ?",
+			userID, product.ID, warehouse.ID, batchKey,
+		).First(&stock).Error; err == nil {
 			currentQty = stock.Quantity
 		}
 		adjQty = quantity - currentQty
@@ -1125,7 +1954,7 @@ func processBulkStockRow(
 		return err
 	}
 
-	updateInventoryStock(userID, product.ID, warehouse.ID, "adjustment", adjQty, costPrice)
+	updateInventoryStock(userID, product.ID, warehouse.ID, "adjustment", adjQty, costPrice, batchNo, nil, nil)
 	return nil
 }
 

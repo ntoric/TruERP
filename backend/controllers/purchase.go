@@ -1,8 +1,6 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
@@ -12,10 +10,14 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-pdf/fpdf"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func GetPurchaseOrders(c *gin.Context) {
@@ -62,11 +64,11 @@ func CreatePurchaseOrder(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var input struct {
-		PartyID      uuid.UUID `json:"party_id" binding:"required"`
-		OrderDate    time.Time `json:"order_date" binding:"required"`
+		PartyID      uuid.UUID  `json:"party_id" binding:"required"`
+		OrderDate    time.Time  `json:"order_date" binding:"required"`
 		ExpectedDate *time.Time `json:"expected_date"`
-		Notes        string    `json:"notes"`
-		Terms        string    `json:"terms"`
+		Notes        string     `json:"notes"`
+		Terms        string     `json:"terms"`
 		Items        []struct {
 			Description string  `json:"description" binding:"required"`
 			Quantity    float64 `json:"quantity" binding:"required,gt=0"`
@@ -254,9 +256,9 @@ func CreatePurchaseReceipt(c *gin.Context) {
 			Quantity    float64    `json:"quantity" binding:"required,gt=0"`
 			UnitPrice   float64    `json:"unit_price" binding:"required"`
 			TaxRate     float64    `json:"tax_rate"`
-			BatchNo     string     `json:"batch_no"`
-			MfgDate     *time.Time `json:"mfg_date"`
-			ExpDate     *time.Time `json:"exp_date"`
+			BatchNo     string               `json:"batch_no"`
+			MfgDate     *models.FlexibleTime `json:"mfg_date"`
+			ExpDate     *models.FlexibleTime `json:"exp_date"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
@@ -294,8 +296,8 @@ func CreatePurchaseReceipt(c *gin.Context) {
 			TaxAmount:   taxAmount,
 			Total:       total,
 			BatchNo:     item.BatchNo,
-			MfgDate:     item.MfgDate,
-			ExpDate:     item.ExpDate,
+			MfgDate:     item.MfgDate.Ptr(),
+			ExpDate:     item.ExpDate.Ptr(),
 		})
 
 		subTotal += item.UnitPrice * item.Quantity
@@ -365,7 +367,7 @@ func GetPurchaseBills(c *gin.Context) {
 		query = query.Where("status = ?", status)
 	}
 
-	if err := query.Order("bill_date DESC").Find(&bills).Error; err != nil {
+	if err := query.Order("updated_at DESC").Find(&bills).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch bills"})
 		return
 	}
@@ -378,38 +380,75 @@ func CreatePurchaseBill(c *gin.Context) {
 
 	var input struct {
 		PurchaseReceiptID *uuid.UUID `json:"purchase_receipt_id"`
-		PartyID            uuid.UUID  `json:"party_id" binding:"required"`
-		BillNumber         string     `json:"bill_number" binding:"required"`
-		BillDate           time.Time  `json:"bill_date" binding:"required"`
-		DueDate            *time.Time `json:"due_date"`
-		TotalAmount        float64    `json:"total_amount" binding:"required"`
-		PaidAmount         float64    `json:"paid_amount"`
-		BalanceDue         float64    `json:"balance_due"`
-		PaymentMode        string     `json:"payment_mode"`
-		BankAccountID      *uuid.UUID `json:"bank_account_id"`
-		Status             string     `json:"status"`
-		Notes              string     `json:"notes"`
-		Items              []struct {
-			ProductID   *uuid.UUID          `json:"product_id"`
-			ItemCode    string              `json:"item_code"`
-			Description string              `json:"description" binding:"required"`
-			Quantity    models.FlexibleFloat `json:"quantity" binding:"required"`
-			Unit        string              `json:"unit"`
-			UnitPrice   models.FlexibleFloat `json:"unit_price"`
-			Discount    models.FlexibleFloat `json:"discount"`
-			TaxRate     models.FlexibleFloat `json:"tax_rate"`
-			MRP         models.FlexibleFloat `json:"mrp"`
-			SalePrice   models.FlexibleFloat `json:"sale_price"`
-			HSNCode     string              `json:"hsn_code"`
-			BatchNo     string              `json:"batch_no"`
-			MfgDate     *time.Time          `json:"mfg_date"`
-			ExpDate     *time.Time          `json:"exp_date"`
+		PartyID           uuid.UUID  `json:"party_id" binding:"required"`
+		BillNumber        string     `json:"bill_number" binding:"required"`
+		BillDate          time.Time  `json:"bill_date" binding:"required"`
+		DueDate           *time.Time `json:"due_date"`
+		WarehouseID       *uuid.UUID `json:"warehouse_id"`
+		TotalAmount       float64    `json:"total_amount"` // 0 allowed (esp. drafts / zero-priced lines)
+		PaidAmount        float64    `json:"paid_amount"`
+		BalanceDue        float64    `json:"balance_due"`
+		PaymentMode       string     `json:"payment_mode"`
+		BankAccountID     *uuid.UUID `json:"bank_account_id"`
+		Status            string     `json:"status"`
+		Notes             string     `json:"notes"`
+		TaxExempt         bool       `json:"tax_exempt"`
+		ClientBillID      *uuid.UUID `json:"client_bill_id"`
+		Items             []struct {
+			ProductID     *uuid.UUID           `json:"product_id"`
+			ItemCode      string               `json:"item_code"`
+			Description   string               `json:"description" binding:"required"`
+			Quantity      models.FlexibleFloat `json:"quantity" binding:"required"`
+			Unit          string               `json:"unit"`
+			UnitPrice     models.FlexibleFloat `json:"unit_price"`
+			Discount      models.FlexibleFloat `json:"discount"`
+			TaxRate       models.FlexibleFloat `json:"tax_rate"`
+			MRP           models.FlexibleFloat `json:"mrp"`
+			SalePrice     models.FlexibleFloat `json:"sale_price"`
+			HSNCode       string               `json:"hsn_code"`
+			BatchNo       string               `json:"batch_no"`
+			MfgDate       *models.FlexibleTime `json:"mfg_date"`
+			ExpDate       *models.FlexibleTime `json:"exp_date"`
+			IsNewItem     bool                 `json:"is_new_item"`
+			Category      string               `json:"category"`
+			ClientItemRef *string              `json:"client_item_ref"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	// Idempotency: a retry with the same client_bill_id (or Idempotency-Key
+	// header) returns the already-saved bill instead of creating a duplicate.
+	// This guards against network drops after the bill was successfully saved
+	// but before the client received the response.
+	if input.ClientBillID == nil || *input.ClientBillID == uuid.Nil {
+		if headerID := parseOptionalUUID(c.GetHeader("Idempotency-Key")); headerID != uuid.Nil {
+			input.ClientBillID = &headerID
+		}
+	}
+	if input.ClientBillID != nil && *input.ClientBillID != uuid.Nil {
+		if existing, ok := findPurchaseBillByClientBillID(userID, *input.ClientBillID); ok {
+			c.JSON(http.StatusOK, existing)
+			return
+		}
+	}
+
+	status := input.Status
+	if status == "" {
+		status = "unpaid"
+	}
+
+	// Draft bills may omit batch numbers so line items can be autosaved while editing.
+	if status != "draft" {
+		for _, item := range input.Items {
+			if err := validateBatchedProductRequiresBatch(userID, item.ProductID, item.BatchNo, item.Description); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
 	}
 
 	if err := validateUserBankAccount(userID, input.BankAccountID); err != nil {
@@ -423,6 +462,20 @@ func CreatePurchaseBill(c *gin.Context) {
 		return
 	}
 
+	warehouseID := input.WarehouseID
+	if warehouseID == nil || *warehouseID == uuid.Nil {
+		defaultWH := resolveDefaultWarehouseID(userID)
+		if defaultWH != uuid.Nil {
+			warehouseID = &defaultWH
+		}
+	} else {
+		var warehouse models.Warehouse
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *warehouseID).First(&warehouse).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid warehouse"})
+			return
+		}
+	}
+
 	bill := models.PurchaseBill{
 		ID:                uuid.New(),
 		UserID:            userID,
@@ -432,18 +485,23 @@ func CreatePurchaseBill(c *gin.Context) {
 		BillNumber:        input.BillNumber,
 		BillDate:          input.BillDate,
 		DueDate:           input.DueDate,
-		Status:            func() string { if input.Status != "" { return input.Status }; return "unpaid" }(),
-		TotalAmount:       input.TotalAmount,
-		PaidAmount:        input.PaidAmount,
-		BalanceDue:        func() float64 {
-			if input.BalanceDue > 0 || input.PaidAmount > 0 {
-				return input.BalanceDue
+		WarehouseID:       warehouseID,
+		StockStatus:       "none",
+		Status:            status,
+		TaxExempt:         input.TaxExempt,
+		ClientBillID:      input.ClientBillID,
+		TotalAmount: input.TotalAmount,
+		PaidAmount:  input.PaidAmount,
+		BalanceDue: func() float64 {
+			due := input.TotalAmount - input.PaidAmount
+			if due < 0 {
+				return 0
 			}
-			return input.TotalAmount - input.PaidAmount
+			return due
 		}(),
-		PaymentMode:       input.PaymentMode,
-		BankAccountID:     resolvedBankAccount,
-		Notes:             input.Notes,
+		PaymentMode:   input.PaymentMode,
+		BankAccountID: resolvedBankAccount,
+		Notes:         input.Notes,
 	}
 
 	var subTotal, taxTotal float64
@@ -452,6 +510,9 @@ func CreatePurchaseBill(c *gin.Context) {
 		unitPrice := item.UnitPrice.Float64()
 		discount := item.Discount.Float64()
 		taxRate := item.TaxRate.Float64()
+		if input.TaxExempt {
+			taxRate = 0
+		}
 		if qty <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Item quantity must be greater than 0"})
 			return
@@ -464,24 +525,27 @@ func CreatePurchaseBill(c *gin.Context) {
 		total := taxable + taxAmount
 
 		bill.Items = append(bill.Items, models.PurchaseBillItem{
-			ID:          uuid.New(),
-			BillID:      bill.ID,
-			ProductID:   item.ProductID,
-			ItemCode:    item.ItemCode,
-			Description: item.Description,
-			Quantity:    qty,
-			Unit:        item.Unit,
-			UnitPrice:   unitPrice,
-			Discount:    discount,
-			TaxRate:     taxRate,
-			TaxAmount:   taxAmount,
-			Total:       total,
-			MRP:         item.MRP.Float64(),
-			SalePrice:   item.SalePrice.Float64(),
-			HSNCode:     item.HSNCode,
-			BatchNo:     item.BatchNo,
-			MfgDate:     item.MfgDate,
-			ExpDate:     item.ExpDate,
+			ID:            uuid.New(),
+			BillID:        bill.ID,
+			ProductID:     item.ProductID,
+			ItemCode:      item.ItemCode,
+			Description:   item.Description,
+			Quantity:      qty,
+			Unit:          item.Unit,
+			UnitPrice:     unitPrice,
+			Discount:      discount,
+			TaxRate:       taxRate,
+			TaxAmount:     taxAmount,
+			Total:         total,
+			MRP:           item.MRP.Float64(),
+			SalePrice:     item.SalePrice.Float64(),
+			HSNCode:       item.HSNCode,
+			BatchNo:       item.BatchNo,
+			MfgDate:       item.MfgDate.Ptr(),
+			ExpDate:       item.ExpDate.Ptr(),
+			IsNewItem:     item.IsNewItem,
+			Category:      item.Category,
+			ClientItemRef: item.ClientItemRef,
 		})
 
 		subTotal += itemTotal
@@ -491,25 +555,57 @@ func CreatePurchaseBill(c *gin.Context) {
 	bill.SubTotal = subTotal
 	bill.TaxTotal = taxTotal
 
-	if err := utils.DB.Create(&bill).Error; err != nil {
+	// Wrap bill + accounting + payment + stock in a single transaction so a
+	// failure in any step rolls back the whole save (no orphan products or
+	// half-saved bills when the network drops mid-save).
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&bill).Error; err != nil {
+			return err
+		}
+
+		if bill.Status != "draft" {
+			if err := postPurchaseBillAccounting(tx, userID, &bill); err != nil {
+				return err
+			}
+
+			// Full invoice amount is purchase expense (Dr Purchases / Cr AP).
+			// Paid amount auto-creates Payment Out and reduces AP; unpaid remains Accounts Payable.
+			if bill.PaidAmount > 0 {
+				notes := fmt.Sprintf("Auto-created from purchase bill %s", bill.BillNumber)
+				if err := createLinkedPurchasePaymentOut(tx, userID, &bill, bill.PaidAmount, bill.BillDate, notes); err != nil {
+					return err
+				}
+			}
+		}
+
+		if err := createPendingPurchaseStockEntriesTx(tx, userID, &bill); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create bill"})
 		return
 	}
 
-	if err := postPurchaseBillAccounting(utils.DB, userID, &bill); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Bill saved but failed to post to accounting"})
-		return
-	}
-
-	if bill.PaidAmount > 0 {
-		desc := fmt.Sprintf("Purchase bill %s", bill.BillNumber)
-		if err := recordPurchasePaymentOut(utils.DB, userID, bill.BankAccountID, bill.PaidAmount, bill.BillDate, bill.BillNumber, desc); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Bill saved but failed to update cash account"})
-			return
-		}
-	}
-
 	c.JSON(http.StatusCreated, bill)
+}
+
+// findPurchaseBillByClientBillID returns an already-saved bill matching the
+// frontend-supplied client_bill_id, enabling idempotent retries of bill
+// creation. Mirrors findInvoiceByClientSaleID.
+func findPurchaseBillByClientBillID(userID uuid.UUID, clientBillID uuid.UUID) (*models.PurchaseBill, bool) {
+	if clientBillID == uuid.Nil {
+		return nil, false
+	}
+	var bill models.PurchaseBill
+	err := utils.DB.Where("user_id = ? AND client_bill_id = ?", userID, clientBillID).
+		Preload("Party").
+		Preload("Items").
+		First(&bill).Error
+	if err != nil {
+		return nil, false
+	}
+	return &bill, true
 }
 
 func GetPurchaseBill(c *gin.Context) {
@@ -536,37 +632,88 @@ func UpdatePurchaseBill(c *gin.Context) {
 	}
 
 	var input struct {
-		PartyID         uuid.UUID `json:"party_id"`
-		BillNumber      string    `json:"bill_number"`
-		BillDate        time.Time `json:"bill_date"`
-		DueDate         *time.Time `json:"due_date"`
-		TotalAmount     float64   `json:"total_amount"`
-		PaidAmount      float64    `json:"paid_amount"`
-		BalanceDue      float64    `json:"balance_due"`
-		PaymentMode     string     `json:"payment_mode"`
-		BankAccountID   *uuid.UUID `json:"bank_account_id"`
-		Status          string    `json:"status"`
-		Notes           string    `json:"notes"`
-		Items           []struct {
-			ProductID   *uuid.UUID           `json:"product_id"`
-			ItemCode    string               `json:"item_code"`
-			Description string               `json:"description"`
-			Quantity    models.FlexibleFloat `json:"quantity"`
-			Unit        string               `json:"unit"`
-			UnitPrice   models.FlexibleFloat `json:"unit_price"`
-			Discount    models.FlexibleFloat `json:"discount"`
-			TaxRate     models.FlexibleFloat `json:"tax_rate"`
-			MRP         models.FlexibleFloat `json:"mrp"`
-			SalePrice   models.FlexibleFloat `json:"sale_price"`
-			HSNCode     string               `json:"hsn_code"`
-			BatchNo     string               `json:"batch_no"`
-			MfgDate     *time.Time           `json:"mfg_date"`
-			ExpDate     *time.Time           `json:"exp_date"`
+		PartyID       uuid.UUID  `json:"party_id"`
+		BillNumber    string     `json:"bill_number"`
+		BillDate      time.Time  `json:"bill_date"`
+		DueDate       *time.Time `json:"due_date"`
+		WarehouseID   *uuid.UUID `json:"warehouse_id"`
+		TotalAmount   float64    `json:"total_amount"`
+		PaidAmount    float64    `json:"paid_amount"`
+		BalanceDue    float64    `json:"balance_due"`
+		PaymentMode   string     `json:"payment_mode"`
+		BankAccountID *uuid.UUID `json:"bank_account_id"`
+		Status        string     `json:"status"`
+		Notes         string     `json:"notes"`
+		TaxExempt     bool       `json:"tax_exempt"`
+		Items         []struct {
+			ProductID     *uuid.UUID           `json:"product_id"`
+			ItemCode      string               `json:"item_code"`
+			Description   string               `json:"description"`
+			Quantity      models.FlexibleFloat `json:"quantity"`
+			Unit          string               `json:"unit"`
+			UnitPrice     models.FlexibleFloat `json:"unit_price"`
+			Discount      models.FlexibleFloat `json:"discount"`
+			TaxRate       models.FlexibleFloat `json:"tax_rate"`
+			MRP           models.FlexibleFloat `json:"mrp"`
+			SalePrice     models.FlexibleFloat `json:"sale_price"`
+			HSNCode       string               `json:"hsn_code"`
+			BatchNo       string               `json:"batch_no"`
+			MfgDate       *models.FlexibleTime `json:"mfg_date"`
+			ExpDate       *models.FlexibleTime `json:"exp_date"`
+			IsNewItem     bool                 `json:"is_new_item"`
+			Category      string               `json:"category"`
+			ClientItemRef *string              `json:"client_item_ref"`
 		} `json:"items"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Draft bills may omit batch numbers so line items can be autosaved while editing.
+	if input.Status != "draft" {
+		for _, item := range input.Items {
+			if err := validateBatchedProductRequiresBatch(userID, item.ProductID, item.BatchNo, item.Description); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+		}
+	}
+
+	// Status-only "mark as paid" from the list page (no items / totals in body).
+	if input.Status == "paid" && len(input.Items) == 0 && input.TotalAmount == 0 && bill.TotalAmount > 0 {
+		previousBillNumber := bill.BillNumber
+		previousPartyID := bill.PartyID
+		bill.Status = "paid"
+		bill.PaidAmount = bill.TotalAmount
+		bill.BalanceDue = 0
+		if err := utils.DB.Model(&bill).Updates(map[string]interface{}{
+			"status":      "paid",
+			"paid_amount": bill.TotalAmount,
+			"balance_due": 0,
+		}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update bill"})
+			return
+		}
+		// Reverse existing linked payment outs, then create a single fresh one.
+		reversalBill := models.PurchaseBill{
+			ID:         bill.ID,
+			PartyID:    previousPartyID,
+			BillNumber: previousBillNumber,
+		}
+		if err := reverseLinkedPurchasePaymentOuts(utils.DB, userID, &reversalBill); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Bill updated but failed to reverse existing payment outs"})
+			return
+		}
+		if bill.PaidAmount > 0 {
+			notes := fmt.Sprintf("Auto-created from purchase bill %s (mark paid)", bill.BillNumber)
+			if err := createLinkedPurchasePaymentOut(utils.DB, userID, &bill, bill.PaidAmount, bill.BillDate, notes); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Bill updated but failed to create payment out"})
+				return
+			}
+		}
+		c.JSON(http.StatusOK, bill)
 		return
 	}
 
@@ -581,7 +728,26 @@ func UpdatePurchaseBill(c *gin.Context) {
 		return
 	}
 
-	previousPaidAmount := bill.PaidAmount
+	previousBillNumber := bill.BillNumber
+	previousPartyID := bill.PartyID
+
+	warehouseID := input.WarehouseID
+	if warehouseID == nil || *warehouseID == uuid.Nil {
+		if bill.WarehouseID != nil {
+			warehouseID = bill.WarehouseID
+		} else {
+			defaultWH := resolveDefaultWarehouseID(userID)
+			if defaultWH != uuid.Nil {
+				warehouseID = &defaultWH
+			}
+		}
+	} else {
+		var warehouse models.Warehouse
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *warehouseID).First(&warehouse).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid warehouse"})
+			return
+		}
+	}
 
 	// Update bill fields
 	bill.PartyID = input.PartyID
@@ -589,77 +755,185 @@ func UpdatePurchaseBill(c *gin.Context) {
 	bill.BillNumber = input.BillNumber
 	bill.BillDate = input.BillDate
 	bill.DueDate = input.DueDate
+	bill.WarehouseID = warehouseID
 	bill.TotalAmount = input.TotalAmount
 	bill.PaidAmount = input.PaidAmount
-	bill.BalanceDue = input.BalanceDue
+	if due := input.TotalAmount - input.PaidAmount; due > 0 {
+		bill.BalanceDue = due
+	} else {
+		bill.BalanceDue = 0
+	}
 	bill.PaymentMode = input.PaymentMode
 	bill.BankAccountID = resolvedBankAccount
 	bill.Status = input.Status
 	bill.Notes = input.Notes
+	bill.TaxExempt = input.TaxExempt
 
-	// Delete old items and recreate
-	utils.DB.Where("bill_id = ?", bill.ID).Delete(&models.PurchaseBillItem{})
-
-	var subTotal, taxTotal float64
-	bill.Items = nil
+	// Validate quantities before opening the transaction so a bad payload
+	// cannot hold a row lock or leave the bill with no lines.
 	for _, item := range input.Items {
-		qty := item.Quantity.Float64()
-		unitPrice := item.UnitPrice.Float64()
-		discount := item.Discount.Float64()
-		taxRate := item.TaxRate.Float64()
-		if qty <= 0 {
+		if item.Quantity.Float64() <= 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Item quantity must be greater than 0"})
 			return
 		}
-
-		itemTotal := unitPrice * qty
-		itemDiscount := itemTotal * (discount / 100)
-		taxable := itemTotal - itemDiscount
-		taxAmount := taxable * (taxRate / 100)
-		total := taxable + taxAmount
-
-		bill.Items = append(bill.Items, models.PurchaseBillItem{
-			ID:          uuid.New(),
-			BillID:      bill.ID,
-			ProductID:   item.ProductID,
-			ItemCode:    item.ItemCode,
-			Description: item.Description,
-			Quantity:    qty,
-			Unit:        item.Unit,
-			UnitPrice:   unitPrice,
-			Discount:    discount,
-			TaxRate:     taxRate,
-			TaxAmount:   taxAmount,
-			Total:       total,
-			MRP:         item.MRP.Float64(),
-			SalePrice:   item.SalePrice.Float64(),
-			HSNCode:     item.HSNCode,
-			BatchNo:     item.BatchNo,
-			MfgDate:     item.MfgDate,
-			ExpDate:     item.ExpDate,
-		})
-
-		subTotal += itemTotal
-		taxTotal += taxAmount
 	}
 
-	bill.SubTotal = subTotal
-	bill.TaxTotal = taxTotal
+	// Wrap lock + item replace + stock reset + bill save + payment reversal
+	// in a single transaction. Item delete used to run outside this tx, so
+	// overlapping draft-autosave and Save PUTs could each insert a full copy
+	// of the lines (duplicate purchase_bill_items).
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		if err := lockPurchaseBillRow(tx, userID, bill.ID); err != nil {
+			return err
+		}
 
-	if err := utils.DB.Save(&bill).Error; err != nil {
+		// Capture existing client_item_ref -> product_id mapping BEFORE deleting
+		// old items. On a retry after a lost response, the frontend still sends
+		// is_new_item=true with no product_id for lines whose product was already
+		// created on the previous (unacknowledged) save. Restoring the product_id
+		// here prevents ensureProductForAdhocItem from creating a duplicate.
+		var existingItems []models.PurchaseBillItem
+		if err := tx.Where("bill_id = ?", bill.ID).Find(&existingItems).Error; err != nil {
+			return err
+		}
+		productIDByRef := make(map[string]uuid.UUID)
+		for _, ei := range existingItems {
+			if ei.ClientItemRef != nil && ei.ProductID != nil {
+				productIDByRef[*ei.ClientItemRef] = *ei.ProductID
+			}
+		}
+
+		var subTotal, taxTotal float64
+		bill.Items = nil
+		for _, item := range input.Items {
+			qty := item.Quantity.Float64()
+			unitPrice := item.UnitPrice.Float64()
+			discount := item.Discount.Float64()
+			taxRate := item.TaxRate.Float64()
+			if input.TaxExempt {
+				taxRate = 0
+			}
+
+			itemTotal := unitPrice * qty
+			itemDiscount := itemTotal * (discount / 100)
+			taxable := itemTotal - itemDiscount
+			taxAmount := taxable * (taxRate / 100)
+			total := taxable + taxAmount
+
+			// Restore product_id for new-item lines whose product was already
+			// created on a previous save (matched by client_item_ref). This keeps
+			// the line linked to the same product instead of creating a duplicate.
+			resolvedProductID := item.ProductID
+			isNewItem := item.IsNewItem
+			if isNewItem && resolvedProductID == nil && item.ClientItemRef != nil {
+				if existingPID, ok := productIDByRef[*item.ClientItemRef]; ok {
+					resolvedProductID = &existingPID
+					isNewItem = false
+				}
+			}
+
+			bill.Items = append(bill.Items, models.PurchaseBillItem{
+				ID:            uuid.New(),
+				BillID:        bill.ID,
+				ProductID:     resolvedProductID,
+				ItemCode:      item.ItemCode,
+				Description:   item.Description,
+				Quantity:      qty,
+				Unit:          item.Unit,
+				UnitPrice:     unitPrice,
+				Discount:      discount,
+				TaxRate:       taxRate,
+				TaxAmount:     taxAmount,
+				Total:         total,
+				MRP:           item.MRP.Float64(),
+				SalePrice:     item.SalePrice.Float64(),
+				HSNCode:       item.HSNCode,
+				BatchNo:       item.BatchNo,
+				MfgDate:       item.MfgDate.Ptr(),
+				ExpDate:       item.ExpDate.Ptr(),
+				IsNewItem:     isNewItem,
+				Category:      item.Category,
+				ClientItemRef: item.ClientItemRef,
+			})
+
+			subTotal += itemTotal
+			taxTotal += taxAmount
+		}
+
+		bill.SubTotal = subTotal
+		bill.TaxTotal = taxTotal
+
+		// Reset linked stock entries so edits re-apply inventory immediately
+		if err := removePurchaseStockEntriesTx(tx, userID, bill.ID); err != nil {
+			return err
+		}
+
+		if err := tx.Omit("Items").Save(&bill).Error; err != nil {
+			return err
+		}
+		if err := replacePurchaseBillItemsTx(tx, bill.ID, bill.Items); err != nil {
+			return err
+		}
+
+		// Reverse all existing linked payment outs using the previous bill state,
+		// then create a single fresh payment out for the new paid amount (if > 0).
+		reversalBill := models.PurchaseBill{
+			ID:         bill.ID,
+			PartyID:    previousPartyID,
+			BillNumber: previousBillNumber,
+		}
+		if err := reverseLinkedPurchasePaymentOuts(tx, userID, &reversalBill); err != nil {
+			return err
+		}
+		if bill.PaidAmount > 0 {
+			notes := fmt.Sprintf("Auto-created from purchase bill %s (payment update)", bill.BillNumber)
+			if err := createLinkedPurchasePaymentOut(tx, userID, &bill, bill.PaidAmount, bill.BillDate, notes); err != nil {
+				return err
+			}
+		}
+
+		if err := createPendingPurchaseStockEntriesTx(tx, userID, &bill); err != nil {
+			return err
+		}
+		return nil
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update bill"})
 		return
 	}
 
-	if paymentDelta := bill.PaidAmount - previousPaidAmount; paymentDelta > 0 {
-		desc := fmt.Sprintf("Purchase bill %s (payment update)", bill.BillNumber)
-		if err := recordPurchasePaymentOut(utils.DB, userID, bill.BankAccountID, paymentDelta, bill.BillDate, bill.BillNumber, desc); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Bill updated but failed to update cash account"})
-			return
-		}
-	}
-
 	c.JSON(http.StatusOK, bill)
+}
+
+func lockPurchaseBillRow(tx *gorm.DB, userID, billID uuid.UUID) error {
+	q := tx.Model(&models.PurchaseBill{}).Where("user_id = ? AND id = ?", userID, billID)
+	if utils.IsPostgres() {
+		var row models.PurchaseBill
+		return q.Clauses(clause.Locking{Strength: "UPDATE"}).First(&row).Error
+	}
+	// SQLite does not honor SELECT FOR UPDATE. Touch the row so this
+	// transaction takes the write lock before replacing line items.
+	res := q.UpdateColumn("updated_at", time.Now())
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
+// replacePurchaseBillItemsTx deletes all lines for a bill and inserts the
+// replacement set in the same transaction. Callers must already hold a lock
+// on the parent bill (see lockPurchaseBillRow) so concurrent PUTs serialize
+// as replace-not-append.
+func replacePurchaseBillItemsTx(tx *gorm.DB, billID uuid.UUID, items []models.PurchaseBillItem) error {
+	if err := tx.Where("bill_id = ?", billID).Delete(&models.PurchaseBillItem{}).Error; err != nil {
+		return err
+	}
+	if len(items) == 0 {
+		return nil
+	}
+	return tx.Create(&items).Error
 }
 
 func DeletePurchaseBill(c *gin.Context) {
@@ -677,6 +951,11 @@ func DeletePurchaseBill(c *gin.Context) {
 		return
 	}
 
+	if err := removePurchaseStockEntries(userID, bill.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to remove linked stock entries"})
+		return
+	}
+
 	utils.DB.Delete(&bill)
 	c.JSON(http.StatusOK, gin.H{"message": "Bill deleted"})
 }
@@ -690,18 +969,29 @@ func GetPurchaseBillStats(c *gin.Context) {
 		Unpaid        float64 `json:"unpaid"`
 	}
 
-	query := utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ?", userID)
+	// Fresh queries each time — reusing one GORM chain stacked status
+	// filters and under-counted paid/unpaid (especially partial bills).
+	// Exclude drafts from financial stats so incomplete invoices don't inflate totals.
+	qTotal := utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND status <> ?", userID, "draft")
+	qPaid := utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND status <> ?", userID, "draft")
+	qUnpaid := utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND status <> ?", userID, "draft")
 
 	if fromDate := c.Query("from_date"); fromDate != "" {
-		query = query.Where("bill_date >= ?", fromDate)
+		qTotal = qTotal.Where("bill_date >= ?", fromDate)
+		qPaid = qPaid.Where("bill_date >= ?", fromDate)
+		qUnpaid = qUnpaid.Where("bill_date >= ?", fromDate)
 	}
 	if toDate := c.Query("to_date"); toDate != "" {
-		query = query.Where("bill_date <= ?", toDate)
+		qTotal = qTotal.Where("bill_date <= ?", toDate)
+		qPaid = qPaid.Where("bill_date <= ?", toDate)
+		qUnpaid = qUnpaid.Where("bill_date <= ?", toDate)
 	}
 
-	query.Select("COALESCE(SUM(total_amount), 0) as total_purchase").Scan(&stats.TotalPurchase)
-	query.Where("status = ?", "paid").Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.Paid)
-	query.Where("status = ? OR status = ?", "unpaid", "partial").Select("COALESCE(SUM(balance_due), 0)").Scan(&stats.Unpaid)
+	qTotal.Select("COALESCE(SUM(total_amount), 0)").Scan(&stats.TotalPurchase)
+	// Include partial payments, not only fully paid bills.
+	qPaid.Select("COALESCE(SUM(paid_amount), 0)").Scan(&stats.Paid)
+	// Remaining balance from amounts (reliable even if balance_due is stale).
+	qUnpaid.Select("COALESCE(SUM(CASE WHEN total_amount > paid_amount THEN total_amount - paid_amount ELSE 0 END), 0)").Scan(&stats.Unpaid)
 
 	c.JSON(http.StatusOK, stats)
 }
@@ -873,15 +1163,15 @@ func DownloadPurchaseBillPDF(c *gin.Context) {
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "", 12)
 	pdf.SetTextColor(100, 100, 100)
-	pdf.Cell(0, 6, bill.BillNumber)
+	pdf.Cell(0, 6, sanitizePDFText(bill.BillNumber))
 	pdf.Ln(12)
 
 	// Status
 	pdf.SetFont("Arial", "B", 10)
 	statusColors := map[string][3]int{
-		"paid":     {6, 95, 70},
-		"unpaid":   {153, 27, 27},
-		"partial":  {146, 64, 14},
+		"paid":    {6, 95, 70},
+		"unpaid":  {153, 27, 27},
+		"partial": {146, 64, 14},
 	}
 	color := statusColors[bill.Status]
 	if color[0] == 0 && color[1] == 0 && color[2] == 0 {
@@ -903,21 +1193,21 @@ func DownloadPurchaseBillPDF(c *gin.Context) {
 	pdf.SetX(14)
 	pdf.SetFont("Arial", "B", 11)
 	pdf.SetTextColor(30, 30, 30)
-	pdf.Cell(0, 6, bill.Party.Name)
+	pdf.Cell(0, 6, sanitizePDFText(bill.Party.Name))
 	pdf.Ln(5)
 	pdf.SetX(14)
 	pdf.SetFont("Arial", "", 10)
 	pdf.SetTextColor(80, 80, 80)
 	if bill.Party.Address != "" {
-		pdf.Cell(0, 5, bill.Party.Address)
+		pdf.Cell(0, 5, sanitizePDFText(bill.Party.Address))
 		pdf.Ln(5)
 		pdf.SetX(14)
 	}
 	cityState := fmt.Sprintf("%s, %s - %s", bill.Party.City, bill.Party.State, bill.Party.Pincode)
-	pdf.Cell(0, 5, cityState)
+	pdf.Cell(0, 5, sanitizePDFText(cityState))
 	pdf.Ln(5)
 	pdf.SetX(14)
-	pdf.Cell(0, 5, "GSTIN: "+bill.Party.GSTIN)
+	pdf.Cell(0, 5, "GSTIN: "+sanitizePDFText(bill.Party.GSTIN))
 	pdf.Ln(20)
 
 	// Invoice Details
@@ -973,9 +1263,9 @@ func DownloadPurchaseBillPDF(c *gin.Context) {
 		rowY := pdf.GetY()
 		pdf.Rect(10, rowY, 190, 7, "D")
 		pdf.SetXY(10, rowY+2)
-		pdf.Cell(70, 3, item.Description)
+		pdf.Cell(70, 3, sanitizePDFText(item.Description))
 		pdf.Cell(20, 3, fmt.Sprintf("%.2f", item.Quantity))
-		pdf.Cell(20, 3, item.Unit)
+		pdf.Cell(20, 3, sanitizePDFText(item.Unit))
 		pdf.Cell(25, 3, fmt.Sprintf("Rs. %.2f", item.UnitPrice))
 		pdf.Cell(25, 3, fmt.Sprintf("%.2f%%", item.TaxRate))
 		pdf.Cell(30, 3, fmt.Sprintf("Rs. %.2f", item.Total))
@@ -1015,7 +1305,7 @@ func DownloadPurchaseBillPDF(c *gin.Context) {
 		pdf.Ln(6)
 		pdf.SetFont("Arial", "", 9)
 		pdf.SetTextColor(100, 100, 100)
-		pdf.MultiCell(190, 5, bill.Notes, "", "L", false)
+		pdf.MultiCell(190, 5, sanitizePDFText(bill.Notes), "", "L", false)
 	}
 
 	// Footer
@@ -1024,26 +1314,49 @@ func DownloadPurchaseBillPDF(c *gin.Context) {
 	pdf.SetTextColor(150, 150, 150)
 	pdf.Cell(0, 10, fmt.Sprintf("Generated on %s", time.Now().Format("02-01-2006 03:04 PM")))
 
+	var buf bytes.Buffer
+	if err := pdf.Output(&buf); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate purchase invoice PDF"})
+		return
+	}
+
 	c.Header("Content-Type", "application/pdf")
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=\"Purchase_Invoice_%s.pdf\"", bill.BillNumber))
-	pdf.Output(c.Writer)
+	c.Data(http.StatusOK, "application/pdf", buf.Bytes())
 }
 
 type LabelConfig struct {
-	PaperSize   string  `json:"paper_size"`   // a4, letter, a5
-	LabelWidth  float64 `json:"label_width"`  // mm
-	LabelHeight float64 `json:"label_height"` // mm
-	Cols        int     `json:"cols"`
-	Rows        int     `json:"rows"`
-	Margin      float64 `json:"margin"`       // mm (even on all sides)
-	MarginTop   float64 `json:"margin_top"`   // mm
-	MarginLeft  float64 `json:"margin_left"`  // mm
+	PaperSize     string  `json:"paper_size"` // a4, letter, a5, 1inch, 1.5inch, 2inch, 3inch
+	SheetPreset   string  `json:"sheet_preset"`
+	LabelWidth    float64 `json:"label_width"` // mm
+	LabelHeight   float64 `json:"label_height"`
+	Cols          int     `json:"cols"`
+	Rows          int     `json:"rows"`
+	Margin        float64 `json:"margin"` // mm (even on all sides)
+	MarginTop     float64 `json:"margin_top"`
+	MarginLeft    float64 `json:"margin_left"`
+	GapH          float64 `json:"gap_h"`
+	GapV          float64 `json:"gap_v"`
+	StartPosition int     `json:"start_position"`
+}
+
+func isThermalLabelPaperSize(size string) bool {
+	switch size {
+	case "1inch", "1.5inch", "2inch", "3inch":
+		return true
+	default:
+		return false
+	}
 }
 
 type LabelRequest struct {
-	BillID      string       `json:"bill_id" binding:"required"`
-	ItemQuantities map[string]int `json:"item_quantities"` // item_id -> quantity (default to invoice quantity if not provided)
-	Config      LabelConfig  `json:"config"`
+	BillID         string             `json:"bill_id" binding:"required"`
+	ItemQuantities map[string]float64 `json:"item_quantities"` // item_id -> quantity (0 skips item; default to invoice quantity if omitted)
+	Config         LabelConfig        `json:"config"`
+	// Format: "html" (default) or "json" for silent desktop ESC/POS printing.
+	Format string `json:"format"`
+	// Preview: return on-screen HTML preview (A4 sheet layout) without printing.
+	Preview bool `json:"preview"`
 }
 
 func PrintPurchaseBillLabels(c *gin.Context) {
@@ -1061,34 +1374,10 @@ func PrintPurchaseBillLabels(c *gin.Context) {
 		return
 	}
 
-	// Override item codes with the latest stock entry item code (not product SKU)
+	// Use the live product item code so generated/updated barcodes print and scan.
 	for i := range bill.Items {
-		var stock models.StockEntry
-		var err error
-
-		// 1. Try lookup by ProductID (new bills with proper linkage)
-		if bill.Items[i].ProductID != nil {
-			err = utils.DB.Where("product_id = ? AND user_id = ? AND item_code != ''", bill.Items[i].ProductID, userID).
-				Order("created_at DESC").First(&stock).Error
-		} else {
-			err = fmt.Errorf("no product_id")
-		}
-
-		// 2. Fallback: lookup by item name matching description (old bills / receipt-based bills)
-		if err != nil && bill.Items[i].Description != "" {
-			err = utils.DB.Where("item_name = ? AND user_id = ? AND item_code != ''", bill.Items[i].Description, userID).
-				Order("created_at DESC").First(&stock).Error
-		}
-
-		// 3. Fallback: lookup by batch number if available
-		if err != nil && bill.Items[i].BatchNo != "" {
-			err = utils.DB.Where("batch_no = ? AND user_id = ? AND item_code != ''", bill.Items[i].BatchNo, userID).
-				Order("created_at DESC").First(&stock).Error
-		}
-
-		if err == nil && stock.ItemCode != "" {
-			bill.Items[i].ItemCode = stock.ItemCode
-		}
+		bill.Items[i].ItemCode = resolvePurchaseLabelBarcode(bill.Items[i], userID)
+		enrichPurchaseItemLabelPrices(&bill.Items[i], userID)
 	}
 
 	// Set default config if not provided
@@ -1096,240 +1385,320 @@ func PrintPurchaseBillLabels(c *gin.Context) {
 	if config.PaperSize == "" {
 		config.PaperSize = "a4"
 	}
-	if config.LabelWidth == 0 {
-		config.LabelWidth = 50 // mm
+	if isThermalLabelPaperSize(config.PaperSize) {
+		size := getBarcodeLabelSize(config.PaperSize)
+		config.LabelWidth = size.WidthMM
+		config.LabelHeight = size.HeightMM
+		config.Cols = 1
+		config.Rows = 1
+		config.Margin = 0
+		config.MarginTop = 0
+		config.MarginLeft = 0
+	} else {
+		if preset, ok := a4LabelSheetPresetByKey(config.SheetPreset); ok {
+			config.PaperSize = strings.ToLower(preset.PaperSize)
+			config.LabelWidth = preset.LabelWidthMM
+			config.LabelHeight = preset.LabelHeightMM
+			config.Cols = preset.Columns
+			config.Rows = preset.Rows
+			config.MarginTop = preset.MarginTopMM
+			config.MarginLeft = preset.MarginLeftMM
+			config.Margin = preset.MarginLeftMM
+			config.GapH = preset.GapHMM
+			config.GapV = preset.GapVMM
+		}
+		if config.LabelWidth == 0 {
+			config.LabelWidth = 48.5
+		}
+		if config.LabelHeight == 0 {
+			config.LabelHeight = 25.4
+		}
+		if config.Cols == 0 {
+			config.Cols = 4
+		}
+		if config.Rows == 0 {
+			config.Rows = 11
+		}
+		if config.Margin > 0 {
+			if config.MarginTop == 0 {
+				config.MarginTop = config.Margin
+			}
+			if config.MarginLeft == 0 {
+				config.MarginLeft = config.Margin
+			}
+		}
+		if config.MarginTop == 0 {
+			config.MarginTop = 8.8
+		}
+		if config.MarginLeft == 0 {
+			config.MarginLeft = 5
+		}
+		if config.SheetPreset == "" && config.GapH == 0 {
+			config.GapH = 2
+		}
 	}
-	if config.LabelHeight == 0 {
-		config.LabelHeight = 30 // mm
+
+	items := collectPurchaseLabelItems(bill, req.ItemQuantities)
+	if len(items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No items available to print labels"})
+		return
 	}
-	if config.Cols == 0 {
-		config.Cols = 4
+
+	format := strings.ToLower(strings.TrimSpace(req.Format))
+	if format == "" {
+		format = strings.ToLower(strings.TrimSpace(c.Query("format")))
 	}
-	if config.Rows == 0 {
-		config.Rows = 8
+	if req.Preview {
+		html := generateLabelsHTML(bill, req.ItemQuantities, config, true)
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, html)
+		return
 	}
-	// Prefer unified margin; fall back to legacy top/left
-	if config.Margin > 0 {
-		config.MarginTop = config.Margin
-		config.MarginLeft = config.Margin
-	}
-	if config.MarginTop == 0 {
-		config.MarginTop = 10 // mm
-	}
-	if config.MarginLeft == 0 {
-		config.MarginLeft = 10 // mm
+	if format == "json" || (isThermalLabelPaperSize(config.PaperSize) && wantsJSONResponse(c)) {
+		size := getBarcodeLabelSize(config.PaperSize)
+		compact := config.PaperSize == "1inch" || config.PaperSize == "1.5inch"
+		payload := BarcodeLabelsResponse{
+			Title:    "Labels - " + bill.BillNumber,
+			Size:     size.Key,
+			WidthMM:  size.WidthMM,
+			HeightMM: size.HeightMM,
+			Compact:  compact,
+			Labels:   purchaseItemsToBarcodeLabels(items, compact),
+		}
+		c.JSON(http.StatusOK, payload)
+		return
 	}
 
 	// Generate labels HTML
-	html := generateLabelsHTML(bill, req.ItemQuantities, config)
+	html := generateLabelsHTML(bill, req.ItemQuantities, config, false)
 
-	c.Header("Content-Type", "text/html")
+	c.Header("Content-Type", "text/html; charset=utf-8")
 	c.String(http.StatusOK, html)
 }
 
-func generateLabelsHTML(bill models.PurchaseBill, itemQuantities map[string]int, config LabelConfig) string {
-	// Paper dimensions in mm
-	paperWidthMM := 210.0
-	paperHeightMM := 297.0
-	switch config.PaperSize {
-	case "letter":
-		paperWidthMM = 216.0
-		paperHeightMM = 279.0
-	case "a5":
-		paperWidthMM = 148.0
-		paperHeightMM = 210.0
-	}
-
-	// Convert to CSS pixels (1mm = 3.78px)
-	pxPerMM := 3.78
-	paperWidth := paperWidthMM * pxPerMM
-	paperHeight := paperHeightMM * pxPerMM
-	margin := config.MarginTop * pxPerMM
-	gap := 5 * pxPerMM // 5mm gap
-
-	// Container size subtracts even margins on all sides
-	containerWidth := paperWidth - 2*margin
-	containerHeight := paperHeight - 2*margin
-
-	var labels []string
-	
-	for _, item := range bill.Items {
-		quantity := itemQuantities[item.ID.String()]
-		if quantity == 0 {
-			quantity = int(item.Quantity)
-		}
-		
-		for i := 0; i < quantity; i++ {
-			labels = append(labels, generateSingleLabel(item, bill.BillNumber))
-		}
-	}
-
-	// Organize labels in grid
-	html := `<!DOCTYPE html>
-<html>
-<head>
-	<title>Labels - ` + bill.BillNumber + `</title>
-	<style>
-		@page {
-			size: ` + config.PaperSize + `;
-			margin: 0;
-		}
-		body {
-			margin: 0;
-			padding: 0;
-			font-family: Arial, sans-serif;
-			font-size: 9px;
-		}
-		.labels-container {
-			display: grid;
-			grid-template-columns: repeat(` + fmt.Sprintf("%d", config.Cols) + `, 1fr);
-			grid-template-rows: repeat(` + fmt.Sprintf("%d", config.Rows) + `, 1fr);
-			gap: ` + fmt.Sprintf("%.2f", gap) + `px;
-			padding: ` + fmt.Sprintf("%.2f", margin) + `px;
-			width: ` + fmt.Sprintf("%.2f", containerWidth) + `px;
-			height: ` + fmt.Sprintf("%.2f", containerHeight) + `px;
-		}
-		.label {
-			border: 1px solid #000;
-			padding: 3px;
-			display: flex;
-			flex-direction: column;
-			align-items: center;
-			justify-content: flex-start;
-			page-break-inside: avoid;
-			overflow: hidden;
-			box-sizing: border-box;
-		}
-		.label-name {
-			font-weight: 900;
-			font-size: 11px;
-			margin-bottom: 1px;
-			word-wrap: break-word;
-			text-align: center;
-			width: 100%;
-			line-height: 1.1;
-		}
-		.label-barcode svg {
-			width: 100%;
-			height: auto;
-		}
-		.label-qty {
-			font-size: 8px;
-			color: #333;
-			margin-top: 1px;
-			text-align: center;
-		}
-		.label-prices {
-			display: flex;
-			justify-content: space-between;
-			width: 100%;
-			font-size: 9px;
-			margin-top: 1px;
-		}
-		.label-mrp {
-			text-decoration: line-through;
-			color: #666;
-		}
-		.label-sale {
-			font-weight: bold;
-			color: #000;
-		}
-		@media print {
-			.labels-container {
-				break-inside: avoid;
-			}
-		}
-	</style>
-	<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.5/dist/JsBarcode.all.min.js"></script>
-</head>
-<body>
-	<div class="labels-container">
-`
-
-	for _, label := range labels {
-		html += label + "\n"
-	}
-
-	html += `	</div>
-	<script>
-		window.onload = function() {
-			JsBarcode(".barcode").init();
-			setTimeout(function() { window.print(); }, 300);
-		};
-	</script>
-</body>
-</html>`
-
-	return html
+func wantsJSONResponse(c *gin.Context) bool {
+	accept := strings.ToLower(c.GetHeader("Accept"))
+	return strings.Contains(accept, "application/json")
 }
 
-func generateSingleLabel(item models.PurchaseBillItem, billNumber string) string {
-	// Build barcode value
-	barcodeVal := item.ItemCode
-	if barcodeVal == "" {
-		barcodeVal = item.HSNCode
+func resolvePurchaseLabelBarcode(item models.PurchaseBillItem, userID uuid.UUID) string {
+	if item.ProductID != nil {
+		var product models.Product
+		if err := utils.DB.Select("item_code", "sku").
+			Where("user_id = ? AND id = ?", userID, *item.ProductID).
+			First(&product).Error; err == nil {
+			if code := strings.TrimSpace(product.ItemCode); code != "" {
+				return code
+			}
+			if code := strings.TrimSpace(product.SKU); code != "" && strings.TrimSpace(item.ItemCode) == "" {
+				return code
+			}
+		}
 	}
+	if code := strings.TrimSpace(item.ItemCode); code != "" {
+		return code
+	}
+
+	var stock models.StockEntry
+	var err error
+	if item.ProductID != nil {
+		err = utils.DB.Where("product_id = ? AND user_id = ? AND item_code != ''", item.ProductID, userID).
+			Order("created_at DESC").First(&stock).Error
+	} else {
+		err = fmt.Errorf("no product_id")
+	}
+	if err != nil && item.Description != "" {
+		err = utils.DB.Where("item_name = ? AND user_id = ? AND item_code != ''", item.Description, userID).
+			Order("created_at DESC").First(&stock).Error
+	}
+	if err != nil && item.BatchNo != "" {
+		err = utils.DB.Where("batch_no = ? AND user_id = ? AND item_code != ''", item.BatchNo, userID).
+			Order("created_at DESC").First(&stock).Error
+	}
+	if err == nil {
+		if code := strings.TrimSpace(stock.ItemCode); code != "" {
+			return code
+		}
+	}
+
+	if item.ProductID != nil {
+		var product models.Product
+		if err := utils.DB.Select("sku").
+			Where("user_id = ? AND id = ?", userID, *item.ProductID).
+			First(&product).Error; err == nil {
+			if code := strings.TrimSpace(product.SKU); code != "" {
+				return code
+			}
+		}
+	}
+	return "0000000000"
+}
+
+// enrichPurchaseItemLabelPrices fills missing MRP / sale price from the product catalog.
+// UnitPrice is purchase cost and must never be used as MRP on labels.
+func enrichPurchaseItemLabelPrices(item *models.PurchaseBillItem, userID uuid.UUID) {
+	if item == nil {
+		return
+	}
+	if item.MRP > 0 && item.SalePrice > 0 {
+		return
+	}
+
+	var product models.Product
+	var err error
+	if item.ProductID != nil {
+		err = utils.DB.Select("id", "mrp", "sale_price").
+			Where("user_id = ? AND id = ?", userID, *item.ProductID).
+			First(&product).Error
+	}
+	if err != nil && strings.TrimSpace(item.ItemCode) != "" {
+		err = utils.DB.Select("id", "mrp", "sale_price").
+			Where("user_id = ? AND (item_code = ? OR sku = ?)", userID, item.ItemCode, item.ItemCode).
+			First(&product).Error
+	}
+	if err != nil && strings.TrimSpace(item.Description) != "" {
+		err = utils.DB.Select("id", "mrp", "sale_price").
+			Where("user_id = ? AND name = ?", userID, item.Description).
+			First(&product).Error
+	}
+	if err != nil {
+		return
+	}
+	if item.MRP <= 0 && product.MRP > 0 {
+		item.MRP = product.MRP
+	}
+	if item.SalePrice <= 0 && product.SalePrice > 0 {
+		item.SalePrice = product.SalePrice
+	}
+}
+
+func purchaseItemsToBarcodeLabels(items []models.PurchaseBillItem, _ bool) []BarcodeLabelItemJSON {
+	out := make([]BarcodeLabelItemJSON, 0, len(items))
+	for _, item := range items {
+		barcodeVal := strings.TrimSpace(item.ItemCode)
+		if barcodeVal == "" {
+			barcodeVal = "0000000000"
+		}
+		entry := BarcodeLabelItemJSON{
+			Name:    item.Description,
+			Barcode: barcodeVal,
+			Price:   item.SalePrice,
+		}
+		if item.MRP > 0 {
+			entry.MRP = item.MRP
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func collectPurchaseLabelItems(bill models.PurchaseBill, itemQuantities map[string]float64) []models.PurchaseBillItem {
+	var items []models.PurchaseBillItem
+	for _, item := range bill.Items {
+		qtyFloat, ok := itemQuantities[item.ID.String()]
+		if !ok {
+			qtyFloat = item.Quantity
+		}
+		quantity := int(qtyFloat + 0.5) // round
+		if quantity < 0 {
+			quantity = 0
+		}
+		if quantity > 500 {
+			quantity = 500
+		}
+		if quantity == 0 {
+			continue
+		}
+		for i := 0; i < quantity; i++ {
+			items = append(items, item)
+		}
+	}
+	return items
+}
+
+func labelConfigToA4Layout(config LabelConfig) A4LabelSheetLayout {
+	paper := strings.ToUpper(strings.TrimSpace(config.PaperSize))
+	if paper == "" {
+		paper = "A4"
+	}
+	return A4LabelSheetLayout{
+		PaperSize:      paper,
+		LabelWidthMM:   config.LabelWidth,
+		LabelHeightMM:  config.LabelHeight,
+		Columns:        config.Cols,
+		Rows:           config.Rows,
+		MarginTopMM:    config.MarginTop,
+		MarginBottomMM: config.MarginTop,
+		MarginLeftMM:   config.MarginLeft,
+		MarginRightMM:  config.MarginLeft,
+		GapHMM:         config.GapH,
+		GapVMM:         config.GapV,
+	}
+}
+
+func generateLabelsHTML(bill models.PurchaseBill, itemQuantities map[string]float64, config LabelConfig, screenPreview bool) string {
+	items := collectPurchaseLabelItems(bill, itemQuantities)
+	if isThermalLabelPaperSize(config.PaperSize) {
+		return generateThermalPurchaseLabelsHTML(bill.BillNumber, items, config.PaperSize)
+	}
+
+	layout := labelConfigToA4Layout(config)
+	a4Size := barcodeLabelSizeForA4Layout(layout)
+	labelHTMLs := make([]string, 0, len(items))
+	for _, item := range items {
+		barcodeVal := strings.TrimSpace(item.ItemCode)
+		if barcodeVal == "" {
+			barcodeVal = "0000000000"
+		}
+		labelHTMLs = append(labelHTMLs, buildProductLabelHTML(productLabelData{
+			Name:      item.Description,
+			SKU:       item.ItemCode,
+			ItemCode:  barcodeVal,
+			SalePrice: item.SalePrice,
+			MRP:       item.MRP,
+		}, a4Size, false))
+	}
+
+	return buildA4LabelsSheetDocument("Labels - "+bill.BillNumber, labelHTMLs, layout, config.StartPosition, screenPreview)
+}
+
+func generateThermalPurchaseLabelsHTML(billNumber string, items []models.PurchaseBillItem, paperSize string) string {
+	size := getBarcodeLabelSize(paperSize)
+	compact := paperSize == "1inch" || paperSize == "1.5inch"
+
+	var labelsHTML strings.Builder
+	for _, item := range items {
+		labelsHTML.WriteString(generateThermalPurchaseLabel(item, size, compact))
+	}
+
+	return wrapBarcodeLabelDocument("Labels - "+billNumber, barcodeLabelPageCSS(size), labelsHTML.String())
+}
+
+func generateThermalPurchaseLabel(item models.PurchaseBillItem, size BarcodeLabelSize, compact bool) string {
+	_ = compact
+	barcodeVal := strings.TrimSpace(item.ItemCode)
 	if barcodeVal == "" {
 		barcodeVal = "0000000000"
 	}
 
-	// Build price strings
-	mrpStr := fmt.Sprintf("%.2f", item.MRP)
-	saleStr := fmt.Sprintf("%.2f", item.SalePrice)
-	if item.MRP == 0 {
-		mrpStr = fmt.Sprintf("%.2f", item.UnitPrice)
-	}
-	if item.SalePrice == 0 {
-		saleStr = fmt.Sprintf("%.2f", item.UnitPrice)
+	name := html.EscapeString(item.Description)
+	mrpCell := ""
+	if item.MRP > 0 {
+		mrpCell = fmt.Sprintf(`<span class="product-mrp">MRP: ₹%.2f</span>`, item.MRP)
 	}
 
-	// Determine if quantity should be shown (not a simple 1-piece count)
-	showQty := item.Unit != "PCS" || item.Quantity > 1
-	qtyStr := ""
-	if item.Unit == "PCS" {
-		qtyStr = fmt.Sprintf("%.0f", item.Quantity)
-	} else {
-		qtyStr = fmt.Sprintf("%.2f %s", item.Quantity, item.Unit)
-	}
-
-	labelHTML := `		<div class="label">
-			<div class="label-name">` + html.EscapeString(item.Description) + `</div>`
-
-	labelHTML += `
-			<div class="label-barcode">
-				<svg class="barcode"
-					jsbarcode-format="code128"
-					jsbarcode-value="` + html.EscapeString(barcodeVal) + `"
-					jsbarcode-width="1"
-					jsbarcode-height="20"
-					jsbarcode-fontsize="8"
-					jsbarcode-margin="0">
-				</svg>
-			</div>`
-
-	if showQty {
-		labelHTML += `
-			<div class="label-qty">Qty: ` + html.EscapeString(qtyStr) + `</div>`
-	}
-
-	labelHTML += `
-			<div class="label-prices">`
-
-	if mrpStr != "0.00" && mrpStr != "0.0" && mrpStr != "" {
-		labelHTML += `
-				<div class="label-mrp">MRP: ₹` + mrpStr + `</div>`
-	}
-
-	if saleStr != "0.00" && saleStr != "0.0" && saleStr != "" {
-		labelHTML += `
-				<div class="label-sale">Sale: ₹` + saleStr + `</div>`
-	}
-
-	labelHTML += `
-			</div>
-		</div>`
-
-	return labelHTML
+	return fmt.Sprintf(`<div class="label">
+	<div class="product-name">%s</div>
+	<div class="product-barcode">
+		%s
+	</div>
+	<div class="price-row">
+		%s
+		<span class="product-price">₹%.2f</span>
+	</div>
+</div>`, name,
+		barcodeImageHTML(barcodeVal, size.BarcodeW, size.BarcodeH, size.MetaFontPx),
+		mrpCell, item.SalePrice)
 }
 
 // ParseBillWithAI uses Gemini to parse purchase bill/invoice from image
@@ -1544,11 +1913,11 @@ Return ONLY the JSON, nothing else.`
 	var aiResponse struct {
 		Status string `json:"status"`
 		Data   struct {
-			VendorName  string  `json:"vendor_name"`
-			VendorGSTIN string  `json:"vendor_gstin"`
-			BillNumber  string  `json:"bill_number"`
-			BillDate    string  `json:"bill_date"`
-			DueDate     string  `json:"due_date"`
+			VendorName  string `json:"vendor_name"`
+			VendorGSTIN string `json:"vendor_gstin"`
+			BillNumber  string `json:"bill_number"`
+			BillDate    string `json:"bill_date"`
+			DueDate     string `json:"due_date"`
 			Items       []struct {
 				Description string  `json:"description"`
 				Quantity    float64 `json:"quantity"`
@@ -1583,4 +1952,105 @@ Return ONLY the JSON, nothing else.`
 		"status": "success",
 		"data":   aiResponse.Data,
 	})
+}
+
+func GetVendorRecentProducts(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+	vendorID := c.Param("vendorId")
+
+	if vendorID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "vendorId is required"})
+		return
+	}
+
+	limit := 15
+
+	type itemRow struct {
+		ProductID   *uuid.UUID `json:"product_id"`
+		Description string     `json:"description"`
+		ItemCode    string     `json:"item_code"`
+		HSNCode     string     `json:"hsn_code"`
+		Unit        string     `json:"unit"`
+		UnitPrice   float64    `json:"unit_price"`
+		Quantity    float64    `json:"quantity"`
+		TaxRate     float64    `json:"tax_rate"`
+		Discount    float64    `json:"discount"`
+		MRP         float64    `json:"mrp"`
+		SalePrice   float64    `json:"sale_price"`
+		BillDate    time.Time  `json:"bill_date"`
+	}
+
+	var rows []itemRow
+	err := utils.DB.Table("purchase_bill_items AS pbi").
+		Select("pbi.product_id, pbi.description, pbi.item_code, pbi.hsn_code, pbi.unit, pbi.unit_price, pbi.quantity, pbi.tax_rate, pbi.discount, pbi.mrp, pbi.sale_price, pb.bill_date").
+		Joins("JOIN purchase_bills pb ON pb.id = pbi.bill_id").
+		Where("pb.user_id = ? AND pb.party_id = ?", userID, vendorID).
+		Where("pbi.product_id IS NOT NULL OR pbi.description != ''").
+		Order("pb.bill_date DESC, pbi.created_at DESC").
+		Scan(&rows).Error
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch recent products"})
+		return
+	}
+
+	type RecentProduct struct {
+		ProductID   string  `json:"product_id"`
+		Description string  `json:"description"`
+		ItemCode    string  `json:"item_code"`
+		HSNCode     string  `json:"hsn_code"`
+		Unit        string  `json:"unit"`
+		UnitPrice   float64 `json:"unit_price"`
+		Quantity    float64 `json:"quantity"`
+		TaxRate     float64 `json:"tax_rate"`
+		Discount    float64 `json:"discount"`
+		MRP         float64 `json:"mrp"`
+		SalePrice   float64 `json:"sale_price"`
+		Frequency   int     `json:"frequency"`
+		LastDate    string  `json:"last_date"`
+	}
+
+	seen := make(map[string]int)
+	var results []RecentProduct
+
+	for _, row := range rows {
+		key := ""
+		if row.ProductID != nil {
+			key = row.ProductID.String()
+		} else {
+			key = "desc:" + row.Description
+		}
+
+		if idx, ok := seen[key]; ok {
+			results[idx].Frequency++
+			continue
+		}
+
+		seen[key] = len(results)
+		productID := ""
+		if row.ProductID != nil {
+			productID = row.ProductID.String()
+		}
+		results = append(results, RecentProduct{
+			ProductID:   productID,
+			Description: row.Description,
+			ItemCode:    row.ItemCode,
+			HSNCode:     row.HSNCode,
+			Unit:        row.Unit,
+			UnitPrice:   row.UnitPrice,
+			Quantity:    row.Quantity,
+			TaxRate:     row.TaxRate,
+			Discount:    row.Discount,
+			MRP:         row.MRP,
+			SalePrice:   row.SalePrice,
+			Frequency:   1,
+			LastDate:    row.BillDate.Format("2006-01-02"),
+		})
+
+		if len(results) >= limit {
+			break
+		}
+	}
+
+	c.JSON(http.StatusOK, results)
 }

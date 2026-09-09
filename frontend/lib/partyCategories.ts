@@ -1,4 +1,4 @@
-export const DEFAULT_PARTY_CATEGORIES = ['Retail']
+export const DEFAULT_PARTY_CATEGORIES = ['Retail', 'Wholesale']
 
 export function mergePartyCategories(existing: string[] = []): string[] {
   return Array.from(

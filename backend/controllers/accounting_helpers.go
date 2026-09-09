@@ -1,9 +1,12 @@
 package controllers
 
 import (
-	"truerp/models"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/google/uuid"
 	"gorm.io/gorm"
@@ -18,6 +21,7 @@ const (
 	acCodeSales    = "4100"
 	acCodePurchase = "5100"
 	acCodeExpense  = "5200"
+	acCodePayroll  = "5300"
 )
 
 type glLine struct {
@@ -28,25 +32,27 @@ type glLine struct {
 }
 
 func EnsureDefaultChartOfAccounts(tx *gorm.DB, userID uuid.UUID) error {
-	var count int64
-	if err := tx.Model(&models.Account{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
-		return err
-	}
-	if count > 0 {
-		return nil
-	}
-
 	defaults := []models.Account{
-		{ID: uuid.New(), UserID: userID, Code: acCodeCash, Name: "Cash in Hand", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeBank, Name: "Bank", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeAR, Name: "Accounts Receivable", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeAP, Name: "Accounts Payable", AccountType: "liability", SubType: "current_liability", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeEquity, Name: "Owner's Equity", AccountType: "equity", SubType: "equity", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeSales, Name: "Sales", AccountType: "income", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodePurchase, Name: "Purchases", AccountType: "expense", IsDefault: true, IsActive: true},
-		{ID: uuid.New(), UserID: userID, Code: acCodeExpense, Name: "General Expenses", AccountType: "expense", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeCash, Name: "Cash in Hand", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeBank, Name: "Bank", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeAR, Name: "Accounts Receivable", AccountType: "asset", SubType: "current_asset", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeAP, Name: "Accounts Payable", AccountType: "liability", SubType: "current_liability", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeEquity, Name: "Owner's Equity", AccountType: "equity", SubType: "equity", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeSales, Name: "Sales", AccountType: "income", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodePurchase, Name: "Purchases", AccountType: "expense", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodeExpense, Name: "General Expenses", AccountType: "expense", IsDefault: true, IsActive: true},
+		{UserID: userID, Code: acCodePayroll, Name: "Payroll", AccountType: "expense", IsDefault: true, IsActive: true},
 	}
 	for i := range defaults {
+		var existing models.Account
+		err := tx.Where("user_id = ? AND code = ?", userID, defaults[i].Code).First(&existing).Error
+		if err == nil {
+			continue
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		defaults[i].ID = uuid.New()
 		if err := tx.Create(&defaults[i]).Error; err != nil {
 			return err
 		}
@@ -221,6 +227,35 @@ func postInvoiceAccounting(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoic
 	})
 }
 
+// reverseAccountingByRef undoes ledger postings and account balance updates for a reference.
+func reverseAccountingByRef(tx *gorm.DB, userID uuid.UUID, refType string, refID uuid.UUID) error {
+	var ledgers []models.Ledger
+	if err := tx.Where(
+		"user_id = ? AND transaction_type = ? AND reference_id = ?",
+		userID, refType, refID,
+	).Find(&ledgers).Error; err != nil {
+		return err
+	}
+	for _, lg := range ledgers {
+		var account models.Account
+		if err := tx.Where("user_id = ? AND id = ?", userID, lg.AccountID).First(&account).Error; err != nil {
+			return err
+		}
+		newBalance := applyAccountBalance(&account, lg.Credit, lg.Debit)
+		if err := tx.Model(&account).Update("balance", newBalance).Error; err != nil {
+			return err
+		}
+		if err := tx.Delete(&lg).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func reverseInvoiceAccounting(tx *gorm.DB, userID uuid.UUID, invoiceID uuid.UUID) error {
+	return reverseAccountingByRef(tx, userID, "invoice", invoiceID)
+}
+
 func postSalePaymentAccounting(tx *gorm.DB, userID uuid.UUID, refID uuid.UUID, bankAccountID *uuid.UUID, amount float64, date time.Time, refNumber, description string) error {
 	if amount <= 0 {
 		return nil
@@ -260,19 +295,99 @@ func postPurchasePaymentAccounting(tx *gorm.DB, userID uuid.UUID, refID uuid.UUI
 	})
 }
 
+// expenseAccountCodeForCategory resolves the GL expense account for an expense category.
+// General maps to the default General Expenses account; Payroll to Payroll; other categories
+// get a dedicated expense account named after the category.
+func expenseAccountCodeForCategory(tx *gorm.DB, userID uuid.UUID, category string) (string, error) {
+	category = utils.ResolveCategoryName(category)
+	switch strings.EqualFold(category, utils.DefaultCategoryName) {
+	case true:
+		return acCodeExpense, nil
+	}
+	if strings.EqualFold(category, "Payroll") {
+		return acCodePayroll, nil
+	}
+
+	var account models.Account
+	err := tx.Where("user_id = ? AND account_type = ? AND name = ? AND is_active = ?", userID, "expense", category, true).
+		First(&account).Error
+	if err == nil {
+		return account.Code, nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", err
+	}
+
+	if err := EnsureDefaultChartOfAccounts(tx, userID); err != nil {
+		return "", err
+	}
+	code := nextAccountCode(tx, userID, "expense")
+	account = models.Account{
+		ID:          uuid.New(),
+		UserID:      userID,
+		Code:        code,
+		Name:        category,
+		AccountType: "expense",
+		IsActive:    true,
+	}
+	if err := tx.Create(&account).Error; err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
 func postExpenseAccounting(tx *gorm.DB, userID uuid.UUID, expense *models.Expense) error {
 	if expense.Amount <= 0 {
 		return nil
 	}
+	expenseAccountCode, err := expenseAccountCodeForCategory(tx, userID, expense.Category)
+	if err != nil {
+		return err
+	}
 	desc := fmt.Sprintf("Expense %s", expense.ExpenseNumber)
 	assetCode := acCodeCash
-	if bankID, err := resolveBankAccountForPaymentMode(userID, expense.PaymentMode, nil); err == nil && bankID != nil {
+	if expense.BankAccountID != nil {
+		assetCode = acCodeBank
+	} else if bankID, err := resolveBankAccountForPaymentMode(userID, expense.PaymentMode, nil); err == nil && bankID != nil {
 		assetCode = acCodeBank
 	}
 	return postAutoJournal(tx, userID, expense.Date, desc, "expense", expense.ID, expense.ExpenseNumber, []glLine{
-		{AccountCode: acCodeExpense, Debit: expense.Amount, Description: desc},
+		{AccountCode: expenseAccountCode, Debit: expense.Amount, Description: desc},
 		{AccountCode: assetCode, Credit: expense.Amount, Description: desc},
 	})
+}
+
+// postPayrollSalaryAccounting posts payroll expense against cash/bank, keyed by payroll ID
+// so reverse/re-apply is idempotent for the general ledger.
+func postPayrollSalaryAccounting(tx *gorm.DB, userID uuid.UUID, payroll *models.Payroll, expense *models.Expense) error {
+	if payroll.NetSalary <= 0 {
+		return nil
+	}
+	desc := expense.Description
+	if desc == "" {
+		desc = fmt.Sprintf("Payroll %s", payroll.PaymentNumber)
+	}
+	assetCode := acCodeCash
+	if payroll.BankAccountID != nil {
+		assetCode = acCodeBank
+	}
+	return postAutoJournal(tx, userID, payroll.PaymentDate, desc, "payroll", payroll.ID, payroll.PaymentNumber, []glLine{
+		{AccountCode: acCodePayroll, Debit: payroll.NetSalary, Description: desc},
+		{AccountCode: assetCode, Credit: payroll.NetSalary, Description: desc},
+	})
+}
+
+func settlementAccountCodeForMode(tx *gorm.DB, userID uuid.UUID, mode string) string {
+	if isInitialInvestmentPayment(mode) {
+		return acCodeEquity
+	}
+	if id, err := glAssetAccountForPaymentMode(tx, userID, mode); err == nil {
+		var account models.Account
+		if tx.Where("id = ?", id).First(&account).Error == nil && account.Code == acCodeBank {
+			return acCodeBank
+		}
+	}
+	return acCodeCash
 }
 
 func postStandalonePaymentInAccounting(tx *gorm.DB, userID uuid.UUID, payment *models.Payment, netAmount float64) error {
@@ -280,13 +395,7 @@ func postStandalonePaymentInAccounting(tx *gorm.DB, userID uuid.UUID, payment *m
 		return nil
 	}
 	desc := fmt.Sprintf("Payment in %s", payment.PaymentInNumber)
-	assetCode := acCodeCash
-	if id, err := glAssetAccountForPaymentMode(tx, userID, payment.Mode); err == nil {
-		var account models.Account
-		if tx.Where("id = ?", id).First(&account).Error == nil && account.Code == acCodeBank {
-			assetCode = acCodeBank
-		}
-	}
+	assetCode := settlementAccountCodeForMode(tx, userID, payment.Mode)
 	refNumber := payment.PaymentInNumber
 	if refNumber == "" {
 		refNumber = payment.ID.String()
@@ -302,13 +411,7 @@ func postStandalonePaymentOutAccounting(tx *gorm.DB, userID uuid.UUID, payment *
 		return nil
 	}
 	desc := fmt.Sprintf("Payment out %s", payment.PaymentOutNumber)
-	assetCode := acCodeCash
-	if id, err := glAssetAccountForPaymentMode(tx, userID, payment.Mode); err == nil {
-		var account models.Account
-		if tx.Where("id = ?", id).First(&account).Error == nil && account.Code == acCodeBank {
-			assetCode = acCodeBank
-		}
-	}
+	assetCode := settlementAccountCodeForMode(tx, userID, payment.Mode)
 	refNumber := payment.PaymentOutNumber
 	if refNumber == "" {
 		refNumber = payment.ID.String()

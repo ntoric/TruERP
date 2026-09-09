@@ -1,0 +1,37 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "TruERP desktop capabilities (splash + local UI)",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://127.0.0.1:*/*",
+      "http://localhost:*/*",
+      "http://127.0.0.1:*",
+      "http://localhost:*"
+    ]
+  },
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:webview:allow-set-webview-focus",
+    "shell:allow-open",
+    "dialog:default",
+    "updater:default",
+    "allow-frontend-ready",
+    "allow-app-url",
+    "allow-data-directory",
+    "allow-has-native-printing",
+    "allow-list-printers",
+    "allow-print-pdf",
+    "allow-save-pdf",
+    "allow-save-file",
+    "allow-pick-export-directory",
+    "allow-print-thermal",
+    "allow-print-raw-base64",
+    "allow-app-version",
+    "allow-check-for-updates",
+    "allow-download-and-install-update",
+    "allow-pos-queue"
+  ]
+}

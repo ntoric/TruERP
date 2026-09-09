@@ -1,6 +1,7 @@
 'use client'
 
 import type { InvoiceSettingsRecord, InvoiceTemplateCustomization } from '@/lib/invoiceTemplateSettings'
+import { invoiceLogoClass } from '@/lib/logoAspect'
 
 export interface GstPreviewBusiness {
   name?: string
@@ -11,6 +12,7 @@ export interface GstPreviewBusiness {
   phone?: string
   gstin?: string
   logo_url?: string
+  logo_aspect_ratio?: string
 }
 
 const SAMPLE_ITEMS = [
@@ -92,7 +94,7 @@ export default function GstInvoicePreviewSample({ settings, customization, busin
             {settings.show_logo ? (
               business?.logo_url ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={business.logo_url} alt="" className="h-12 w-12 rounded object-contain" />
+                <img src={business.logo_url} alt="" className={invoiceLogoClass(business.logo_aspect_ratio)} />
               ) : (
                 <div
                   className="flex h-12 w-12 items-center justify-center rounded-full text-[9px] font-bold text-white"
@@ -175,6 +177,9 @@ export default function GstInvoicePreviewSample({ settings, customization, busin
             {cols.hsn ? (
               <th className="border border-gray-200 px-2 py-1.5 text-left font-semibold">HSN</th>
             ) : null}
+            {cols.batch ? (
+              <th className="border border-gray-200 px-2 py-1.5 text-left font-semibold">BATCH</th>
+            ) : null}
             {cols.qty ? (
               <th className="border border-gray-200 px-2 py-1.5 text-left font-semibold">QTY.</th>
             ) : null}
@@ -205,6 +210,9 @@ export default function GstInvoicePreviewSample({ settings, customization, busin
               ) : null}
               {cols.hsn ? (
                 <td className="border border-gray-200 px-2 py-1.5">{row.hsn}</td>
+              ) : null}
+              {cols.batch ? (
+                <td className="border border-gray-200 px-2 py-1.5">BATCH001</td>
               ) : null}
               {cols.qty ? (
                 <td className="border border-gray-200 px-2 py-1.5">{row.qty}</td>

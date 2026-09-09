@@ -165,7 +165,7 @@ function InvoiceFooter({ wide }: { wide: boolean }) {
 }
 
 type Props = {
-  printSize: '2inch' | '3inch'
+  printSize: '1inch' | '1.5inch' | '2inch' | '3inch'
   business?: Partial<ThermalPreviewBusiness>
 }
 
@@ -176,8 +176,10 @@ export default function ThermalInvoicePreviewSample({ printSize, business }: Pro
     name: merged.name?.trim() ? merged.name : DEFAULT_BUSINESS.name,
   }
   const isWide = printSize === '3inch'
-  const widthPx = isWide ? 302 : 219
-  const fontSize = isWide ? 9 : 7
+  const isCompact = printSize === '1inch' || printSize === '1.5inch'
+  const widthPx =
+    printSize === '1inch' ? 120 : printSize === '1.5inch' ? 168 : isWide ? 302 : 219
+  const fontSize = printSize === '1inch' ? 6 : printSize === '1.5inch' ? 7 : isWide ? 9 : 7
   const addressLines2Inch = [
     'Marudhamalai Rd, Aishwarya Nagar,',
     'P N Pudur, Coimbatore, Tamil Nadu',
@@ -200,7 +202,7 @@ export default function ThermalInvoicePreviewSample({ printSize, business }: Pro
       }}
     >
       <div className="border border-gray-300 p-2">
-        {b.logo_url ? (
+        {b.logo_url && !isCompact ? (
           <div className="mb-2 flex justify-center">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -211,8 +213,12 @@ export default function ThermalInvoicePreviewSample({ printSize, business }: Pro
           </div>
         ) : null}
 
-        <p className="text-center text-[11px] font-bold tracking-wide">TAX INVOICE</p>
-        <p className="mt-1 text-center text-[10px] font-bold uppercase">{b.name}</p>
+        <p className={`text-center font-bold tracking-wide ${isCompact ? 'text-[8px]' : 'text-[11px]'}`}>
+          TAX INVOICE
+        </p>
+        <p className={`mt-1 text-center font-bold uppercase ${isCompact ? 'text-[8px]' : 'text-[10px]'}`}>
+          {b.name}
+        </p>
         {isWide ? (
           <p className="text-center text-[8px] leading-snug text-gray-800">{addressLineWide}</p>
         ) : useCustomAddress ? (

@@ -1,10 +1,11 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
+	"fmt"
 	"net/http"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -29,21 +30,43 @@ func parseReportDateRange(c *gin.Context) (time.Time, time.Time) {
 	return start, end
 }
 
+// reportPeriodStart returns the inclusive start of the rolling window used for period-scoped metrics.
+func reportPeriodStart(period string) time.Time {
+	now := time.Now()
+	loc := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, loc)
+	switch period {
+	case "daily":
+		return today.AddDate(0, 0, -29)
+	case "weekly":
+		return today.AddDate(0, 0, -7*11)
+	case "yearly":
+		return time.Date(now.Year()-4, 1, 1, 0, 0, 0, 0, loc)
+	default:
+		y, m, _ := now.Date()
+		return time.Date(y, m, 1, 0, 0, 0, 0, loc).AddDate(0, -11, 0)
+	}
+}
+
 func GetReportWidgets(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
-	monthStart := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
+	period := c.DefaultQuery("period", "monthly")
+	periodStart := reportPeriodStart(period)
 
 	type widgets struct {
-		TotalSales        float64 `json:"total_sales"`
-		MonthRevenue      float64 `json:"month_revenue"`
-		OutstandingAmount float64 `json:"outstanding_amount"`
-		OutstandingCount  int64   `json:"outstanding_count"`
-		InventoryValue    float64 `json:"inventory_value"`
-		LowStockCount     int64   `json:"low_stock_count"`
-		MonthTax          float64 `json:"month_tax"`
-		PaymentsInMonth   float64 `json:"payments_in_month"`
-		PaymentsOutMonth  float64 `json:"payments_out_month"`
-		MonthNetProfit    float64 `json:"month_net_profit"`
+		TotalSales           float64 `json:"total_sales"`
+		MonthRevenue         float64 `json:"month_revenue"`
+		OutstandingAmount    float64 `json:"outstanding_amount"`
+		OutstandingCount     int64   `json:"outstanding_count"`
+		InventoryValue       float64 `json:"inventory_value"`
+		LowStockCount        int64   `json:"low_stock_count"`
+		MonthTax             float64 `json:"month_tax"`
+		PaymentsInMonth      float64 `json:"payments_in_month"`
+		PaymentsOutMonth     float64 `json:"payments_out_month"`
+		PurchaseExpenseMonth float64 `json:"purchase_expense_month"`
+		AccountsPayable      float64 `json:"accounts_payable"`
+		AccountsPayableCount int64   `json:"accounts_payable_count"`
+		MonthNetProfit       float64 `json:"month_net_profit"`
 	}
 
 	var w widgets
@@ -51,32 +74,34 @@ func GetReportWidgets(c *gin.Context) {
 	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ?", userID, "paid").
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&w.TotalSales)
 
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ? AND date >= ?", userID, "paid", monthStart).
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status = ? AND date >= ?", userID, "paid", periodStart).
 		Select("COALESCE(SUM(total_amount), 0)").Scan(&w.MonthRevenue)
 
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ? AND total_amount > amount_paid", userID, []string{"sent", "overdue", "draft"}).
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ? AND total_amount > amount_paid", userID, []string{"sent", "partial", "overdue"}).
 		Select("COALESCE(SUM(total_amount - amount_paid), 0)").Scan(&w.OutstandingAmount)
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ? AND total_amount > amount_paid", userID, []string{"sent", "overdue", "draft"}).
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ? AND total_amount > amount_paid", userID, []string{"sent", "partial", "overdue"}).
 		Count(&w.OutstandingCount)
 
 	utils.DB.Model(&models.InventoryStock{}).Where("user_id = ?", userID).
 		Select("COALESCE(SUM(quantity * average_cost), 0)").Scan(&w.InventoryValue)
 
-	lowStockQuery := `
-		SELECT COUNT(DISTINCT p.id)
-		FROM products p
-		INNER JOIN inventory_stocks s ON p.id = s.product_id
-		WHERE p.user_id = ? AND p.low_stock_alert = true AND s.quantity <= p.min_stock
-	`
-	utils.DB.Raw(lowStockQuery, userID).Scan(&w.LowStockCount)
+	w.LowStockCount = countConsolidatedLowStockProducts(userID, false)
 
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ('paid', 'sent') AND date >= ?", userID, monthStart).
+	utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND status IN ('paid', 'sent') AND date >= ?", userID, periodStart).
 		Select("COALESCE(SUM(cgst_total + sgst_total + igst_total), 0)").Scan(&w.MonthTax)
 
-	utils.DB.Model(&models.Payment{}).Where("user_id = ? AND date >= ?", userID, monthStart).
+	utils.DB.Model(&models.Payment{}).Where("user_id = ? AND date >= ?", userID, periodStart).
 		Select("COALESCE(SUM(amount_received), 0)").Scan(&w.PaymentsInMonth)
-	utils.DB.Model(&models.PaymentOut{}).Where("user_id = ? AND date >= ?", userID, monthStart).
+	utils.DB.Model(&models.PaymentOut{}).Where("user_id = ? AND date >= ?", userID, periodStart).
 		Select("COALESCE(SUM(amount_paid), 0)").Scan(&w.PaymentsOutMonth)
+
+	// Purchase expense = full bill totals in period; AP = unpaid balances (all-time).
+	utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND bill_date >= ?", userID, periodStart).
+		Select("COALESCE(SUM(total_amount), 0)").Scan(&w.PurchaseExpenseMonth)
+	utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND total_amount > paid_amount", userID).
+		Select("COALESCE(SUM(total_amount - paid_amount), 0)").Scan(&w.AccountsPayable)
+	utils.DB.Model(&models.PurchaseBill{}).Where("user_id = ? AND total_amount > paid_amount", userID).
+		Count(&w.AccountsPayableCount)
 
 	var income, expense float64
 	utils.DB.Model(&models.Account{}).Where("user_id = ? AND is_active = ? AND account_type = ?", userID, true, "income").
@@ -85,7 +110,23 @@ func GetReportWidgets(c *gin.Context) {
 		Select("COALESCE(SUM(balance), 0)").Scan(&expense)
 	w.MonthNetProfit = income - expense
 
-	c.JSON(http.StatusOK, w)
+	c.JSON(http.StatusOK, gin.H{
+		"period":       period,
+		"period_start": periodStart.Format("2006-01-02"),
+		"total_sales":           w.TotalSales,
+		"month_revenue":         w.MonthRevenue,
+		"outstanding_amount":    w.OutstandingAmount,
+		"outstanding_count":     w.OutstandingCount,
+		"inventory_value":       w.InventoryValue,
+		"low_stock_count":       w.LowStockCount,
+		"month_tax":             w.MonthTax,
+		"payments_in_month":     w.PaymentsInMonth,
+		"payments_out_month":    w.PaymentsOutMonth,
+		"purchase_expense_month": w.PurchaseExpenseMonth,
+		"accounts_payable":      w.AccountsPayable,
+		"accounts_payable_count": w.AccountsPayableCount,
+		"month_net_profit":      w.MonthNetProfit,
+	})
 }
 
 func GetRevenueReport(c *gin.Context) {
@@ -102,50 +143,17 @@ func GetRevenueReport(c *gin.Context) {
 	}
 
 	var results []RevenueItem
-	var query string
-
-	switch period {
-	case "daily":
-		query = `
-			SELECT DATE(date) as period,
-				COALESCE(SUM(total_amount), 0) as gross,
-				COALESCE(SUM(sub_total - discount_total - invoice_discount), 0) as net,
-				COALESCE(SUM(tax_total), 0) as tax,
-				COUNT(*) as invoice_count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY DATE(date) ORDER BY period DESC LIMIT 30`
-	case "weekly":
-		query = `
-			SELECT strftime('%Y-W%W', date) as period,
-				COALESCE(SUM(total_amount), 0) as gross,
-				COALESCE(SUM(sub_total - discount_total - invoice_discount), 0) as net,
-				COALESCE(SUM(tax_total), 0) as tax,
-				COUNT(*) as invoice_count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y-W%W', date) ORDER BY period DESC LIMIT 12`
-	case "yearly":
-		query = `
-			SELECT strftime('%Y', date) as period,
-				COALESCE(SUM(total_amount), 0) as gross,
-				COALESCE(SUM(sub_total - discount_total - invoice_discount), 0) as net,
-				COALESCE(SUM(tax_total), 0) as tax,
-				COUNT(*) as invoice_count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y', date) ORDER BY period DESC LIMIT 5`
-	default:
-		query = `
-			SELECT strftime('%Y-%m', date) as period,
-				COALESCE(SUM(total_amount), 0) as gross,
-				COALESCE(SUM(sub_total - discount_total - invoice_discount), 0) as net,
-				COALESCE(SUM(tax_total), 0) as tax,
-				COUNT(*) as invoice_count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y-%m', date) ORDER BY period DESC LIMIT 12`
-	}
+	periodExpr := utils.SQLPeriodExpr("date", period)
+	limit := utils.SQLPeriodLimit(period)
+	query := fmt.Sprintf(`
+		SELECT %s as period,
+			COALESCE(SUM(total_amount), 0) as gross,
+			COALESCE(SUM(sub_total - discount_total - invoice_discount), 0) as net,
+			COALESCE(SUM(tax_total), 0) as tax,
+			COUNT(*) as invoice_count,
+			COALESCE(AVG(total_amount), 0) as avg_invoice
+		FROM invoices WHERE user_id = ? AND status = 'paid'
+		GROUP BY %s ORDER BY period DESC LIMIT %s`, periodExpr, periodExpr, limit)
 
 	if err := utils.DB.Raw(query, userID).Scan(&results).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate revenue report"})
@@ -168,12 +176,12 @@ func GetRevenueReport(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"period": period,
 		"summary": gin.H{
-			"total_gross":        totalGross,
-			"total_net":          totalNet,
-			"total_tax":          totalTax,
-			"total_invoices":     totalInvoices,
-			"avg_invoice_value":  avgInvoice,
-			"periods_in_report":  len(results),
+			"total_gross":       totalGross,
+			"total_net":         totalNet,
+			"total_tax":         totalTax,
+			"total_invoices":    totalInvoices,
+			"avg_invoice_value": avgInvoice,
+			"periods_in_report": len(results),
 		},
 		"periods": results,
 	})
@@ -191,34 +199,13 @@ func GetSalesReportDetailed(c *gin.Context) {
 	}
 
 	var series []SalesItem
-	var query string
-
-	switch period {
-	case "daily":
-		query = `
-			SELECT DATE(date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY DATE(date) ORDER BY period DESC LIMIT 30`
-	case "weekly":
-		query = `
-			SELECT strftime('%Y-W%W', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y-W%W', date) ORDER BY period DESC LIMIT 12`
-	case "yearly":
-		query = `
-			SELECT strftime('%Y', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y', date) ORDER BY period DESC LIMIT 5`
-	default:
-		query = `
-			SELECT strftime('%Y-%m', date) as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count,
-				COALESCE(AVG(total_amount), 0) as avg_invoice
-			FROM invoices WHERE user_id = ? AND status = 'paid'
-			GROUP BY strftime('%Y-%m', date) ORDER BY period DESC LIMIT 12`
-	}
+	periodExpr := utils.SQLPeriodExpr("date", period)
+	limit := utils.SQLPeriodLimit(period)
+	query := fmt.Sprintf(`
+		SELECT %s as period, COALESCE(SUM(total_amount), 0) as sales, COUNT(*) as count,
+			COALESCE(AVG(total_amount), 0) as avg_invoice
+		FROM invoices WHERE user_id = ? AND status = 'paid'
+		GROUP BY %s ORDER BY period DESC LIMIT %s`, periodExpr, periodExpr, limit)
 
 	if err := utils.DB.Raw(query, userID).Scan(&series).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate sales report"})
@@ -253,14 +240,15 @@ func GetSalesReportDetailed(c *gin.Context) {
 	}
 
 	var statusBreakdown []struct {
-		Status string `json:"status"`
-		Count  int64  `json:"count"`
+		Status string  `json:"status"`
+		Count  int64   `json:"count"`
 		Amount float64 `json:"amount"`
 	}
+	periodStart := reportPeriodStart(period)
 	utils.DB.Raw(`
 		SELECT status, COUNT(*) as count, COALESCE(SUM(total_amount), 0) as amount
-		FROM invoices WHERE user_id = ?
-		GROUP BY status ORDER BY amount DESC`, userID).Scan(&statusBreakdown)
+		FROM invoices WHERE user_id = ? AND date >= ?
+		GROUP BY status ORDER BY amount DESC`, userID, periodStart).Scan(&statusBreakdown)
 
 	c.JSON(http.StatusOK, gin.H{
 		"period": period,
@@ -272,29 +260,31 @@ func GetSalesReportDetailed(c *gin.Context) {
 			"best_period_sales": bestSales,
 			"growth_vs_prior":   growthPct,
 		},
-		"series":             series,
-		"status_breakdown":   statusBreakdown,
+		"series":           series,
+		"status_breakdown": statusBreakdown,
 	})
 }
 
 func GetTaxReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	period := c.DefaultQuery("period", "monthly")
 
 	var months []models.GSTReport
-	query := `
-		SELECT 
-			strftime('%Y-%m', date) as month,
+	periodExpr := utils.SQLPeriodExpr("date", period)
+	limit := utils.SQLPeriodLimit(period)
+	query := fmt.Sprintf(`
+		SELECT
+			%s as month,
 			COALESCE(SUM(cgst_total), 0) as cgst,
 			COALESCE(SUM(sgst_total), 0) as sgst,
 			COALESCE(SUM(igst_total), 0) as igst,
 			COALESCE(SUM(cgst_total + sgst_total + igst_total), 0) as total_tax,
 			COALESCE(SUM(total_amount), 0) as total_value
-		FROM invoices 
+		FROM invoices
 		WHERE user_id = ? AND status IN ('paid', 'sent')
-		GROUP BY strftime('%Y-%m', date)
+		GROUP BY %s
 		ORDER BY month DESC
-		LIMIT 12
-	`
+		LIMIT %s`, periodExpr, periodExpr, limit)
 	if err := utils.DB.Raw(query, userID).Scan(&months).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate tax report"})
 		return
@@ -314,14 +304,15 @@ func GetTaxReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"period": period,
 		"summary": gin.H{
-			"total_cgst":           totalCGST,
-			"total_sgst":           totalSGST,
-			"total_igst":           totalIGST,
-			"total_tax":            totalTax,
-			"taxable_turnover":     totalValue,
-			"effective_tax_rate":   effectiveRate,
-			"months_in_report":     len(months),
+			"total_cgst":         totalCGST,
+			"total_sgst":         totalSGST,
+			"total_igst":         totalIGST,
+			"total_tax":          totalTax,
+			"taxable_turnover":   totalValue,
+			"effective_tax_rate": effectiveRate,
+			"months_in_report":   len(months),
 		},
 		"months": months,
 	})
@@ -346,10 +337,10 @@ func GetOutstandingInvoicesReport(c *gin.Context) {
 	}
 
 	type PartyOutstanding struct {
-		PartyID       uuid.UUID `json:"party_id"`
-		PartyName     string    `json:"party_name"`
-		InvoiceCount  int       `json:"invoice_count"`
-		Outstanding   float64   `json:"outstanding"`
+		PartyID      uuid.UUID `json:"party_id"`
+		PartyName    string    `json:"party_name"`
+		InvoiceCount int       `json:"invoice_count"`
+		Outstanding  float64   `json:"outstanding"`
 	}
 
 	type AgingBucket struct {
@@ -367,8 +358,9 @@ func GetOutstandingInvoicesReport(c *gin.Context) {
 			(i.total_amount - i.amount_paid) as outstanding
 		FROM invoices i
 		INNER JOIN parties p ON p.id = i.party_id
-		WHERE i.user_id = ? AND i.status IN ('sent', 'overdue')
+		WHERE i.user_id = ? AND i.status IN ('sent', 'partial', 'overdue')
 			AND (i.total_amount - i.amount_paid) > 0
+			AND i.deleted_at IS NULL
 		ORDER BY i.due_date ASC, i.date DESC
 	`
 	if err := utils.DB.Raw(query, userID).Scan(&rows).Error; err != nil {
@@ -449,15 +441,17 @@ func GetOutstandingInvoicesReport(c *gin.Context) {
 			"overdue_count":     overdueCount,
 			"avg_days_overdue":  avgDaysOverdue,
 		},
-		"aging":     aging,
-		"by_party":  byParty,
-		"invoices":  rows,
+		"aging":    aging,
+		"by_party": byParty,
+		"invoices": rows,
 	})
 }
 
 func GetCustomerWiseReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	limit := c.DefaultQuery("limit", "25")
+	period := c.DefaultQuery("period", "monthly")
+	periodStart := reportPeriodStart(period)
 
 	type CustomerRow struct {
 		PartyID          uuid.UUID  `json:"party_id"`
@@ -481,22 +475,22 @@ func GetCustomerWiseReport(c *gin.Context) {
 			p.phone,
 			p.email,
 			p.gstin,
-			COALESCE(SUM(CASE WHEN i.status = 'paid' THEN i.total_amount ELSE 0 END), 0) as total_sales,
+			COALESCE(SUM(CASE WHEN i.status = 'paid' AND i.date >= ? THEN i.total_amount ELSE 0 END), 0) as total_sales,
 			COALESCE(SUM(CASE WHEN i.status NOT IN ('cancelled', 'paid') THEN i.total_amount - i.amount_paid ELSE 0 END), 0) as total_outstanding,
-			COUNT(i.id) as invoice_count,
-			SUM(CASE WHEN i.status = 'paid' THEN 1 ELSE 0 END) as paid_count,
-			COALESCE(AVG(CASE WHEN i.status = 'paid' THEN i.total_amount END), 0) as avg_invoice_value,
-			MAX(i.date) as last_invoice_date
+			COUNT(CASE WHEN i.date >= ? THEN i.id END) as invoice_count,
+			SUM(CASE WHEN i.status = 'paid' AND i.date >= ? THEN 1 ELSE 0 END) as paid_count,
+			COALESCE(AVG(CASE WHEN i.status = 'paid' AND i.date >= ? THEN i.total_amount END), 0) as avg_invoice_value,
+			MAX(CASE WHEN i.date >= ? THEN i.date END) as last_invoice_date
 		FROM parties p
 		LEFT JOIN invoices i ON p.id = i.party_id AND i.user_id = ?
 		WHERE p.user_id = ? AND p.party_type = 'customer'
 		GROUP BY p.id, p.name, p.phone, p.email, p.gstin
-		HAVING invoice_count > 0 OR total_outstanding > 0
+		HAVING total_sales > 0 OR total_outstanding > 0
 		ORDER BY total_sales DESC
 		LIMIT ?
 	`
 
-	if err := utils.DB.Raw(query, userID, userID, limit).Scan(&results).Error; err != nil {
+	if err := utils.DB.Raw(query, periodStart, periodStart, periodStart, periodStart, periodStart, userID, userID, limit).Scan(&results).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate customer report"})
 		return
 	}
@@ -510,10 +504,11 @@ func GetCustomerWiseReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"period": period,
 		"summary": gin.H{
-			"customer_count":      totalCustomers,
-			"total_paid_sales":    totalSales,
-			"total_outstanding":   totalOutstanding,
+			"customer_count":    totalCustomers,
+			"total_paid_sales":  totalSales,
+			"total_outstanding": totalOutstanding,
 			"avg_sales_per_party": func() float64 {
 				if totalCustomers == 0 {
 					return 0
@@ -528,6 +523,8 @@ func GetCustomerWiseReport(c *gin.Context) {
 func GetProductWiseReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	limit := c.DefaultQuery("limit", "25")
+	period := c.DefaultQuery("period", "monthly")
+	periodStart := reportPeriodStart(period)
 
 	type ProductRow struct {
 		ProductID    uuid.UUID `json:"product_id"`
@@ -556,12 +553,12 @@ func GetProductWiseReport(c *gin.Context) {
 			0 as share_percent
 		FROM stock_entries se
 		INNER JOIN products p ON p.id = se.product_id
-		WHERE se.user_id = ? AND se.entry_type = 'sale' AND se.product_id IS NOT NULL
+		WHERE se.user_id = ? AND se.entry_type = 'sale' AND se.product_id IS NOT NULL AND se.entry_date >= ?
 		GROUP BY p.id, p.name, p.sku, p.category, p.unit, p.sale_price
 		ORDER BY quantity_sold DESC
 		LIMIT ?
 	`
-	if err := utils.DB.Raw(stockQuery, userID, limit).Scan(&byStock).Error; err != nil {
+	if err := utils.DB.Raw(stockQuery, userID, periodStart, limit).Scan(&byStock).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate product report"})
 		return
 	}
@@ -583,12 +580,12 @@ func GetProductWiseReport(c *gin.Context) {
 				0 as share_percent
 			FROM invoice_items ii
 			INNER JOIN invoices i ON i.id = ii.invoice_id
-			WHERE i.user_id = ? AND i.status = 'paid'
+			WHERE i.user_id = ? AND i.status = 'paid' AND i.date >= ?
 			GROUP BY ii.description, ii.unit
 			ORDER BY revenue DESC
 			LIMIT ?
 		`
-		if err := utils.DB.Raw(lineQuery, userID, limit).Scan(&byLineItem).Error; err != nil {
+		if err := utils.DB.Raw(lineQuery, userID, periodStart, limit).Scan(&byLineItem).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate product report"})
 			return
 		}
@@ -607,11 +604,12 @@ func GetProductWiseReport(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
+		"period": period,
 		"source": source,
 		"summary": gin.H{
-			"product_count":   len(products),
-			"total_revenue":   totalRevenue,
-			"total_qty_sold":  totalQty,
+			"product_count":  len(products),
+			"total_revenue":  totalRevenue,
+			"total_qty_sold": totalQty,
 			"avg_unit_revenue": func() float64 {
 				if totalQty == 0 {
 					return 0
@@ -623,16 +621,104 @@ func GetProductWiseReport(c *gin.Context) {
 	})
 }
 
+func GetCategoryWiseReport(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+	limit := c.DefaultQuery("limit", "25")
+	period := c.DefaultQuery("period", "monthly")
+	periodStart := reportPeriodStart(period)
+
+	type CategoryRow struct {
+		Category     string  `json:"category"`
+		QuantitySold float64 `json:"quantity_sold"`
+		Revenue      float64 `json:"revenue"`
+		ProductCount int64   `json:"product_count"`
+		SharePercent float64 `json:"share_percent"`
+	}
+
+	source := "stock_entries"
+	var categories []CategoryRow
+	stockQuery := `
+		SELECT
+			COALESCE(NULLIF(TRIM(p.category), ''), 'Uncategorized') as category,
+			COALESCE(SUM(ABS(se.quantity)), 0) as quantity_sold,
+			COALESCE(SUM(ABS(se.quantity) * p.sale_price), 0) as revenue,
+			COUNT(DISTINCT p.id) as product_count,
+			0 as share_percent
+		FROM stock_entries se
+		INNER JOIN products p ON p.id = se.product_id
+		WHERE se.user_id = ? AND se.entry_type = 'sale' AND se.product_id IS NOT NULL AND se.entry_date >= ?
+		GROUP BY COALESCE(NULLIF(TRIM(p.category), ''), 'Uncategorized')
+		ORDER BY revenue DESC
+		LIMIT ?
+	`
+	if err := utils.DB.Raw(stockQuery, userID, periodStart, limit).Scan(&categories).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate category report"})
+		return
+	}
+
+	if len(categories) == 0 {
+		source = "invoice_line_items"
+		lineQuery := `
+			SELECT
+				COALESCE(NULLIF(TRIM(p.category), ''), 'Uncategorized') as category,
+				COALESCE(SUM(ii.quantity), 0) as quantity_sold,
+				COALESCE(SUM(ii.total), 0) as revenue,
+				COUNT(DISTINCT p.id) as product_count,
+				0 as share_percent
+			FROM invoice_items ii
+			INNER JOIN invoices i ON i.id = ii.invoice_id
+			LEFT JOIN products p ON p.id = ii.product_id
+			WHERE i.user_id = ? AND i.status = 'paid' AND i.date >= ?
+			GROUP BY COALESCE(NULLIF(TRIM(p.category), ''), 'Uncategorized')
+			ORDER BY revenue DESC
+			LIMIT ?
+		`
+		if err := utils.DB.Raw(lineQuery, userID, periodStart, limit).Scan(&categories).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate category report"})
+			return
+		}
+	}
+
+	var totalRevenue, totalQty float64
+	for _, cat := range categories {
+		totalRevenue += cat.Revenue
+		totalQty += cat.QuantitySold
+	}
+	for i := range categories {
+		if totalRevenue > 0 {
+			categories[i].SharePercent = (categories[i].Revenue / totalRevenue) * 100
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"period": period,
+		"source": source,
+		"summary": gin.H{
+			"category_count": len(categories),
+			"total_revenue":  totalRevenue,
+			"total_qty_sold": totalQty,
+			"avg_unit_revenue": func() float64 {
+				if totalQty == 0 {
+					return 0
+				}
+				return totalRevenue / totalQty
+			}(),
+		},
+		"categories": categories,
+	})
+}
+
 func GetPaymentsReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	period := c.DefaultQuery("period", "monthly")
+	periodStart := reportPeriodStart(period)
 
 	type PeriodRow struct {
-		Period     string  `json:"period"`
-		AmountIn   float64 `json:"amount_in"`
-		AmountOut  float64 `json:"amount_out"`
-		CountIn    int64   `json:"count_in"`
-		CountOut   int64   `json:"count_out"`
+		Period    string  `json:"period"`
+		AmountIn  float64 `json:"amount_in"`
+		AmountOut float64 `json:"amount_out"`
+		CountIn   int64   `json:"count_in"`
+		CountOut  int64   `json:"count_out"`
 	}
 
 	type ModeRow struct {
@@ -642,22 +728,8 @@ func GetPaymentsReport(c *gin.Context) {
 		Count     int64   `json:"count"`
 	}
 
-	var periodExpr string
-	var limit string
-	switch period {
-	case "daily":
-		periodExpr = "DATE(date)"
-		limit = "30"
-	case "weekly":
-		periodExpr = "strftime('%Y-W%W', date)"
-		limit = "12"
-	case "yearly":
-		periodExpr = "strftime('%Y', date)"
-		limit = "5"
-	default:
-		periodExpr = "strftime('%Y-%m', date)"
-		limit = "12"
-	}
+	periodExpr := utils.SQLPeriodExpr("date", period)
+	limit := utils.SQLPeriodLimit(period)
 
 	var timeline []PeriodRow
 	inQuery := `
@@ -705,13 +777,13 @@ func GetPaymentsReport(c *gin.Context) {
 	var byMode []ModeRow
 	modeInQuery := `
 		SELECT mode, 'in' as direction, COALESCE(SUM(amount_received), 0) as total, COUNT(*) as count
-		FROM payments WHERE user_id = ? AND deleted_at IS NULL GROUP BY mode`
-	utils.DB.Raw(modeInQuery, userID).Scan(&byMode)
+		FROM payments WHERE user_id = ? AND deleted_at IS NULL AND date >= ? GROUP BY mode`
+	utils.DB.Raw(modeInQuery, userID, periodStart).Scan(&byMode)
 	var modeOut []ModeRow
 	modeOutQuery := `
 		SELECT mode, 'out' as direction, COALESCE(SUM(amount_paid), 0) as total, COUNT(*) as count
-		FROM payment_outs WHERE user_id = ? AND deleted_at IS NULL GROUP BY mode`
-	utils.DB.Raw(modeOutQuery, userID).Scan(&modeOut)
+		FROM payment_outs WHERE user_id = ? AND deleted_at IS NULL AND date >= ? GROUP BY mode`
+	utils.DB.Raw(modeOutQuery, userID, periodStart).Scan(&modeOut)
 	byMode = append(byMode, modeOut...)
 
 	var totalIn, totalOut float64
@@ -748,21 +820,21 @@ func GetInventoryReport(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	type StockRow struct {
-		ProductID     uuid.UUID `json:"product_id"`
-		ProductName   string    `json:"product_name"`
-		SKU           string    `json:"sku"`
-		Category      string    `json:"category"`
-		StockQty      float64   `json:"stock_qty"`
-		ReservedQty   float64   `json:"reserved_qty"`
-		AvailableQty  float64   `json:"available_qty"`
-		MinStock      float64   `json:"min_stock"`
-		CostPrice     float64   `json:"cost_price"`
-		SalePrice     float64   `json:"sale_price"`
-		TotalValue    float64   `json:"total_value"`
-		RetailValue   float64   `json:"retail_value"`
-		OutletName    string    `json:"outlet_name"`
-		IsLowStock    bool      `json:"is_low_stock"`
-		IsOutOfStock  bool      `json:"is_out_of_stock"`
+		ProductID    uuid.UUID `json:"product_id"`
+		ProductName  string    `json:"product_name"`
+		SKU          string    `json:"sku"`
+		Category     string    `json:"category"`
+		StockQty     float64   `json:"stock_qty"`
+		ReservedQty  float64   `json:"reserved_qty"`
+		AvailableQty float64   `json:"available_qty"`
+		MinStock     float64   `json:"min_stock"`
+		CostPrice    float64   `json:"cost_price"`
+		SalePrice    float64   `json:"sale_price"`
+		TotalValue   float64   `json:"total_value"`
+		RetailValue  float64   `json:"retail_value"`
+		OutletName   string    `json:"outlet_name"`
+		IsLowStock   bool      `json:"is_low_stock"`
+		IsOutOfStock bool      `json:"is_out_of_stock"`
 	}
 
 	var stocks []models.InventoryStock
@@ -784,45 +856,84 @@ func GetInventoryReport(c *gin.Context) {
 		}
 	}
 
+	// Consolidate batches into one row per product + outlet (same as stock balance).
+	type stockKey struct {
+		ProductID uuid.UUID
+		OutletID  uuid.UUID
+	}
+	type aggregatedStock struct {
+		product      models.Product
+		outletID     uuid.UUID
+		stockQty     float64
+		reservedQty  float64
+		availableQty float64
+		totalValue   float64
+	}
+
+	aggregated := make(map[stockKey]*aggregatedStock)
+	for _, stock := range stocks {
+		key := stockKey{ProductID: stock.ProductID, OutletID: stock.OutletID}
+		lineValue := stock.Quantity * stock.AverageCost
+		if existing, ok := aggregated[key]; ok {
+			existing.stockQty += stock.Quantity
+			existing.reservedQty += stock.ReservedQty
+			existing.availableQty += stock.AvailableQty
+			existing.totalValue += lineValue
+			continue
+		}
+		aggregated[key] = &aggregatedStock{
+			product:      stock.Product,
+			outletID:     stock.OutletID,
+			stockQty:     stock.Quantity,
+			reservedQty:  stock.ReservedQty,
+			availableQty: stock.AvailableQty,
+			totalValue:   lineValue,
+		}
+	}
+
 	var items []StockRow
 	var totalValue, totalRetail, totalQty float64
 	var lowStockCount, outOfStockCount int64
 	categoryValue := make(map[string]float64)
 
-	for _, stock := range stocks {
-		value := stock.Quantity * stock.AverageCost
-		retail := stock.Quantity * stock.Product.SalePrice
+	for _, row := range aggregated {
+		value := row.totalValue
+		retail := row.stockQty * row.product.SalePrice
+		costPrice := row.product.PurchasePrice
+		if row.stockQty > 0 {
+			costPrice = value / row.stockQty
+		}
 		totalValue += value
 		totalRetail += retail
-		totalQty += stock.Quantity
-		isLow := stock.Product.LowStockAlert && stock.Quantity <= stock.Product.MinStock
-		isOut := stock.Quantity <= 0
+		totalQty += row.stockQty
+		isLow := row.product.LowStockAlert && row.stockQty <= row.product.MinStock
+		isOut := row.stockQty <= 0
 		if isLow {
 			lowStockCount++
 		}
 		if isOut {
 			outOfStockCount++
 		}
-		cat := stock.Product.Category
+		cat := row.product.Category
 		if cat == "" {
 			cat = "Uncategorized"
 		}
 		categoryValue[cat] += value
 
 		items = append(items, StockRow{
-			ProductID:    stock.ProductID,
-			ProductName:  stock.Product.Name,
-			SKU:          stock.Product.SKU,
+			ProductID:    row.product.ID,
+			ProductName:  row.product.Name,
+			SKU:          row.product.SKU,
 			Category:     cat,
-			StockQty:     stock.Quantity,
-			ReservedQty:  stock.ReservedQty,
-			AvailableQty: stock.AvailableQty,
-			MinStock:     stock.Product.MinStock,
-			CostPrice:    stock.AverageCost,
-			SalePrice:    stock.Product.SalePrice,
+			StockQty:     row.stockQty,
+			ReservedQty:  row.reservedQty,
+			AvailableQty: row.availableQty,
+			MinStock:     row.product.MinStock,
+			CostPrice:    costPrice,
+			SalePrice:    row.product.SalePrice,
 			TotalValue:   value,
 			RetailValue:  retail,
-			OutletName:   warehouseMap[stock.OutletID],
+			OutletName:   warehouseMap[row.outletID],
 			IsLowStock:   isLow,
 			IsOutOfStock: isOut,
 		})
@@ -839,11 +950,11 @@ func GetInventoryReport(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"summary": gin.H{
-			"total_value":       totalValue,
+			"total_value":        totalValue,
 			"total_retail_value": totalRetail,
-			"total_quantity":    totalQty,
-			"sku_locations":     len(items),
-			"low_stock_count":   lowStockCount,
+			"total_quantity":     totalQty,
+			"sku_locations":      len(items),
+			"low_stock_count":    lowStockCount,
 			"out_of_stock_count": outOfStockCount,
 		},
 		"categories": categories,
@@ -894,9 +1005,21 @@ func GetCustomReport(c *gin.Context) {
 		}
 	case "purchases":
 		query := `
-			SELECT DATE(date) as label, COALESCE(SUM(total_amount), 0) as amount, COUNT(*) as count
-			FROM purchase_bills WHERE user_id = ? AND deleted_at IS NULL AND date BETWEEN ? AND ?
-			GROUP BY DATE(date) ORDER BY label DESC`
+			SELECT DATE(bill_date) as label, COALESCE(SUM(total_amount), 0) as amount, COUNT(*) as count
+			FROM purchase_bills WHERE user_id = ? AND deleted_at IS NULL AND bill_date BETWEEN ? AND ?
+			GROUP BY DATE(bill_date) ORDER BY label DESC`
+		if err := utils.DB.Raw(query, userID, start, end).Scan(&rows).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to run custom report"})
+			return
+		}
+	case "accounts_payable":
+		query := `
+			SELECT DATE(bill_date) as label,
+				COALESCE(SUM(CASE WHEN total_amount > paid_amount THEN total_amount - paid_amount ELSE 0 END), 0) as amount,
+				COUNT(*) as count
+			FROM purchase_bills WHERE user_id = ? AND deleted_at IS NULL AND bill_date BETWEEN ? AND ?
+				AND total_amount > paid_amount
+			GROUP BY DATE(bill_date) ORDER BY label DESC`
 		if err := utils.DB.Raw(query, userID, start, end).Scan(&rows).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to run custom report"})
 			return

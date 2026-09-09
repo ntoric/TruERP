@@ -191,17 +191,11 @@ func createImportedInvoice(userID uuid.UUID, userName string, lines []invoiceImp
 		return fmt.Errorf("party %q not found", header.partyName)
 	}
 
-	invoiceNumber := header.invoiceNumber
+	invoiceNumber := strings.TrimSpace(header.invoiceNumber)
 	if invoiceNumber == "" {
-		var count int64
-		utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID).Count(&count)
-		invoiceNumber = fmt.Sprintf("INV-%04d", count+1)
-	} else {
-		var existing int64
-		utils.DB.Model(&models.Invoice{}).Where("user_id = ? AND invoice_number = ?", userID, invoiceNumber).Count(&existing)
-		if existing > 0 {
-			return fmt.Errorf("invoice number %q already exists", invoiceNumber)
-		}
+		invoiceNumber = allocateUniqueInvoiceNumber(userID, "")
+	} else if invoiceNumberInUse(userID, invoiceNumber, uuid.Nil) {
+		return fmt.Errorf("invoice number %q already exists", invoiceNumber)
 	}
 
 	invoice := models.Invoice{
@@ -234,8 +228,15 @@ func createImportedInvoice(userID uuid.UUID, userName string, lines []invoiceImp
 			sgst = itemTax / 2
 		}
 
+		var productID *uuid.UUID
+		var product models.Product
+		if err := utils.DB.Where("user_id = ? AND LOWER(name) = LOWER(?)", userID, line.itemDescription).First(&product).Error; err == nil {
+			productID = &product.ID
+		}
+
 		invoice.Items = append(invoice.Items, models.InvoiceItem{
 			ID:          uuid.New(),
+			ProductID:   productID,
 			Description: line.itemDescription,
 			Quantity:    line.quantity,
 			Unit:        line.unit,
@@ -283,28 +284,16 @@ func createImportedInvoice(userID uuid.UUID, userName string, lines []invoiceImp
 
 	recordInvoiceStatusHistory(invoice.ID, userID, "", invoice.Status, "Invoice imported from CSV", userName)
 
-	for _, item := range invoice.Items {
-		entry := models.StockEntry{
-			ID:         uuid.New(),
-			UserID:     userID,
-			ItemName:   item.Description,
-			EntryType:  "sale",
-			Quantity:   -item.Quantity,
-			BalanceQty: 0,
-			CostPrice:  item.UnitPrice,
-			EntryDate:  invoice.Date,
-		}
-		utils.DB.Create(&entry)
-	}
+	applyInvoiceSaleStock(userID, &invoice)
 
 	if err := postInvoiceAccounting(utils.DB, userID, &invoice); err != nil {
 		fmt.Printf("[DEBUG] createImportedInvoice - accounting error: %v\n", err)
 	}
 
 	if invoice.AmountPaid > 0 {
-		desc := fmt.Sprintf("Sales invoice %s", invoice.InvoiceNumber)
-		if err := recordSalePaymentIn(utils.DB, userID, invoice.BankAccountID, invoice.AmountPaid, invoice.Date, invoice.InvoiceNumber, desc); err != nil {
-			fmt.Printf("[DEBUG] createImportedInvoice - cash ledger error: %v\n", err)
+		notes := fmt.Sprintf("Auto-created from sales invoice %s", invoice.InvoiceNumber)
+		if err := createLinkedSalePaymentIn(utils.DB, userID, &invoice, invoice.AmountPaid, invoice.Date, notes); err != nil {
+			fmt.Printf("[DEBUG] createImportedInvoice - payment in error: %v\n", err)
 		}
 	}
 
