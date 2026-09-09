@@ -1,7 +1,7 @@
 'use client'
 
 import { useRef, useState } from 'react'
-import { apiFetch } from '@/hooks/useAuth'
+import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Upload, Loader2, FileArchive, CheckCircle2, AlertTriangle, FileUp } from 'lucide-react'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { isSuperAdmin } from '@/lib/roles'
 
 interface MigrationStep {
   step: string
@@ -21,12 +22,28 @@ interface MigrationResult {
 }
 
 export default function MigrationPage() {
+  const { user } = useAuth()
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [snapshotHtml, setSnapshotHtml] = useState(false)
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<MigrationResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+
+  if (!user || !isSuperAdmin(user.role)) {
+    return (
+      <DashboardLayout>
+        <Card className="max-w-lg">
+          <CardHeader>
+            <CardTitle>Access denied</CardTitle>
+            <p className="text-sm text-gray-500">
+              Only Super Admins can access Data Migration.
+            </p>
+          </CardHeader>
+        </Card>
+      </DashboardLayout>
+    )
+  }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0]

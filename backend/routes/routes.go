@@ -122,7 +122,7 @@ func SetupRoutes(r *gin.Engine) {
 		payments.POST("", controllers.CreatePayment)
 		payments.DELETE("/:id", controllers.DeletePayment)
 		payments.GET("/:id/pdf", controllers.GenerateReceiptPDF)
-		payments.POST("/import/csv", controllers.ImportPaymentsCSV)
+		payments.POST("/import/csv", middleware.SuperAdminRequired(), controllers.ImportPaymentsCSV)
 	}
 
 	// Document generation routes
@@ -153,7 +153,7 @@ func SetupRoutes(r *gin.Engine) {
 		expenses.GET("/:id", controllers.GetExpense)
 		expenses.PUT("/:id", controllers.UpdateExpense)
 		expenses.DELETE("/:id", controllers.DeleteExpense)
-		expenses.POST("/import/csv", controllers.ImportExpensesCSV)
+		expenses.POST("/import/csv", middleware.SuperAdminRequired(), controllers.ImportExpensesCSV)
 	}
 
 	// Expense category routes (separate from product categories)
@@ -335,8 +335,8 @@ func SetupRoutes(r *gin.Engine) {
 		purchase.GET("/bills/vendor/:vendorId/recent-products", controllers.GetVendorRecentProducts)
 		purchase.POST("/bills/labels", controllers.PrintPurchaseBillLabels)
 		purchase.POST("/parse-bill-ai", controllers.ParseBillWithAI)
-		purchase.POST("/bills/import/csv", controllers.ImportPurchaseBillsCSV)
-		purchase.POST("/bills/download-source", controllers.DownloadSourcePurchaseBills)
+		purchase.POST("/bills/import/csv", middleware.SuperAdminRequired(), controllers.ImportPurchaseBillsCSV)
+		purchase.POST("/bills/download-source", middleware.SuperAdminRequired(), controllers.DownloadSourcePurchaseBills)
 	}
 
 	// GST routes
@@ -540,7 +540,7 @@ func SetupRoutes(r *gin.Engine) {
 		parties.DELETE("/:id", controllers.DeleteParty)
 		parties.POST("/bulk/delete", controllers.BulkDeleteParties)
 		parties.POST("/bulk/update-category", controllers.BulkUpdatePartyCategory)
-		parties.POST("/import/csv", controllers.ImportPartiesCSV)
+		parties.POST("/import/csv", middleware.SuperAdminRequired(), controllers.ImportPartiesCSV)
 	}
 
 	// Sales Return routes
@@ -930,9 +930,9 @@ func SetupRoutes(r *gin.Engine) {
 		portal.POST("/tickets", controllers.PortalCreateTicket)
 	}
 
-	// Migration routes (myBillBook and other source imports)
+	// Migration routes (myBillBook and other source imports) — super admin only
 	migration := r.Group("/api/v1/migration")
-	migration.Use(middleware.AuthRequired())
+	migration.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
 	{
 		migration.POST("/mybillbook", controllers.MigrateMyBillBookZIP)
 	}

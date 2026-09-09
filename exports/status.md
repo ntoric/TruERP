@@ -30,3 +30,6 @@ Legend: [ ] pending · [~] in progress · [x] done · [!] blocked
 - Purchase links (`https://mybillbook.in/cpp/<id>`) resolve to a React SPA HTML page, not a direct PDF. Download feature uses chromedp to render → PDF, plus an HTML snapshot stored via the storage service during migration (when `snapshot_html=true`).
 - `go.mod` go directive bumped 1.25.4 → 1.26 (required by `github.com/chromedp/cdproto`).
 - chromedp requires Chromium/Chrome installed on the host running the backend. The download endpoint returns a `_skipped.csv` manifest listing any bills it could not render.
+- **Access control**: all migration functionality is restricted to super admin (owner / super_admin role).
+  - Backend: `middleware.SuperAdminRequired()` on every migration endpoint (parties/purchase/payments/expenses import, purchase bills download-source, and the `/migration/mybillbook` orchestrator group).
+  - Frontend: "Data Migration" nav item is `superAdminOnly`; `/migration` page renders an "Access denied" card for non-super-admins; the per-row and bulk "Download Source" buttons on the purchase invoices list are hidden for non-super-admins. "Open Source" (just opens the external link) remains visible to anyone who can view the bill.

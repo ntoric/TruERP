@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
-import { apiFetch } from '@/hooks/useAuth'
+import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -21,6 +21,7 @@ import { Plus, Search, Download, MoreVertical, Edit, X, Trash2, Printer, Eye, Lo
 import BulkCreateProductsDialog from '@/components/BulkCreateProductsDialog'
 import JSZip from 'jszip'
 import { notifyError, notifySuccess } from '@/lib/notify'
+import { isSuperAdmin } from '@/lib/roles'
 import { printHtmlDocument } from '@/lib/printDocument'
 import { printBarcodeLabels, type BarcodeLabelsPayload } from '@/lib/barcodeLabelPrint'
 import { usePagination } from '@/hooks/usePagination'
@@ -82,6 +83,8 @@ interface PurchaseBillStats {
 
 export default function PurchaseInvoicesPage() {
   const { confirm, confirmDialog } = useConfirmDialog()
+  const { user } = useAuth()
+  const canMigrate = isSuperAdmin(user?.role)
   const [bills, setBills] = useState<PurchaseBill[]>([])
   const [stats, setStats] = useState<PurchaseBillStats>({ total_purchase: 0, paid: 0, unpaid: 0 })
   const [showStats, setShowStats] = useState(false)
@@ -840,20 +843,22 @@ export default function PurchaseInvoicesPage() {
                       <Button variant="outline" size="sm" onClick={handleBulkMarkPaid}>
                         Mark as Paid
                       </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => void handleBulkDownloadSource()}
-                        disabled={exporting}
-                        title="Download the original source invoices (rendered to PDF) for selected bills"
-                      >
-                        {exporting ? (
-                          <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Download className="mr-1 h-3.5 w-3.5" />
-                        )}
-                        Download Source
-                      </Button>
+                      {canMigrate && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void handleBulkDownloadSource()}
+                          disabled={exporting}
+                          title="Download the original source invoices (rendered to PDF) for selected bills"
+                        >
+                          {exporting ? (
+                            <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="mr-1 h-3.5 w-3.5" />
+                          )}
+                          Download Source
+                        </Button>
+                      )}
                       <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDelete}>
                         <Trash2 className="mr-1 h-3.5 w-3.5" /> Delete
                       </Button>
@@ -937,7 +942,7 @@ export default function PurchaseInvoicesPage() {
                                   Open Source
                                 </DropdownMenuItem>
                               )}
-                              {bill.source_url && (
+                              {bill.source_url && canMigrate && (
                                 <DropdownMenuItem onClick={() => void handleDownloadSource(bill)}>
                                   <Download className="mr-2 h-4 w-4" />
                                   Download Source
