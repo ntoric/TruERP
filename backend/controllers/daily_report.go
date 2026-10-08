@@ -183,6 +183,7 @@ func loadReportForRange(userID uuid.UUID, startDate, endDate string) (models.Dai
 	aggregate(&models.PaymentOut{}, "date", "amount_paid", "", &report.PaymentsOut)
 	aggregate(&models.SalesReturn{}, "date", "amount", "status != 'cancelled'", &report.SalesReturns)
 	aggregate(&models.PurchaseReturn{}, "date", "amount", "status != 'cancelled'", &report.PurchaseReturns)
+	aggregate(&models.ProfitDistribution{}, "date", "amount", "", &report.ProfitDistributions)
 
 	report.PaymentsByMethod = loadPaymentsByMethod(userID, startDate, endDate)
 	report.ExpenseLines = loadExpenseLines(userID, startDate, endDate)
@@ -201,14 +202,11 @@ func loadReportForRange(userID uuid.UUID, startDate, endDate string) (models.Dai
 		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND status != ?", userID, startDate, endDate, "cancelled").
 		Select("COALESCE(SUM(tax_total), 0)").Scan(&report.GSTCollected)
 
-	report.NetCashFlow = report.PaymentsIn.TotalAmount - report.PaymentsOut.TotalAmount - report.Expenses.TotalAmount
+	report.NetCashFlow = report.PaymentsIn.TotalAmount - report.PaymentsOut.TotalAmount - report.Expenses.TotalAmount - report.ProfitDistributions.TotalAmount
 
 	report.DailyProfit = report.Sales.TotalAmount -
 		report.CreditNotes.TotalAmount -
 		report.SalesReturns.TotalAmount -
-		report.Purchases.TotalAmount +
-		report.PurchaseReturns.TotalAmount +
-		report.DebitNotes.TotalAmount -
 		report.Expenses.TotalAmount
 
 	report.ProductProfit = computeProductProfitForRange(userID, startDate, endDate)
@@ -471,7 +469,7 @@ type reportTableRow struct {
 }
 
 func periodReportTableRows(report models.PeriodReport) []reportTableRow {
-	return []reportTableRow{
+	rows := []reportTableRow{
 		{label: "Sales (Invoices)", m: report.Sales},
 		{label: "Purchase Expense", m: report.Purchases},
 		{label: "Payment Out", m: report.PaymentsOut},
@@ -483,6 +481,10 @@ func periodReportTableRows(report models.PeriodReport) []reportTableRow {
 		{label: "Sales Returns", m: report.SalesReturns},
 		{label: "Purchase Returns", m: report.PurchaseReturns},
 	}
+	if report.ProfitDistributions.Count > 0 {
+		rows = append(rows, reportTableRow{label: "Profit Distribution Deduction", m: report.ProfitDistributions})
+	}
+	return rows
 }
 
 func writePeriodReportCSV(c *gin.Context, report models.PeriodReport, filename string) {
@@ -511,9 +513,9 @@ func writePeriodReportCSV(c *gin.Context, report models.PeriodReport, filename s
 	_ = writer.Write([]string{""})
 	_ = writer.Write([]string{"Accounts Payable (total outstanding)", "", fmt.Sprintf("%.2f", report.AccountsPayableTotal)})
 	_ = writer.Write([]string{"GST Collected (Sales)", "", fmt.Sprintf("%.2f", report.GSTCollected)})
-	_ = writer.Write([]string{"Period Profit (Sales − Purchases − Expenses ± returns/notes)", "", fmt.Sprintf("%.2f", report.DailyProfit)})
+	_ = writer.Write([]string{"Period Profit (Sales − Expenses − Sales Returns/Credit Notes)", "", fmt.Sprintf("%.2f", report.DailyProfit)})
 	_ = writer.Write([]string{"Product Profit (sale value − purchase cost on items sold)", "", fmt.Sprintf("%.2f", report.ProductProfit)})
-	_ = writer.Write([]string{"Net Cash Flow (In − Out − Expenses)", "", fmt.Sprintf("%.2f", report.NetCashFlow)})
+	_ = writer.Write([]string{"Net Cash Flow (In − Out − Expenses − Profit Distributions)", "", fmt.Sprintf("%.2f", report.NetCashFlow)})
 	if report.Loyalty != nil && report.Loyalty.Enabled {
 		_ = writer.Write([]string{""})
 		_ = writer.Write([]string{"Loyalty points"})
@@ -599,6 +601,7 @@ func writePeriodReportCSV(c *gin.Context, report models.PeriodReport, filename s
 			fmt.Sprintf("%.2f", report.Expenses.TotalAmount),
 		})
 	}
+
 }
 
 func ExportDailyReportCSV(c *gin.Context) {
@@ -960,9 +963,9 @@ func buildPeriodReportPDF(report models.PeriodReport) ([]byte, error) {
 	cards := []summaryCard{
 		{"Sales", fmt.Sprintf("Rs. %.2f", report.Sales.TotalAmount), fmt.Sprintf("%d invoices", report.Sales.Count), 22, 101, 52},
 		{"Purchase expense", fmt.Sprintf("Rs. %.2f", purchaseExpense), fmt.Sprintf("Purchases %d · Ops expenses %d · AP %.2f", report.Purchases.Count, report.Expenses.Count, report.AccountsPayable.TotalAmount), 154, 52, 18},
-		{"Period profit", fmt.Sprintf("Rs. %.2f", report.DailyProfit), "Sales - purchases - expenses +/- returns", profitR, profitG, profitB},
+		{"Period profit", fmt.Sprintf("Rs. %.2f", report.DailyProfit), "Sales - expenses - returns/notes", profitR, profitG, profitB},
 		{"Product profit", fmt.Sprintf("Rs. %.2f", report.ProductProfit), "Sale value - purchase cost on items", productR, productG, productB},
-		{"Net cash flow", fmt.Sprintf("Rs. %.2f", report.NetCashFlow), "Payments in - out - expenses", 30, 64, 175},
+		{"Net cash flow", fmt.Sprintf("Rs. %.2f", report.NetCashFlow), "Payments in - out - expenses - profit distributions", 30, 64, 175},
 	}
 	if report.NetCashFlow < 0 {
 		cards[4].r, cards[4].g, cards[4].b = 153, 27, 27
@@ -1058,7 +1061,7 @@ func buildPeriodReportPDF(report models.PeriodReport) ([]byte, error) {
 	pdf.CellFormat(colCount, 7, "-", "1", 0, "R", true, 0, "")
 	pdf.CellFormat(colAmount, 7, fmt.Sprintf("%.2f", report.GSTCollected), "1", 1, "R", true, 0, "")
 
-	pdf.CellFormat(colSection, 7, "Period profit (Sales - Purchases - Expenses)", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(colSection, 7, "Period profit (Sales - Expenses - Returns/Notes)", "1", 0, "L", true, 0, "")
 	pdf.CellFormat(colCount, 7, "-", "1", 0, "R", true, 0, "")
 	pdf.CellFormat(colAmount, 7, fmt.Sprintf("%.2f", report.DailyProfit), "1", 1, "R", true, 0, "")
 
@@ -1072,7 +1075,7 @@ func buildPeriodReportPDF(report models.PeriodReport) ([]byte, error) {
 	pdf.CellFormat(colAmount, 7, fmt.Sprintf("%.2f", report.ProductProfit), "1", 1, "R", true, 0, "")
 	pdf.SetTextColor(40, 40, 40)
 
-	pdf.CellFormat(colSection, 7, "Net cash flow (In - Out - Expenses)", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(colSection, 7, "Net cash flow (In - Out - Expenses - Profit distributions)", "1", 0, "L", true, 0, "")
 	pdf.CellFormat(colCount, 7, "-", "1", 0, "R", true, 0, "")
 	pdf.CellFormat(colAmount, 7, fmt.Sprintf("%.2f", report.NetCashFlow), "1", 1, "R", true, 0, "")
 

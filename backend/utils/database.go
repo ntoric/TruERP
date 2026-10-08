@@ -71,6 +71,7 @@ func resolveDatabasePath() string {
 // Used by the SQLite → PostgreSQL migration tool to prepare an empty Postgres database.
 func MigrateSchema(db *gorm.DB) error {
 	migrateLabelGapColumns(db)
+	migrateOpeningOverrideShape(db)
 	return db.AutoMigrate(allApplicationModels()...)
 }
 
@@ -122,8 +123,11 @@ func allApplicationModels() []interface{} {
 		&models.Staff{},
 		&models.Attendance{},
 		&models.Payroll{},
+		&models.PayrollPayment{},
 		&models.StaffDeduction{},
 		&models.StaffAdvancePayment{},
+		&models.Partner{},
+		&models.ProfitDistribution{},
 		&models.InvoiceSettings{},
 		&models.AppearanceSettings{},
 		&models.PrintSettings{},
@@ -149,6 +153,9 @@ func allApplicationModels() []interface{} {
 		&models.UserRole{},
 		&models.Warehouse{},
 		&models.InventoryStock{},
+		&models.StockDailySnapshot{},
+		&models.StockSnapshotMeta{},
+		&models.StockOpeningOverride{},
 		&models.TaxPeriod{},
 		&models.InputTaxCredit{},
 		&models.GSTFilingStatus{},
@@ -178,6 +185,11 @@ func allApplicationModels() []interface{} {
 		&models.DataBackup{},
 		&models.GDPRRequest{},
 		&models.DailyReportEmailSettings{},
+		&models.DailyProfitEntry{},
+		&models.DBMaintenanceSettings{},
+		&models.DBBackupSettings{},
+		&models.DBBackupRecord{},
+		&models.MigrationJob{},
 	}
 }
 
@@ -209,6 +221,7 @@ func runRawMigrations(db *gorm.DB) {
 	}
 	migrateBarcodeColumnsToItemCode(db)
 	migratePayrollLabels(db)
+	backfillPayrollPayments(db)
 	reclassifyExpenseCategoryGLAccounts(db)
 	backfillExpenseCategories(db)
 	SeedDefaultCategoriesForAllUsers(db)
@@ -216,6 +229,115 @@ func runRawMigrations(db *gorm.DB) {
 	migrateWarehouseCodeUnique(db)
 	backfillProductGstEnabled(db)
 	BackfillProductPLUs(db)
+	backfillInvoiceSourceLinks(db)
+	backfillPartyOpeningBalances(db)
+}
+
+// backfillPartyOpeningBalances repairs parties whose opening_balance was
+// seeded from the myBillBook "Bal." column during migration. That column is
+// the party's closing balance at export time — the same transactions are
+// imported as real documents, so seeding it as the opening double-counts it
+// in the party ledger. The true opening (balance before all transactions)
+// is recomputed as balance − Σ(document deltas), matching
+// loadPartyLedgerRows. Runs once, tracked in the data_repairs table, so a
+// manually entered opening balance is never rewritten later.
+func backfillPartyOpeningBalances(db *gorm.DB) {
+	if !db.Migrator().HasTable(&models.Party{}) {
+		return
+	}
+	if err := db.Exec(`CREATE TABLE IF NOT EXISTS data_repairs (
+		name VARCHAR(200) PRIMARY KEY,
+		applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`).Error; err != nil {
+		log.Printf("backfillPartyOpeningBalances: create marker table failed: %v", err)
+		return
+	}
+	const marker = "party_opening_balance_rebase_v2"
+	var applied int64
+	if err := db.Raw(`SELECT COUNT(*) FROM data_repairs WHERE name = ?`, marker).Scan(&applied).Error; err != nil {
+		log.Printf("backfillPartyOpeningBalances: marker check failed: %v", err)
+		return
+	}
+	if applied > 0 {
+		return
+	}
+	// Recompute every party's opening backwards from its current balance so
+	// that opening + Σ(document debits − credits) = balance for each party.
+	// Documents the balance cannot explain land in the opening figure.
+	res := db.Exec(`UPDATE parties SET opening_balance = balance - (
+		COALESCE((SELECT SUM(total_amount) FROM invoices
+			WHERE party_id = parties.id AND deleted_at IS NULL
+			  AND status NOT IN ('draft', 'cancelled')), 0)
+		- COALESCE((SELECT SUM(amount_received) FROM payments
+			WHERE party_id = parties.id AND deleted_at IS NULL), 0)
+		+ COALESCE((SELECT SUM(payment_in_discount) FROM payments
+			WHERE party_id = parties.id AND deleted_at IS NULL), 0)
+		+ COALESCE((SELECT SUM(amount_paid) FROM payment_outs
+			WHERE party_id = parties.id AND deleted_at IS NULL), 0)
+		- COALESCE((SELECT SUM(payment_out_discount) FROM payment_outs
+			WHERE party_id = parties.id AND deleted_at IS NULL), 0)
+		- COALESCE((SELECT SUM(CASE WHEN amount - deduction_total > 0
+				THEN amount - deduction_total ELSE 0 END)
+			FROM sales_returns
+			WHERE party_id = parties.id AND deleted_at IS NULL AND status = 'processed'), 0)
+		- COALESCE((SELECT SUM(total_amount) FROM purchase_bills
+			WHERE party_id = parties.id AND deleted_at IS NULL AND status <> 'draft'), 0)
+		+ COALESCE((SELECT SUM(amount) FROM purchase_returns
+			WHERE party_id = parties.id AND deleted_at IS NULL AND status = 'processed'), 0)
+		- COALESCE((SELECT SUM(total_amount) FROM credit_notes
+			WHERE party_id = parties.id AND deleted_at IS NULL AND status = 'issued'), 0)
+		+ COALESCE((SELECT SUM(total_amount) FROM debit_notes
+			WHERE party_id = parties.id AND deleted_at IS NULL AND status = 'issued'), 0)
+		)`)
+	if res.Error != nil {
+		log.Printf("backfillPartyOpeningBalances: update failed: %v", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("backfillPartyOpeningBalances: rebased opening balance for %d parties", res.RowsAffected)
+	}
+	db.Exec(`INSERT INTO data_repairs (name) VALUES (?)`, marker)
+}
+
+// backfillInvoiceSourceLinks moves myBillBook "Invoice link: <url>" segments
+// previously stored inside invoices.notes into the dedicated source_url
+// column and removes them from notes so they render as a link, not note text.
+func backfillInvoiceSourceLinks(db *gorm.DB) {
+	if !db.Migrator().HasColumn(&models.Invoice{}, "source_url") {
+		return
+	}
+	const prefix = "Invoice link: "
+	var invoices []models.Invoice
+	if err := db.Select("id", "notes", "source_url").
+		Where("notes LIKE ?", "%"+prefix+"%").
+		Find(&invoices).Error; err != nil {
+		log.Printf("backfillInvoiceSourceLinks: load invoices failed: %v", err)
+		return
+	}
+	for _, inv := range invoices {
+		var link string
+		var kept []string
+		for _, part := range strings.Split(inv.Notes, " | ") {
+			if strings.HasPrefix(part, prefix) {
+				if link == "" {
+					link = strings.TrimSpace(strings.TrimPrefix(part, prefix))
+				}
+				continue
+			}
+			if strings.TrimSpace(part) != "" {
+				kept = append(kept, part)
+			}
+		}
+		if link == "" {
+			continue
+		}
+		updates := map[string]interface{}{"notes": strings.Join(kept, " | ")}
+		if inv.SourceURL == "" {
+			updates["source_url"] = link
+		}
+		if err := db.Model(&models.Invoice{}).Where("id = ?", inv.ID).Updates(updates).Error; err != nil {
+			log.Printf("backfillInvoiceSourceLinks: update invoice %s failed: %v", inv.ID, err)
+		}
+	}
 }
 
 func backfillProductGstEnabled(db *gorm.DB) {
@@ -302,6 +424,44 @@ func migratePayrollLabels(db *gorm.DB) {
 	}
 
 	reclassifyPayrollGLAccounts(db)
+}
+
+// backfillPayrollPayments records a payroll_payments row for every payroll
+// paid before per-payment tracking existed, and fills paid_amount, so
+// partial-payment state and reports are consistent for historical data.
+func backfillPayrollPayments(db *gorm.DB) {
+	var payrolls []models.Payroll
+	if err := db.Where("status = 'paid' AND paid_amount = 0").Find(&payrolls).Error; err != nil {
+		log.Printf("backfillPayrollPayments: load payrolls failed: %v", err)
+		return
+	}
+	for i := range payrolls {
+		p := &payrolls[i]
+		var count int64
+		db.Model(&models.PayrollPayment{}).Where("payroll_id = ?", p.ID).Count(&count)
+		if count == 0 && p.NetSalary > 0 {
+			payment := models.PayrollPayment{
+				ID:            uuid.New(),
+				UserID:        p.UserID,
+				PayrollID:     p.ID,
+				PaymentNumber: p.PaymentNumber,
+				Amount:        p.NetSalary,
+				PaymentDate:   p.PaymentDate,
+				PaymentMode:   p.PaymentMode,
+				BankAccountID: p.BankAccountID,
+				ExpenseID:     p.ExpenseID,
+				Reference:     p.Reference,
+				Notes:         p.Notes,
+			}
+			if err := db.Create(&payment).Error; err != nil {
+				log.Printf("backfillPayrollPayments: create payment for %s failed: %v", p.PaymentNumber, err)
+				continue
+			}
+		}
+		if err := db.Model(p).Update("paid_amount", p.NetSalary).Error; err != nil {
+			log.Printf("backfillPayrollPayments: update payroll %s failed: %v", p.PaymentNumber, err)
+		}
+	}
 }
 
 // reclassifyPayrollGLAccounts moves payroll ledger/journal debit lines from
@@ -612,6 +772,21 @@ func backfillExpenseCategories(db *gorm.DB) {
 		}
 		if err := db.Create(&cat).Error; err != nil {
 			log.Printf("backfillExpenseCategories: create failed for %s/%s: %v", r.UserID, r.Category, err)
+		}
+	}
+}
+
+// migrateOpeningOverrideShape drops the original per-product
+// stock_opening_overrides table (product_id/outlet_id/unit_cost columns) — the
+// model is now a single business-wide position, and AutoMigrate won't remove
+// the old NOT NULL columns. The table is recreated empty by AutoMigrate.
+func migrateOpeningOverrideShape(db *gorm.DB) {
+	if !db.Migrator().HasTable(&models.StockOpeningOverride{}) {
+		return
+	}
+	if db.Migrator().HasColumn(&models.StockOpeningOverride{}, "product_id") {
+		if err := db.Migrator().DropTable(&models.StockOpeningOverride{}); err != nil {
+			log.Printf("migrateOpeningOverrideShape: drop legacy table failed: %v", err)
 		}
 	}
 }

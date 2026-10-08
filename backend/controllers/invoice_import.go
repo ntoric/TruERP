@@ -3,11 +3,13 @@ package controllers
 import (
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"strings"
 	"time"
 	"truerp/models"
+	"truerp/services"
 	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
@@ -34,6 +36,14 @@ type invoiceImportLine struct {
 	taxRate         float64
 }
 
+// invoiceImportDefaults holds optional default values applied when a CSV cell
+// is blank. Populated from form fields on the import request.
+type invoiceImportDefaults struct {
+	status  string
+	unit    string
+	taxRate float64
+}
+
 func ImportInvoicesCSV(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	userName := ""
@@ -53,31 +63,57 @@ func ImportInvoicesCSV(c *gin.Context) {
 		return
 	}
 	defer src.Close()
+	content, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read file"})
+		return
+	}
 
-	reader := csv.NewReader(src)
+	// Optional defaults applied when the CSV cell is blank.
+	def := invoiceImportDefaults{
+		status:  strings.TrimSpace(c.PostForm("default_status")),
+		unit:    strings.TrimSpace(c.PostForm("default_unit")),
+		taxRate: parseFloat(c.PostForm("default_tax_rate")),
+	}
+
+	result, errs, perr := importInvoicesRows(userID, userName, content, def, c.ClientIP(), c.GetHeader("User-Agent"), nil)
+	if perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": perr.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"imported": result["imported"], "errors": errs})
+}
+
+func importInvoicesRows(userID uuid.UUID, userName string, content []byte, def invoiceImportDefaults, clientIP, userAgent string, progress services.ProgressFunc) (map[string]interface{}, []string, error) {
+	reader := csv.NewReader(strings.NewReader(string(content)))
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
 	records, err := reader.ReadAll()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read CSV"})
-		return
+		return nil, nil, fmt.Errorf("failed to read CSV: %w", err)
 	}
 
 	if len(records) < 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "CSV file is empty or has no data"})
-		return
+		return nil, nil, fmt.Errorf("CSV file is empty or has no data")
 	}
 
 	headers := records[0]
+	dataRows := records[1:]
+
 	groups := make(map[string][]invoiceImportLine)
 	groupOrder := []string{}
 	var errors []string
 
-	for i, record := range records[1:] {
+	for i, record := range dataRows {
+		if progress != nil {
+			progress(i+1, len(dataRows), 0)
+		}
 		rowNum := i + 2
 		if len(record) == 0 || strings.TrimSpace(strings.Join(record, "")) == "" {
 			continue
 		}
 
-		line, parseErr := parseInvoiceImportRow(rowNum, record, headers)
+		line, parseErr := parseInvoiceImportRow(rowNum, record, headers, def)
 		if parseErr != nil {
 			errors = append(errors, parseErr.Error())
 			continue
@@ -101,20 +137,17 @@ func ImportInvoicesCSV(c *gin.Context) {
 			continue
 		}
 
-		if err := createImportedInvoice(userID, userName, lines, c.ClientIP(), c.GetHeader("User-Agent")); err != nil {
+		if err := createImportedInvoice(userID, userName, lines, clientIP, userAgent); err != nil {
 			errors = append(errors, fmt.Sprintf("Invoice %s: %v", displayInvoiceImportKey(groupKey, lines[0]), err))
 			continue
 		}
 		importedCount++
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"imported": importedCount,
-		"errors":   errors,
-	})
+	return map[string]interface{}{"imported": importedCount}, errors, nil
 }
 
-func parseInvoiceImportRow(rowNum int, record, headers []string) (invoiceImportLine, error) {
+func parseInvoiceImportRow(rowNum int, record, headers []string, def invoiceImportDefaults) (invoiceImportLine, error) {
 	line := invoiceImportLine{rowNum: rowNum}
 
 	line.invoiceNumber = strings.TrimSpace(firstCSVValue(record, headers,
@@ -139,7 +172,11 @@ func parseInvoiceImportRow(rowNum int, record, headers []string) (invoiceImportL
 
 	line.status = strings.ToLower(strings.TrimSpace(firstCSVValue(record, headers, "Status")))
 	if line.status == "" {
-		line.status = "draft"
+		if def.status != "" {
+			line.status = def.status
+		} else {
+			line.status = "draft"
+		}
 	}
 	if !allowedInvoiceStatuses[line.status] {
 		return line, fmt.Errorf("Row %d: Invalid status %q", rowNum, line.status)
@@ -156,9 +193,6 @@ func parseInvoiceImportRow(rowNum int, record, headers []string) (invoiceImportL
 	line.unitPrice = parseCurrencyAmount(firstCSVValue(record, headers, "Unit Price", "Rate", "Price"))
 	line.discount = parseFloat(firstCSVValue(record, headers, "Discount %", "Discount", "Disc %"))
 	line.taxRate = parseFloat(firstCSVValue(record, headers, "Tax Rate %", "Tax Rate", "Tax %", "GST %"))
-	if line.taxRate == 0 {
-		line.taxRate = 18
-	}
 
 	amount := parseCurrencyAmount(firstCSVValue(record, headers, "Amount", "Total Amount", "Total"))
 	if line.itemDescription == "" && amount > 0 {
@@ -174,7 +208,11 @@ func parseInvoiceImportRow(rowNum int, record, headers []string) (invoiceImportL
 		line.quantity = 1
 	}
 	if line.unit == "" {
-		line.unit = "pcs"
+		if def.unit != "" {
+			line.unit = def.unit
+		} else {
+			line.unit = "pcs"
+		}
 	}
 	if line.unitPrice <= 0 {
 		return line, fmt.Errorf("Row %d: Unit Price or Amount is required", rowNum)
@@ -218,7 +256,8 @@ func createImportedInvoice(userID uuid.UUID, userName string, lines []invoiceImp
 		itemTotal := line.quantity * line.unitPrice
 		itemDiscount := itemTotal * (line.discount / 100)
 		taxableAmount := itemTotal - itemDiscount
-		itemTax := taxableAmount * (line.taxRate / 100)
+		// Billing is tax-free: the line tax rate is ignored.
+		itemTax := 0.0
 
 		var cgst, sgst, igst float64
 		if header.isInterState {
@@ -242,7 +281,7 @@ func createImportedInvoice(userID uuid.UUID, userName string, lines []invoiceImp
 			Unit:        line.unit,
 			UnitPrice:   line.unitPrice,
 			Discount:    line.discount,
-			TaxRate:     line.taxRate,
+			TaxRate:     0,
 			CGST:        cgst,
 			SGST:        sgst,
 			IGST:        igst,
@@ -329,12 +368,16 @@ func parseImportDate(value string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("date is required")
 	}
 
+	// DD/MM/YYYY is tried first because the migration import files use that
+	// format. MM/DD/YYYY is kept as a fallback for unambiguous inputs, but any
+	// date that can be read as day-first (e.g. 13/05/2024 or 05/06/2024) is
+	// resolved as DD/MM/YYYY.
 	formats := []string{
+		"02/01/2006",
 		"2006-01-02",
 		"02 Jan 2006",
 		"2 Jan 2006",
 		"01/02/2006",
-		"02/01/2006",
 		"2006/01/02",
 		time.RFC3339,
 	}

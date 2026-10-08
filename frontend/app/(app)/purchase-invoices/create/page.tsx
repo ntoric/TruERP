@@ -31,10 +31,21 @@ import { SearchableSelect } from '@/components/ui/searchable-select'
 import { ProductCombobox } from '@/components/ui/ProductCombobox'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
-import { usePaymentMethodMappings } from '@/hooks/usePaymentMethodMappings'
-import { PAYMENT_METHODS, isInitialInvestmentMethod } from '@/lib/paymentSplits'
-import { useBankAccounts } from '@/hooks/useBankAccounts'
+import { INITIAL_INVESTMENT_METHOD, isInitialInvestmentMethod } from '@/lib/paymentSplits'
+import { fetchBusinessSignature } from '@/lib/businessSignature'
+import {
+  CASH_IN_HAND_ACCOUNT,
+  bankAccountIdForApi,
+  useBankAccounts,
+} from '@/hooks/useBankAccounts'
 import ItemsEmptyState, { type PastedItemRow } from '@/components/ItemsEmptyState'
+import { AdditionalChargeItemsInput } from '@/components/AdditionalChargeItemsInput'
+import {
+  type AdditionalChargeItem,
+  hydrateAdditionalCharges,
+  sanitizeAdditionalChargeItems,
+  sumAdditionalChargeItems,
+} from '@/lib/additionalCharges'
 
 interface Vendor {
   id: string
@@ -51,6 +62,7 @@ interface Product {
   name: string
   sku: string
   item_code: string
+  plu?: string
   hsn_code: string
   purchase_price: number
   sale_price: number
@@ -119,6 +131,8 @@ const ITEM_NUMBER_FIELDS: (keyof PurchaseBillItem)[] = [
   'total',
 ]
 
+const PRODUCT_MODAL_PAGE_SIZE = 25
+
 function remapIndexSet(prev: Set<number>, mapIndex: (i: number) => number | null): Set<number> {
   const next = new Set<number>()
   prev.forEach((i) => {
@@ -165,16 +179,16 @@ export default function CreatePurchaseInvoicePage() {
   const [dueDate, setDueDate] = useState('')
   const [notes, setNotes] = useState('')
   const [terms, setTerms] = useState('')
-  const [additionalCharges, setAdditionalCharges] = useState(0)
+  const [chargeItems, setChargeItems] = useState<AdditionalChargeItem[]>([])
   const [invoiceDiscount, setInvoiceDiscount] = useState(0)
   const [taxExempt, setTaxExempt] = useState(true)
   const [autoRoundOff, setAutoRoundOff] = useState(true)
   const [amountPaid, setAmountPaid] = useState(0)
   const [amountPaidEdited, setAmountPaidEdited] = useState(false)
-  const [paidFrom, setPaidFrom] = useState('cash')
-  const { accounts: bankAccounts } = useBankAccounts()
-  const { getDepositHint } = usePaymentMethodMappings()
+  const [paidFrom, setPaidFrom] = useState(CASH_IN_HAND_ACCOUNT)
+  const { accounts: bankAccounts, loading: bankAccountsLoading } = useBankAccounts()
   const [signature, setSignature] = useState('')
+  const [businessSignature, setBusinessSignature] = useState('')
   const [items, setItems] = useState<PurchaseBillItem[]>([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -187,6 +201,12 @@ export default function CreatePurchaseInvoicePage() {
   const [showBulkCreateProducts, setShowBulkCreateProducts] = useState(false)
   const [productSearch, setProductSearch] = useState('')
   const [selectedCategory, setSelectedCategory] = useState('')
+  const [debouncedProductSearch, setDebouncedProductSearch] = useState('')
+  const [modalPage, setModalPage] = useState(1)
+  const [modalTotal, setModalTotal] = useState(0)
+  const [modalLoading, setModalLoading] = useState(false)
+  const [selectedProductMap, setSelectedProductMap] = useState<Record<string, Product>>({})
+  const modalFetchSeqRef = useRef(0)
   const [showAddVendor, setShowAddVendor] = useState(false)
   const [vendorFormData, setVendorFormData] = useState({
     name: '',
@@ -240,6 +260,15 @@ export default function CreatePurchaseInvoicePage() {
     fetchData()
   }, [])
 
+  useEffect(() => {
+    if (bankAccountsLoading) return
+    setPaidFrom((prev) => {
+      if (prev === CASH_IN_HAND_ACCOUNT || isInitialInvestmentMethod(prev)) return prev
+      if (bankAccounts.some((a) => a.id === prev)) return prev
+      return CASH_IN_HAND_ACCOUNT
+    })
+  }, [bankAccounts, bankAccountsLoading])
+
   // Listen for bottom menubar action buttons (purchase invoice create page only)
   useEffect(() => {
     const handleAddItem = () => openProductModal()
@@ -289,8 +318,15 @@ export default function CreatePurchaseInvoicePage() {
   }, [billDate, paymentTerms])
 
   useEffect(() => {
-    filterProducts()
-  }, [productSearch, selectedCategory, products])
+    const t = setTimeout(() => setDebouncedProductSearch(productSearch), 300)
+    return () => clearTimeout(t)
+  }, [productSearch])
+
+  useEffect(() => {
+    if (!showProductModal) return
+    fetchModalProducts(1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showProductModal, debouncedProductSearch, selectedCategory])
 
   useEffect(() => {
     if (editId) {
@@ -432,6 +468,9 @@ export default function CreatePurchaseInvoicePage() {
           setWarehouseId((prev) => prev || defaultWh.id)
         }
       }
+      const bizSig = await fetchBusinessSignature()
+      setBusinessSignature(bizSig)
+      if (bizSig && !editId) setSignature((prev) => prev || bizSig)
     } catch (err) {
       console.error(err)
     } finally {
@@ -451,11 +490,18 @@ export default function CreatePurchaseInvoicePage() {
         setDueDate(bill.due_date?.split('T')[0] || '')
         setWarehouseId(bill.warehouse_id || '')
         setNotes(bill.notes || '')
+        setSignature(bill.signature || '')
+        setInvoiceDiscount(bill.invoice_discount || 0)
+        setChargeItems(hydrateAdditionalCharges(bill.additional_charge_items, bill.additional_charges || 0))
         const loadedPaid = bill.paid_amount || 0
         const loadedTotal = bill.total_amount || 0
         setAmountPaid(loadedPaid)
         setAmountPaidEdited(loadedPaid + 0.01 < loadedTotal)
-        setPaidFrom(bill.payment_mode || 'cash')
+        setPaidFrom(
+          isInitialInvestmentMethod(bill.payment_mode)
+            ? INITIAL_INVESTMENT_METHOD
+            : bill.bank_account_id || CASH_IN_HAND_ACCOUNT
+        )
         setBillStatus(bill.status || '')
         setSavedBillId(bill.id || editId)
         savedBillIdRef.current = bill.id || editId
@@ -537,22 +583,28 @@ export default function CreatePurchaseInvoicePage() {
     }
   }
 
-  const filterProducts = () => {
-    let filtered = products
-    if (selectedCategory) {
-      filtered = filtered.filter(p => p.category === selectedCategory)
+  const fetchModalProducts = async (page: number) => {
+    const seq = ++modalFetchSeqRef.current
+    setModalLoading(true)
+    try {
+      const params = new URLSearchParams({
+        page: String(page),
+        per_page: String(PRODUCT_MODAL_PAGE_SIZE),
+      })
+      if (debouncedProductSearch.trim()) params.set('search', debouncedProductSearch.trim())
+      if (selectedCategory) params.set('category', selectedCategory)
+      const res = await apiFetch(`/products?${params.toString()}`)
+      if (!res.ok || seq !== modalFetchSeqRef.current) return
+      const data = await res.json()
+      const list: Product[] = Array.isArray(data) ? data : data.products || []
+      setFilteredProducts(list)
+      setModalTotal(typeof data.total === 'number' ? data.total : list.length)
+      setModalPage(page)
+    } catch (err) {
+      console.error(err)
+    } finally {
+      if (seq === modalFetchSeqRef.current) setModalLoading(false)
     }
-    if (productSearch) {
-      const search = productSearch.toLowerCase()
-      filtered = filtered.filter(p => 
-        p.name.toLowerCase().includes(search) ||
-        p.sku?.toLowerCase().includes(search) ||
-        p.item_code?.toLowerCase().includes(search) ||
-        p.hsn_code?.toLowerCase().includes(search) ||
-        p.category?.toLowerCase().includes(search)
-      )
-    }
-    setFilteredProducts(filtered)
   }
 
   const calcItemTotals = (item: PurchaseBillItem, exempt = taxExempt): PurchaseBillItem => {
@@ -686,6 +738,7 @@ export default function CreatePurchaseInvoicePage() {
       setShowProductModal(false)
       setProductSearch('')
       setSelectedProductIds(new Set())
+      setSelectedProductMap({})
       setProductAddQuantities({})
     }
   }
@@ -708,6 +761,7 @@ export default function CreatePurchaseInvoicePage() {
     setShowProductModal(false)
     setProductSearch('')
     setSelectedProductIds(new Set())
+    setSelectedProductMap({})
     setProductAddQuantities({})
   }
 
@@ -738,6 +792,7 @@ export default function CreatePurchaseInvoicePage() {
     setShowProductModal(false)
     setProductSearch('')
     setSelectedProductIds(new Set())
+    setSelectedProductMap({})
     setProductAddQuantities({})
     setToast({ message: `Added custom item: ${trimmed}`, type: 'success' })
     setTimeout(() => setToast(null), 2000)
@@ -835,37 +890,60 @@ export default function CreatePurchaseInvoicePage() {
     setTimeout(() => setToast(null), 2000)
   }
 
-  const toggleProductSelection = (productId: string) => {
+  const toggleProductSelection = (product: Product) => {
     setSelectedProductIds((prev) => {
       const next = new Set(prev)
-      if (next.has(productId)) next.delete(productId)
-      else next.add(productId)
+      if (next.has(product.id)) next.delete(product.id)
+      else next.add(product.id)
+      return next
+    })
+    setSelectedProductMap((prev) => {
+      const next = { ...prev }
+      if (next[product.id]) delete next[product.id]
+      else next[product.id] = product
       return next
     })
   }
 
+  const allModalProductsSelected =
+    filteredProducts.length > 0 && filteredProducts.every((p) => selectedProductIds.has(p.id))
+
   const toggleSelectAllProducts = () => {
-    if (selectedProductIds.size === filteredProducts.length) {
-      setSelectedProductIds(new Set())
-    } else {
-      setSelectedProductIds(new Set(filteredProducts.map((p) => p.id)))
-    }
+    setSelectedProductIds((prev) => {
+      const next = new Set(prev)
+      filteredProducts.forEach((p) => {
+        if (allModalProductsSelected) next.delete(p.id)
+        else next.add(p.id)
+      })
+      return next
+    })
+    setSelectedProductMap((prev) => {
+      const next = { ...prev }
+      filteredProducts.forEach((p) => {
+        if (allModalProductsSelected) delete next[p.id]
+        else next[p.id] = p
+      })
+      return next
+    })
   }
 
   const handleAddSelectedProducts = () => {
-    const selected = filteredProducts.filter((p) => selectedProductIds.has(p.id))
+    const selected = Object.values(selectedProductMap).filter((p) => selectedProductIds.has(p.id))
     addProductsToInvoice(selected, { closeModal: true })
   }
 
   const openProductModal = () => {
     setSelectedProductIds(new Set())
+    setSelectedProductMap({})
     setProductAddQuantities({})
+    setModalPage(1)
     setShowProductModal(true)
   }
 
   const closeProductModal = () => {
     setShowProductModal(false)
     setSelectedProductIds(new Set())
+    setSelectedProductMap({})
     setProductAddQuantities({})
   }
 
@@ -1173,7 +1251,8 @@ export default function CreatePurchaseInvoicePage() {
   const subTotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price), 0)
   const discountTotal = items.reduce((sum, item) => sum + (item.quantity * item.unit_price * (item.discount / 100)), 0)
   const taxTotal = items.reduce((sum, item) => sum + item.tax_amount, 0)
-  
+  const additionalCharges = sumAdditionalChargeItems(chargeItems)
+
   let totalBeforeRound = subTotal - discountTotal + taxTotal - invoiceDiscount + additionalCharges
   let roundOff = 0
   if (autoRoundOff) {
@@ -1222,6 +1301,16 @@ export default function CreatePurchaseInvoicePage() {
     }
   }
 
+  const paidFromPayload = () => {
+    if (isInitialInvestmentMethod(paidFrom)) {
+      return { payment_mode: INITIAL_INVESTMENT_METHOD, bank_account_id: null }
+    }
+    return {
+      payment_mode: paidFrom === CASH_IN_HAND_ACCOUNT ? 'cash' : 'bank_transfer',
+      bank_account_id: bankAccountIdForApi(paidFrom),
+    }
+  }
+
   const buildBillPayload = (asDraft: boolean, sourceItems: PurchaseBillItem[]) => {
     const status = asDraft
       ? 'draft'
@@ -1238,12 +1327,15 @@ export default function CreatePurchaseInvoicePage() {
         total_amount: totalAmount,
         paid_amount: effectiveAmountPaid,
         balance_due: balance,
-        payment_mode: paidFrom,
-        bank_account_id: null,
+        ...paidFromPayload(),
         status,
         notes,
         terms,
+        signature,
         tax_exempt: taxExempt,
+        invoice_discount: parseMoney(invoiceDiscount),
+        additional_charges: parseMoney(additionalCharges),
+        additional_charge_items: sanitizeAdditionalChargeItems(chargeItems),
         // client_bill_id makes creation idempotent (also sent via
         // Idempotency-Key header). Included in the body as a fallback.
         client_bill_id: clientBillIdRef.current,
@@ -1305,12 +1397,15 @@ export default function CreatePurchaseInvoicePage() {
           total_amount: totalAmount,
           paid_amount: effectiveAmountPaid,
           balance_due: balance,
-          payment_mode: paidFrom,
-          bank_account_id: null,
+          ...paidFromPayload(),
           status: 'draft',
           notes,
           terms,
+          signature,
           tax_exempt: taxExempt,
+          invoice_discount: parseMoney(invoiceDiscount),
+          additional_charges: parseMoney(additionalCharges),
+          additional_charge_items: sanitizeAdditionalChargeItems(chargeItems),
           client_bill_id: clientBillIdRef.current,
           items: items.flatMap((item, index) => {
             if (!isItemReadyForDraft(item)) return []
@@ -1629,6 +1724,7 @@ export default function CreatePurchaseInvoicePage() {
                   placeholder="Select Vendor"
                   searchPlaceholder="Search vendors..."
                   emptyMessage="No vendors found"
+                  clearable
                   onAddNew={() => setShowAddVendor(true)}
                   addNewLabel="Add New Vendor"
                   className={cn('w-full min-w-0', fieldErrors.vendor_id && 'border-red-500')}
@@ -2149,16 +2245,9 @@ export default function CreatePurchaseInvoicePage() {
                 <CardTitle>Additional Charges & Discount</CardTitle>
               </CardHeader>
               <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div className="min-w-0 space-y-2">
+                <div className="min-w-0 space-y-2 sm:col-span-2">
                   <Label>Additional Charges</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={additionalCharges}
-                    onChange={(e) => setAdditionalCharges(Number(e.target.value))}
-                    className="w-full min-w-0"
-                  />
+                  <AdditionalChargeItemsInput items={chargeItems} onChange={setChargeItems} />
                 </div>
                 <div className="min-w-0 space-y-2">
                   <Label>Invoice Discount</Label>
@@ -2204,23 +2293,38 @@ export default function CreatePurchaseInvoicePage() {
                 </div>
                 <div className="min-w-0 space-y-2">
                   <Label>Paid From</Label>
-                  <select
-                    value={paidFrom}
-                    onChange={(e) => setPaidFrom(e.target.value)}
-                    className="flex h-8 w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
-                  >
-                    {PAYMENT_METHODS.map((method) => (
-                      <option key={method.value} value={method.value}>
-                        {method.label}
-                      </option>
-                    ))}
-                  </select>
+                  {bankAccountsLoading ? (
+                    <div className="h-8 animate-pulse rounded-md bg-gray-200" />
+                  ) : (
+                    <select
+                      value={paidFrom}
+                      onChange={(e) => setPaidFrom(e.target.value)}
+                      className="flex h-8 w-full min-w-0 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm"
+                    >
+                      <option value={CASH_IN_HAND_ACCOUNT}>Cash in-hand</option>
+                      {bankAccounts
+                        .filter((a) => a.is_active || a.id === paidFrom)
+                        .map((account) => (
+                          <option key={account.id} value={account.id}>
+                            {account.account_name}
+                            {account.bank_name ? ` (${account.bank_name})` : ''}
+                            {' — '}
+                            {formatCurrency(account.balance)}
+                          </option>
+                        ))}
+                      <option value={INITIAL_INVESTMENT_METHOD}>Initial Investment</option>
+                    </select>
+                  )}
                   <p className="text-xs text-muted-foreground">
                     {effectiveAmountPaid > 0
                       ? isInitialInvestmentMethod(paidFrom)
                         ? `${formatCurrency(effectiveAmountPaid)} will be recorded as owner's capital (Initial Investment) and will not affect cash or bank balances.`
-                        : `${formatCurrency(effectiveAmountPaid)} will be deducted from ${getDepositHint(paidFrom, bankAccounts)} (configure under Cash & Bank → Payment method accounts).`
-                      : 'Select Initial Investment for opening stock so cash in-hand is not reduced, or choose another method to pay from.'}
+                        : `${formatCurrency(effectiveAmountPaid)} will be deducted from ${
+                            paidFrom === CASH_IN_HAND_ACCOUNT
+                              ? 'Cash in-hand'
+                              : bankAccounts.find((a) => a.id === paidFrom)?.account_name || 'the selected account'
+                          }.`
+                      : 'Select Initial Investment for opening stock so cash in-hand is not reduced, or choose the account to pay from.'}
                   </p>
                 </div>
                 <div className="min-w-0 space-y-2">
@@ -2247,6 +2351,11 @@ export default function CreatePurchaseInvoicePage() {
                 <CardTitle>Signature</CardTitle>
               </CardHeader>
               <CardContent>
+                {signature && (
+                  <div className="mb-3">
+                    <img src={signature} alt="Signature" className="max-h-[150px] max-w-full rounded border bg-white object-contain" />
+                  </div>
+                )}
                 <canvas
                   ref={canvasRef}
                   width={400}
@@ -2259,6 +2368,9 @@ export default function CreatePurchaseInvoicePage() {
                 />
                 <div className="mt-2 flex gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={clearSignature}>Clear</Button>
+                  {businessSignature && signature !== businessSignature && (
+                    <Button type="button" variant="outline" size="sm" onClick={() => setSignature(businessSignature)}>Use Business Signature</Button>
+                  )}
                 </div>
               </CardContent>
 
@@ -2301,10 +2413,12 @@ export default function CreatePurchaseInvoicePage() {
                   <span className="text-gray-600">Invoice Discount</span>
                   <span className="font-medium text-red-600">-{formatCurrency(invoiceDiscount)}</span>
                 </div>
-                <div className="flex justify-between text-sm">
-                  <span className="text-gray-600">Additional Charges</span>
-                  <span className="font-medium">{formatCurrency(additionalCharges)}</span>
-                </div>
+                {chargeItems.filter((c) => Number(c.amount) > 0).map((charge, index) => (
+                  <div key={index} className="flex justify-between text-sm">
+                    <span className="text-gray-600">{charge.label.trim() || 'Additional Charge'}</span>
+                    <span className="font-medium">{formatCurrency(charge.amount)}</span>
+                  </div>
+                ))}
                 {!taxExempt && (
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Tax Total</span>
@@ -2375,7 +2489,7 @@ export default function CreatePurchaseInvoicePage() {
         {/* Product Selection Modal */}
         {showProductModal && (
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-            <Card className="max-h-[80vh] w-full max-w-4xl overflow-auto">
+            <Card className="max-h-[80vh] w-full max-w-5xl overflow-auto">
               <CardHeader>
                 <div className="flex items-center justify-between gap-2">
                   <CardTitle>Select Product</CardTitle>
@@ -2418,13 +2532,14 @@ export default function CreatePurchaseInvoicePage() {
                       <tr className="border-b text-left text-gray-500">
                         <th className="w-10 min-w-10 whitespace-nowrap pb-2 pr-2">
                           <Checkbox
-                            checked={filteredProducts.length > 0 && selectedProductIds.size === filteredProducts.length}
+                            checked={allModalProductsSelected}
                             onCheckedChange={toggleSelectAllProducts}
-                            aria-label="Select all products"
+                            aria-label="Select all products on this page"
                           />
                         </th>
                         <th className="min-w-[12rem] whitespace-nowrap pb-2 pr-2 font-medium">Item Name</th>
                         <th className="min-w-[8rem] whitespace-nowrap pb-2 px-1 font-medium">Item Code/SKU</th>
+                        <th className="min-w-[5rem] whitespace-nowrap pb-2 px-1 font-medium">PLU</th>
                         <th className="min-w-[5rem] whitespace-nowrap pb-2 px-1 font-medium text-right">Stock</th>
                         <th className="min-w-[7rem] whitespace-nowrap pb-2 px-1 font-medium text-right">Sale Price</th>
                         <th className="min-w-[7rem] whitespace-nowrap pb-2 px-1 font-medium text-right">Purchase Price</th>
@@ -2438,12 +2553,13 @@ export default function CreatePurchaseInvoicePage() {
                           <td className="py-2 pr-2">
                             <Checkbox
                               checked={selectedProductIds.has(product.id)}
-                              onCheckedChange={() => toggleProductSelection(product.id)}
+                              onCheckedChange={() => toggleProductSelection(product)}
                               aria-label={`Select ${product.name}`}
                             />
                           </td>
                           <td className="py-2 pr-2 font-medium">{product.name}</td>
                           <td className="px-1 py-2 text-gray-600">{product.sku || product.item_code || '-'}</td>
+                          <td className="px-1 py-2 text-gray-600">{product.plu || '-'}</td>
                           <td className="whitespace-nowrap px-1 py-2 text-right">{product.stock_qty} {product.unit}</td>
                           <td className="whitespace-nowrap px-1 py-2 text-right tabular-nums">{formatCurrency(product.sale_price)}</td>
                           <td className="whitespace-nowrap px-1 py-2 text-right tabular-nums text-gray-500">{formatCurrency(product.purchase_price)}</td>
@@ -2470,9 +2586,17 @@ export default function CreatePurchaseInvoicePage() {
                           </td>
                         </tr>
                       ))}
-                      {filteredProducts.length === 0 && (
+                      {modalLoading && (
                         <tr>
-                          <td colSpan={8} className="py-8 text-center">
+                          <td colSpan={9} className="py-8 text-center text-gray-500">
+                            <Loader2 className="mr-2 inline h-4 w-4 animate-spin" />
+                            Loading items…
+                          </td>
+                        </tr>
+                      )}
+                      {!modalLoading && filteredProducts.length === 0 && (
+                        <tr>
+                          <td colSpan={9} className="py-8 text-center">
                             {productSearch.trim() ? (
                               <button
                                 type="button"
@@ -2491,6 +2615,37 @@ export default function CreatePurchaseInvoicePage() {
                     </tbody>
                   </table>
                 </div>
+                {modalTotal > 0 && (
+                  <div className="mt-3 flex items-center justify-between text-sm text-gray-600">
+                    <span>
+                      Showing {(modalPage - 1) * PRODUCT_MODAL_PAGE_SIZE + 1}–
+                      {Math.min(modalPage * PRODUCT_MODAL_PAGE_SIZE, modalTotal)} of {modalTotal}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={modalPage <= 1 || modalLoading}
+                        onClick={() => fetchModalProducts(modalPage - 1)}
+                      >
+                        Prev
+                      </Button>
+                      <span>
+                        Page {modalPage} of {Math.max(1, Math.ceil(modalTotal / PRODUCT_MODAL_PAGE_SIZE))}
+                      </span>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={modalPage * PRODUCT_MODAL_PAGE_SIZE >= modalTotal || modalLoading}
+                        onClick={() => fetchModalProducts(modalPage + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <div className="mt-4 flex flex-wrap justify-end gap-2">
                   <Button
                     type="button"
@@ -2528,6 +2683,7 @@ export default function CreatePurchaseInvoicePage() {
               name: created.name,
               sku: created.sku,
               item_code: created.item_code,
+              plu: created.plu,
               hsn_code: created.hsn_code,
               sale_price: created.sale_price,
               purchase_price: created.purchase_price,
@@ -2570,6 +2726,7 @@ export default function CreatePurchaseInvoicePage() {
               name: created.name,
               sku: created.sku,
               item_code: created.item_code,
+              plu: created.plu,
               hsn_code: created.hsn_code,
               sale_price: created.sale_price,
               purchase_price: created.purchase_price,

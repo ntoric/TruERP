@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { apiFetch, useAuth } from '@/hooks/useAuth'
+import { useStore } from '@/hooks/useStore'
 import { usePageFeatures } from '@/hooks/usePageFeatures'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
@@ -20,11 +21,478 @@ import {
   type PageFeaturesMap,
 } from '@/lib/pageFeatures'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from '@/components/ui/textarea'
 import {
   Mail, MessageSquare, Send, Loader2, CheckCircle, XCircle,
   Smartphone, Save, LayoutGrid, Sparkles, Clock,
+  DatabaseBackup, Upload, FileArchive, FileUp, FileDown, AlertTriangle, Store,
+  Database, Download, Trash2, CloudUpload,
 } from 'lucide-react'
 import { getServerTime, type ServerTimeInfo } from '@/lib/dailyReport'
+import { downloadBlob } from '@/lib/accountingExport'
+
+// -----------------------------------------------------------------------------
+// Data Migration types & config
+//
+// The migration tab drives the existing myBillBook import endpoints. The ZIP
+// orchestrator runs a phased import (parties, purchase bills, payments,
+// expenses); the per-entity importers let users migrate a single entity CSV.
+// -----------------------------------------------------------------------------
+interface MigrationStep {
+  step: string
+  imported: number
+  errors: string[]
+}
+
+interface MigrationResult {
+  steps: MigrationStep[]
+}
+
+interface EntityImportOption {
+  formKey: string
+  label: string
+  type: 'text' | 'select'
+  choices?: string[]
+  placeholder?: string
+  defaultValue?: string
+}
+
+interface EntityImportConfig {
+  key: string
+  label: string
+  group: string
+  description: string
+  endpoint: string
+  // Async migration kind used by POST /api/v1/migration/jobs. When set,
+  // handleImport enqueues a job and polls for progress instead of calling
+  // the synchronous endpoint. When omitted, the synchronous endpoint is
+  // used as before.
+  kind?: string
+  // CSV template content: first line is the header, subsequent lines are
+  // sample rows. Downloaded as a .csv file by the "Template" button.
+  template: string
+  // Optional default-value controls rendered below the file picker. Values
+  // are sent as form fields and applied by the backend when a CSV cell is
+  // blank.
+  options?: EntityImportOption[]
+  // Optional: split a column containing "value unit" (e.g. "33.0 PCS") into
+  // two separate columns in the preview. The original column keeps just the
+  // numeric value, and a new column with unitLabel is inserted right after it.
+  // Before sending to the backend, the two columns are merged back.
+  splitColumn?: {
+    source: string
+    unitLabel: string
+  }
+}
+
+const ENTITY_IMPORTS: EntityImportConfig[] = [
+  {
+    key: 'parties',
+    label: 'Parties  (myBillBook)',
+    group: 'Parties',
+    description:
+      'Customers & vendors. Accepts myBillBook "All Party Balance" format or a flat CSV with the columns below.',
+    endpoint: '/parties/import/csv',
+    kind: 'parties',
+    template:
+      'Name,GST,Address,State,Pincode,Mob No.,Bal.,Party Category\n' +
+      'Acme Corp,29ABCDE1234F1Z5,"123 Main St",Karnataka,560001,9876543210,5000,Customer\n' +
+      'Global Supplies,27FGHIJ5678K1Z2,"45 Industrial Area",Maharashtra,400001,9123456780,12000,Vendor',
+    options: [
+      {
+        formKey: 'default_party_type',
+        label: 'Default party type',
+        type: 'select',
+        choices: ['customer', 'vendor'],
+        defaultValue: 'customer',
+      },
+    ],
+  },
+  {
+    key: 'categories',
+    label: 'Product categories',
+    group: 'Product categories',
+    description:
+      'Product categories. Use "Parent Category" to nest under an existing category (matched by name).',
+    endpoint: '/migration/categories/import/csv',
+    kind: 'categories',
+    template:
+      'Name,Description,Parent Category,Is Active\n' +
+      'Electronics,Electronic items,,true\n' +
+      'Mobile Phones,Smartphones,Electronics,true',
+  },
+  {
+    key: 'products',
+    label: 'Products',
+    group: 'Products',
+    description:
+      'Product catalog. Category is matched by name; SKU and PLU are auto-generated when left blank.',
+    endpoint: '/products/import/csv',
+    kind: 'products',
+    template:
+      'Name,SKU,Item Code,PLU,Category,Unit,HSN Code,Purchase Price,Sale Price,MRP,Tax Rate %,Discount,Min Stock,Item Type,Low Stock Alert,Enable Batching,Sale Price With Tax,Purchase Price With Tax\n' +
+      'Widget W100,W100,100001,,Electronics,PCS,8523,50,80,100,18,,5,product,true,false,true,true',
+  },
+  {
+    key: 'inventory',
+    label: 'Inventory (opening stock)',
+    group: 'Inventory',
+    description:
+      'Opening stock balances. Products are matched by name or code; warehouse defaults to your primary warehouse.',
+    endpoint: '/migration/inventory/import/csv',
+    kind: 'inventory',
+    template:
+      'Product Name,Product Code,Warehouse,Quantity,Cost Price,Batch No,Mfg Date,Exp Date\n' +
+      'Widget W100,W100,,100,50,BATCH001,01/01/2025,31/12/2025',
+  },
+  {
+    key: 'stock-summary',
+    label: 'Stock Summary Report (myBillBook)',
+    group: 'Inventory',
+    description:
+      'Upload a myBillBook "Stock Summary Report" CSV. Categories and products are created automatically if they do not exist; PLU is auto-assigned from 1 and SKU is generated from the item name. Stock is updated per batch.',
+    endpoint: '/migration/stock-summary/import/csv',
+    kind: 'stock-summary',
+    template:
+      'Name,Batch No.,Item Code,Purchase Price,Selling Price,Stock Quantity,Stock Value,Item Category Name,MRP,exp. date,mfg date\n' +
+      'MINT & LIME MIJITO MANAMA 750ML,07/03/26,8906000482032,255.0,270.0,33.0 PCS,8151.0,SYRUP,0.0,"",""\n' +
+      'ALFAHAM / BBQ MARINADE,Batch #1,610998145354,375.0,430.0,4.0 PCS,1500.0,FROZEN,0.0,"",""',
+    splitColumn: {
+      source: 'Stock Quantity',
+      unitLabel: 'Quantity Type',
+    },
+    options: [
+      {
+        formKey: 'default_category',
+        label: 'Default category',
+        type: 'text',
+        placeholder: 'General',
+      },
+    ],
+  },
+  {
+    key: 'batched-items',
+    label: 'Item Batch Report (myBillBook)',
+    group: 'Inventory',
+    description:
+      'Upload a myBillBook "Item Batched Report" CSV to update expiry date and manufacturing date on existing inventory batches (matched by item name + batch number, prices disambiguate duplicates). Current Stock is compared against inventory and differences are listed as mismatches without changing stock; unknown items and unmatched batches are reported as errors.',
+    endpoint: '/migration/batched-items/import/csv',
+    kind: 'batched-items',
+    template:
+      'Item Name,Batch Number,Expiry Date,MFG Date,MRP,Purchase Price,Selling Price,Current Stock\n' +
+      'Widget W100,Batch #1,11/11/2026,01/01/2025,100.0,50.0,80.0,10.0 PCS\n' +
+      'Gadget G200,BATCH#2,,"",200.0,120.0,180.0,0.0 PCS',
+    splitColumn: {
+      source: 'Current Stock',
+      unitLabel: 'Quantity Type',
+    },
+  },
+  {
+    key: 'purchase-bills',
+    label: 'Purchases (bills)  (myBillBook)',
+    group: 'Purchases',
+    description:
+      'Vendor purchase bills. Accepts myBillBook "Purchase Summary Report" format or a flat CSV. Rows matching an existing bill (by Purchase No, ignoring prefixes) update its Purchase link; rows with no match are listed for confirmation before being imported.',
+    endpoint: '/purchase/bills/import/csv',
+    kind: 'purchase-bills',
+    template:
+      'Purchase No,Original Invoice No,Purchase Date,Party Name,Purchase Amount,Purchase link,Notes\n' +
+      '1,INV-001,01/09/2025,Global Supplies,15000,,Monthly stock',
+    options: [
+      {
+        formKey: 'default_vendor',
+        label: 'Default vendor',
+        type: 'text',
+        placeholder: 'General Vendor',
+      },
+    ],
+  },
+  {
+    key: 'purchase-payments',
+    label: 'Purchase payment status  (myBillBook-custom)',
+    group: 'Purchases',
+    description:
+      'Update payment status, total amount, paid amount, and balance for existing purchase bills. Matches by purchase number.',
+    endpoint: '/migration/purchase-payments/import/csv',
+    kind: 'purchase-payments',
+    template:
+      'purchase number,total amount,paid amount,balance,payment status\n' +
+      '1,15000,15000,0,paid\n' +
+      '2,10000,5000,5000,partial',
+  },
+  {
+    key: 'purchase-items',
+    label: 'Purchase bill items  (myBillBook - custom)',
+    group: 'Purchases',
+    description:
+      'Add line items to purchase bills that already exist — run the "Purchases (bills)" import first. Matches purchase by purchase number and product by item name.',
+    endpoint: '/migration/purchase-items/import/csv',
+    kind: 'purchase-items',
+    template:
+      'purchase number,item name,quantity,rate,amount\n' +
+      '1,Widget W100,10,50,500\n' +
+      '1,Widget W200,5,80,400',
+  },
+  {
+    key: 'purchase-returns',
+    label: 'Purchase returns  (myBillBook)',
+    group: 'Purchases',
+    description:
+      'Purchase return documents from the daybook-style myBillBook export — only "Purchase Return" rows are imported, other transaction types are skipped. Each row becomes a processed return numbered PR-<Sr No.>. Money columns are informational only: no payments, cash entries, or party balance changes are made (import those via Daybook / Cash & Bank statement).',
+    endpoint: '/migration/purchase-returns/import/csv',
+    kind: 'purchase-returns',
+    template:
+      'Date,Name,Transaction Type,Sr No.,Total Amount,Money In,Money Out,Balance Amount,Created By\n' +
+      '16/10/2025,Global Supplies,Purchase Return,1,54.54,0.0,0.0,54.54,Admin\n' +
+      '29/10/2025,Acme Corp,Purchase Return,2,2320.0,2320.0,0.0,0.0,Admin',
+  },
+  {
+    key: 'sales',
+    label: 'Sales (invoices)  (myBillBook)',
+    group: 'Sales',
+    description:
+      'Sales invoices. Accepts myBillBook "Sales" export (Invoice No, Invoice Date, Contact Name, Amount, Remaining Amount, Invoice Status, Due Date, Invoice Link, Payment Type, Party Category, Created by). A summary line item is created per invoice since the export has no line-item detail. Rows matching an existing invoice (by Invoice No, ignoring prefixes) update its invoice link; rows with no match are listed for confirmation before being imported.',
+    endpoint: '/migration/sales/import/csv',
+    kind: 'sales',
+    template:
+      'Invoice No,Invoice Date,Contact Name,Amount,Remaining Amount,Invoice Status,Due Date,Invoice Link,Payment Type,Party Category,Created by\n' +
+      'INV-001,01/09/2025,Acme Corp,5000,0,Paid,15/09/2025,https://mybillbook.in/cpp/abc123,Cash,Customer,Admin',
+  },
+  {
+    key: 'sales-links',
+    label: 'Sales invoice links  (myBillBook - custom)',
+    group: 'Sales',
+    description:
+      'Backfill the myBillBook source link onto existing sales invoices whose link is empty. Matches Invoice No to invoice_number (ignoring prefixes). Invoices that already have a link are left unchanged; unmatched numbers are reported — nothing is created.',
+    endpoint: '/migration/sales-links/import/csv',
+    kind: 'sales-links',
+    template:
+      'Invoice No,Invoice Date,Contact Name,Amount,Remaining Amount,Invoice Status,Due Date,Invoice Link,Payment Type,Party Category,Created by\n' +
+      '1,01/09/2025,Acme Corp,5000,0,Paid,15/09/2025,https://mybillbook.in/csi/abc123,Cash,Customer,Admin',
+  },
+  {
+    key: 'sales-returns',
+    label: 'Sales returns  (myBillBook)',
+    group: 'Sales',
+    description:
+      'Sales return documents from the daybook-style myBillBook export — only "Sales Return" rows are imported, other transaction types are skipped. Each row becomes a processed return numbered SR-<Sr No.>. Money columns are informational only: no payments, cash entries, party balance, or stock changes are made (import refunds via Daybook / Cash & Bank statement).',
+    endpoint: '/migration/sales-returns/import/csv',
+    kind: 'sales-returns',
+    template:
+      'Date,Name,Transaction Type,Sr No.,Total Amount,Money In,Money Out,Balance Amount,Created By\n' +
+      '16/10/2025,Acme Corp,Sales Return,1,1080.0,0.0,1080.0,0.0,Admin\n' +
+      '29/10/2025,Global Traders,Sales Return,2,260.0,0.0,0.0,260.0,Admin',
+  },
+  {
+    key: 'sales-items',
+    label: 'Sales invoice items  (myBillBook - Custom)',
+    group: 'Sales',
+    description:
+      'Add line items to sales invoices that already exist — run the "Sales (invoices)" import first. Matches invoice by invoice number and product by item name.',
+    endpoint: '/migration/sales-items/import/csv',
+    kind: 'sales-items',
+    template:
+      'invoice number,item name,quantity,rate,amount\n' +
+      'INV-001,Widget W100,10,80,800\n' +
+      'INV-001,Widget W200,5,120,600',
+  },
+  {
+    key: 'expense-categories',
+    label: 'Expense categories  (myBillBook)',
+    group: 'Expense categories',
+    description: 'Categories used to classify expenses.',
+    endpoint: '/migration/expense-categories/import/csv',
+    kind: 'expense-categories',
+    template:
+      'Name,Description,Is Active\n' +
+      'Rent,Office rent,true\n' +
+      'Utilities,Electricity and internet,true',
+  },
+  {
+    key: 'expenses',
+    label: 'Expenses  (myBillBook)',
+    group: 'Expenses',
+    description:
+      'Expense transactions. Accepts myBillBook "Expense Transactions" format or a flat CSV.',
+    endpoint: '/expenses/import/csv',
+    kind: 'expenses',
+    template:
+      'Date,Serial No.,Exp. Name,Pymt Mode,Amt.,Notes\n' +
+      '01/09/2025,1,Rent,bank_transfer,25000,September office rent',
+  },
+  {
+    key: 'bank-accounts',
+    label: 'Cash & Bank — accounts',
+    group: 'Cash & Bank',
+    description:
+      'Bank and cash accounts. The first account imported is marked as primary.',
+    endpoint: '/migration/bank-accounts/import/csv',
+    kind: 'bank-accounts',
+    template:
+      'Account Name,Account Number,Bank Name,IFSC Code,Account Type,Opening Balance,Notes\n' +
+      'HDFC Current,1234567890,HDFC Bank,HDFC0001234,current,50000,Main account\n' +
+      'Cash In Hand,,Cash,,,10000,Petty cash',
+    options: [
+      {
+        formKey: 'default_account_type',
+        label: 'Default account type',
+        type: 'select',
+        choices: ['savings', 'current'],
+        defaultValue: 'savings',
+      },
+    ],
+  },
+  {
+    key: 'cash-transactions',
+    label: 'Cash & Bank — transactions',
+    group: 'Cash & Bank',
+    description:
+      'Cash in / cash out transactions. Type = add (money in) or reduce (money out). Account Name links to a bank account.',
+    endpoint: '/migration/cash-transactions/import/csv',
+    kind: 'cash-transactions',
+    template:
+      'Date,Type,Account Name,Amount,Description,Reference\n' +
+      '01/09/2025,add,HDFC Current,50000,Opening deposit,DEP-001\n' +
+      '02/09/2025,reduce,,5000,Office supplies,,'
+  },
+  {
+    key: 'cash-bank-statement',
+    label: 'Cash & Bank — statement  (myBillBook)',
+    group: 'Cash & Bank',
+    description:
+      'myBillBook "Cash and Bank Statement" — run after the Daybook / all-transactions import. Each row is matched to an already-imported transaction by Txn No + type and its payment mode is updated: Cash stays in cash in hand, UPI/Card/Bank Transfer/Cheque move to the account mapped in the Cash & Bank payment-method settings. The import aborts with a warning if any used mode has no account configured; no documents are created.',
+    endpoint: '/migration/cash-bank-statement/import/csv',
+    kind: 'cash-bank-statement',
+    template:
+      'Date,Type,Txn No,Party,Invoice numbers,Mode,Paid,Received,Balance,Notes\n' +
+      '20/09/2026,Sales Invoice,11932,Cash Sale,,Cash,0,300.0,-,\n' +
+      '20/09/2026,Payment-in,247,UPI SALE,11906,Cash,0,180.0,-,\n' +
+      '18/09/2026,Payment-out,256,MARKET PURCHASE,"480, 478",Upi,50964.0,0,-,\n' +
+      '20/09/2026,Expense,768,,,Cash,30.0,0,-,\n' +
+      '01/09/2026,Add Money,17,,,Cash,0,6000.0,-,Opening cash',
+  },
+  {
+    key: 'daybook',
+    label: 'Daybook — all transactions  (myBillBook)',
+    group: 'Daybook',
+    description:
+      'Combined myBillBook "Daybook Report" import. Sales Invoice rows create invoices numbered by Sr No. (Money In becomes the paid amount), Purchase Bill rows create bills P-<Sr No.> (Money Out becomes the paid amount), Payment-in/out rows are added to the payment tables and allocated oldest-first across the party\'s open invoices/bills, Expense rows create expenses under the named category, Add/Reduce Money become cash in hand transactions, and Sales/Purchase Returns become refund payments. All money movements post to cash in hand — the export carries no payment mode.',
+    endpoint: '/migration/daybook/import/csv',
+    kind: 'daybook',
+    template:
+      'Date,Name,Transaction Type,Sr No.,Total Amount,Money In,Money Out,Balance Amount,Created By\n' +
+      '13/10/2025,Acme Corp,Sales Invoice,19,149.0,149.0,0.0,0.0,Admin\n' +
+      '13/10/2025,Acme Corp,Payment-in,1,149.0,149.0,0.0,0.0,Admin\n' +
+      '14/10/2025,Global Supplies,Purchase Bill,46,1550.0,0.0,1550.0,0.0,Admin\n' +
+      '14/10/2025,Global Supplies,Payment-out,1,500.0,0.0,500.0,0.0,Admin\n' +
+      '14/10/2025,Rent Expense,Expense,1,4800.0,0.0,4800.0,0.0,Admin\n' +
+      '12/10/2025,,Add Money,1,15000.0,15000.0,0.0,0.0,Admin',
+  },
+  {
+    key: 'users',
+    label: 'Users',
+    group: 'Users',
+    description:
+      'Business user accounts. Role = admin or staff. Users are attached to your store.',
+    endpoint: '/migration/users/import/csv',
+    kind: 'users',
+    template:
+      'Name,Email,Password,Phone,Role\n' +
+      'John Doe,john@example.com,TempPass123,9876543210,staff\n' +
+      'Jane Smith,jane@example.com,TempPass456,9123456780,admin',
+    options: [
+      {
+        formKey: 'default_role',
+        label: 'Default role',
+        type: 'select',
+        choices: ['staff', 'admin'],
+        defaultValue: 'staff',
+      },
+    ],
+  },
+  {
+    key: 'staff',
+    label: 'HR & Payroll — staff',
+    group: 'HR & Payroll',
+    description:
+      'Staff / employee records. Salary Type = monthly, daily, or hourly.',
+    endpoint: '/migration/staff/import/csv',
+    kind: 'staff',
+    template:
+      'Name,Phone,Email,Designation,Department,Joining Date,Salary,Salary Type,Bank Name,Account Number,IFSC Code,Aadhar Number,PAN Number,Notes\n' +
+      'Ravi Kumar,9876543210,ravi@example.com,Sales Executive,Sales,01/01/2025,25000,monthly,HDFC Bank,1234567890,HDFC0001234,123456789012,ABCDE1234F,',
+    options: [
+      {
+        formKey: 'default_salary_type',
+        label: 'Default salary type',
+        type: 'select',
+        choices: ['monthly', 'daily', 'hourly'],
+        defaultValue: 'monthly',
+      },
+    ],
+  },
+]
+
+// UnmatchedRow is a summary row returned by an importer (purchase bills,
+// sales invoices) whose document number did not match any existing record.
+// Listed for user confirmation before being imported as new records.
+interface UnmatchedRow {
+  row: number
+  ref: string
+  party_name: string
+  amount: number
+}
+
+// StockMismatch is a batched-items report row whose "Current Stock" differs
+// from the matched inventory batch quantity (report-only; not applied).
+interface StockMismatch {
+  row: number
+  item_name: string
+  batch_no: string
+  unit?: string
+  csv_stock: number
+  inventory_stock: number
+}
+
+interface EntityImportResult {
+  imported: number
+  updated?: number
+  unmatched?: UnmatchedRow[]
+  mismatches?: StockMismatch[]
+  payment_in?: number
+  payment_out?: number
+  categories_created?: number
+  products_created?: number
+  stock_updated?: number
+  stock_created?: number
+  sales_invoices?: number
+  purchase_bills?: number
+  expenses?: number
+  cash_transactions?: number
+  skipped?: number
+  errors: string[]
+}
+
+// MigrationJob mirrors the backend MigrationJob model returned by
+// GET /api/v1/migration/jobs/:id. Fields are optional because the backend
+// omits zero-value timestamps.
+interface MigrationJob {
+  id: string
+  user_id: string
+  kind: string
+  file_name: string
+  status: 'queued' | 'running' | 'completed' | 'failed'
+  step?: string
+  current_row: number
+  total_rows: number
+  imported: number
+  result?: string // JSON string; parsed lazily when needed
+  error_count: number
+  errors?: string // JSON string array
+  failure_reason?: string
+  started_at?: string
+  finished_at?: string
+}
 
 interface AiBusinessSettings {
   enable_ai_hsn_search: boolean
@@ -64,10 +532,102 @@ interface DeveloperSettings {
   aws_region: string
   sendgrid_sms_api_key?: string
   timezone: string
+  async_daily_profit: boolean
+}
+
+// GET/PUT /api/v1/developer-settings/db-maintenance payload shape.
+interface DBMaintenanceSettings {
+  id: string
+  is_enabled: boolean
+  run_time: string
+  vacuum_full: boolean
+  last_run_at?: string | null
+  last_run_status?: string
+  last_run_error?: string
+  last_run_tables?: number
+  last_run_duration_ms?: number
+}
+
+interface DBMaintenanceInfo {
+  settings: DBMaintenanceSettings
+  running: boolean
+  ist_time: string
+  ist_timezone: string
+  next_run_at: string
+}
+
+// GET/PUT /api/v1/developer-settings/db-backup payload shapes. Secrets are
+// write-only: the API reports has_* flags instead of returning values.
+type DBBackupDestination = 'local' | 's3' | 'gdrive' | 'mega' | 'telegram' | 'custom'
+
+interface DBBackupSettings {
+  id: string
+  is_enabled: boolean
+  frequency: 'daily' | 'weekly' | 'monthly'
+  run_time: string
+  weekday: number
+  month_day: number
+  retention_count: number
+  destination_type: DBBackupDestination
+  s3_endpoint: string
+  s3_region: string
+  s3_bucket: string
+  s3_access_key: string
+  s3_prefix: string
+  gdrive_folder_id: string
+  mega_email: string
+  telegram_chat_id: string
+  custom_url: string
+  custom_headers: string
+  has_s3_secret: boolean
+  has_gdrive_credentials: boolean
+  has_mega_password: boolean
+  has_telegram_bot_token: boolean
+  has_custom_auth_header: boolean
+  last_run_at?: string | null
+  last_run_status?: string
+  last_run_error?: string
+  last_run_file?: string
+  last_run_size_bytes?: number
+  last_run_duration_ms?: number
+}
+
+// Write-only secret inputs — sent only when the user enters a new value.
+interface DBBackupSecrets {
+  s3_secret_key: string
+  gdrive_service_account_json: string
+  mega_password: string
+  telegram_bot_token: string
+  custom_auth_header: string
+}
+
+interface DBBackupRecord {
+  id: string
+  file_name: string
+  size_bytes: number
+  trigger: string
+  destination: string
+  status: string
+  error?: string
+  upload_detail?: string
+  local_available: boolean
+  created_at: string
+}
+
+interface DBBackupInfo {
+  settings: DBBackupSettings
+  running: boolean
+  ist_time: string
+  ist_timezone: string
+  next_run_at: string
+  backup_dir: string
+  dialect: string
+  records: DBBackupRecord[]
 }
 
 export default function DeveloperSettingsPage() {
   const { user, loading: authLoading } = useAuth()
+  const { activeStore, canSwitchStores } = useStore()
   const { setPagesLocal, refresh: refreshPageFeatures } = usePageFeatures()
   const [activeTab, setActiveTab] = useState('general')
   const [settings, setSettings] = useState<DeveloperSettings>({
@@ -93,6 +653,7 @@ export default function DeveloperSettingsPage() {
     aws_access_key: '',
     aws_region: '',
     timezone: '',
+    async_daily_profit: false,
   })
   const [pageFeatures, setPageFeatures] = useState<PageFeaturesMap>(defaultPageFeatures)
   const [aiSettings, setAiSettings] = useState<AiBusinessSettings>({
@@ -100,6 +661,49 @@ export default function DeveloperSettingsPage() {
     enable_ai_bill_parsing: false,
     gemini_api_key: '',
   })
+  const [dbMaint, setDbMaint] = useState<DBMaintenanceSettings>({
+    id: '',
+    is_enabled: false,
+    run_time: '01:00',
+    vacuum_full: false,
+  })
+  const [dbMaintInfo, setDbMaintInfo] = useState<DBMaintenanceInfo | null>(null)
+  const [dbMaintBusy, setDbMaintBusy] = useState(false)
+  const [dbBackup, setDbBackup] = useState<DBBackupSettings>({
+    id: '',
+    is_enabled: false,
+    frequency: 'daily',
+    run_time: '02:00',
+    weekday: 1,
+    month_day: 1,
+    retention_count: 10,
+    destination_type: 'local',
+    s3_endpoint: '',
+    s3_region: '',
+    s3_bucket: '',
+    s3_access_key: '',
+    s3_prefix: '',
+    gdrive_folder_id: '',
+    mega_email: '',
+    telegram_chat_id: '',
+    custom_url: '',
+    custom_headers: '',
+    has_s3_secret: false,
+    has_gdrive_credentials: false,
+    has_mega_password: false,
+    has_telegram_bot_token: false,
+    has_custom_auth_header: false,
+  })
+  const [dbBackupSecrets, setDbBackupSecrets] = useState<DBBackupSecrets>({
+    s3_secret_key: '',
+    gdrive_service_account_json: '',
+    mega_password: '',
+    telegram_bot_token: '',
+    custom_auth_header: '',
+  })
+  const [dbBackupInfo, setDbBackupInfo] = useState<DBBackupInfo | null>(null)
+  const [dbBackupBusy, setDbBackupBusy] = useState(false)
+  const [dbBackupTesting, setDbBackupTesting] = useState(false)
 
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
@@ -138,10 +742,12 @@ export default function DeveloperSettingsPage() {
 
   const fetchSettings = async () => {
     try {
-      const [settingsRes, pagesRes, businessRes] = await Promise.all([
+      const [settingsRes, pagesRes, businessRes, maintRes, backupRes] = await Promise.all([
         apiFetch('/developer-settings'),
         apiFetch('/page-features'),
         apiFetch('/business'),
+        apiFetch('/developer-settings/db-maintenance'),
+        apiFetch('/developer-settings/db-backup'),
       ])
       if (settingsRes.ok) {
         const data = await settingsRes.json()
@@ -154,6 +760,16 @@ export default function DeveloperSettingsPage() {
       if (businessRes.ok) {
         const data = await businessRes.json()
         setAiSettings(data)
+      }
+      if (maintRes.ok) {
+        const data: DBMaintenanceInfo = await maintRes.json()
+        setDbMaintInfo(data)
+        if (data.settings) setDbMaint(data.settings)
+      }
+      if (backupRes.ok) {
+        const data: DBBackupInfo = await backupRes.json()
+        setDbBackupInfo(data)
+        if (data.settings) setDbBackup(data.settings)
       }
     } catch (err) {
       console.error(err)
@@ -192,6 +808,49 @@ export default function DeveloperSettingsPage() {
         } else {
           notifyError('Failed to save AI settings')
         }
+      } else if (activeTab === 'maintenance') {
+        // The maintenance tab holds two cards — save both settings groups.
+        const [maintRes, backupRes] = await Promise.all([
+          apiFetch('/developer-settings/db-maintenance', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              is_enabled: dbMaint.is_enabled,
+              run_time: dbMaint.run_time,
+              vacuum_full: dbMaint.vacuum_full,
+            }),
+          }),
+          apiFetch('/developer-settings/db-backup', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(dbBackupPayload()),
+          }),
+        ])
+        let ok = true
+        if (maintRes.ok) {
+          const data = await maintRes.json()
+          setDbMaint(data)
+        } else {
+          ok = false
+          const data = await maintRes.json().catch(() => ({}))
+          notifyError(data.error || 'Failed to save maintenance settings')
+        }
+        if (backupRes.ok) {
+          const data: DBBackupSettings = await backupRes.json()
+          setDbBackup(data)
+          setDbBackupSecrets({
+            s3_secret_key: '',
+            gdrive_service_account_json: '',
+            mega_password: '',
+            telegram_bot_token: '',
+            custom_auth_header: '',
+          })
+        } else {
+          ok = false
+          const data = await backupRes.json().catch(() => ({}))
+          notifyError(data.error || 'Failed to save backup settings')
+        }
+        if (ok) notifySuccess('Maintenance settings saved successfully')
       } else {
         const res = await apiFetch('/developer-settings', {
           method: 'PUT',
@@ -288,6 +947,163 @@ export default function DeveloperSettingsPage() {
     }
   }
 
+  // PUT /db-backup body — non-secret fields plus secrets only when the user
+  // entered a new value (empty secret inputs keep the stored value).
+  const dbBackupPayload = () => ({
+    is_enabled: dbBackup.is_enabled,
+    frequency: dbBackup.frequency,
+    run_time: dbBackup.run_time,
+    weekday: dbBackup.weekday,
+    month_day: dbBackup.month_day,
+    retention_count: dbBackup.retention_count,
+    destination_type: dbBackup.destination_type,
+    s3_endpoint: dbBackup.s3_endpoint,
+    s3_region: dbBackup.s3_region,
+    s3_bucket: dbBackup.s3_bucket,
+    s3_access_key: dbBackup.s3_access_key,
+    s3_prefix: dbBackup.s3_prefix,
+    gdrive_folder_id: dbBackup.gdrive_folder_id,
+    mega_email: dbBackup.mega_email,
+    telegram_chat_id: dbBackup.telegram_chat_id,
+    custom_url: dbBackup.custom_url,
+    custom_headers: dbBackup.custom_headers,
+    ...Object.fromEntries(
+      Object.entries(dbBackupSecrets).filter(([, v]) => v !== '')
+    ),
+  })
+
+  // Triggers a manual maintenance run on the backend, then polls the settings
+  // endpoint until the run finishes so the status card stays up to date.
+  const runMaintenanceNow = async () => {
+    setDbMaintBusy(true)
+    try {
+      const res = await apiFetch('/developer-settings/db-maintenance/run-now', { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        notifyError(data.error || 'Failed to start maintenance run')
+        return
+      }
+      notifySuccess('Maintenance run started')
+      for (let i = 0; i < 30; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const infoRes = await apiFetch('/developer-settings/db-maintenance')
+        if (!infoRes.ok) break
+        const info: DBMaintenanceInfo = await infoRes.json()
+        setDbMaintInfo(info)
+        if (info.settings) setDbMaint(info.settings)
+        if (!info.running) break
+      }
+    } catch {
+      notifyError('Failed to start maintenance run')
+    } finally {
+      setDbMaintBusy(false)
+    }
+  }
+
+  const refreshBackupInfo = async (): Promise<DBBackupInfo | null> => {
+    try {
+      const res = await apiFetch('/developer-settings/db-backup')
+      if (!res.ok) return null
+      const info: DBBackupInfo = await res.json()
+      setDbBackupInfo(info)
+      if (info.settings) setDbBackup(info.settings)
+      return info
+    } catch {
+      return null
+    }
+  }
+
+  // Triggers a manual backup, then polls until the run finishes so the status
+  // card and history list stay up to date.
+  const runBackupNow = async () => {
+    setDbBackupBusy(true)
+    try {
+      const res = await apiFetch('/developer-settings/db-backup/run-now', { method: 'POST' })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        notifyError(data.error || 'Failed to start backup')
+        return
+      }
+      notifySuccess('Backup started')
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000))
+        const info = await refreshBackupInfo()
+        if (!info || !info.running) break
+      }
+    } catch {
+      notifyError('Failed to start backup')
+    } finally {
+      setDbBackupBusy(false)
+    }
+  }
+
+  // Uploads a small probe file to the configured destination. Unsaved form
+  // values are sent along so the config can be tested before saving.
+  const testBackupDestination = async () => {
+    setDbBackupTesting(true)
+    setTestResult(null)
+    try {
+      const res = await apiFetch('/developer-settings/db-backup/test-destination', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(dbBackupPayload()),
+      })
+      const data = await res.json().catch(() => ({}))
+      setTestResult({
+        success: res.ok,
+        message: data.message || data.error || (res.ok ? 'Destination reachable' : 'Destination test failed'),
+      })
+    } catch {
+      setTestResult({ success: false, message: 'Destination test failed' })
+    } finally {
+      setDbBackupTesting(false)
+    }
+  }
+
+  const downloadBackupRecord = async (record: DBBackupRecord) => {
+    try {
+      const res = await apiFetch(`/developer-settings/db-backup/records/${record.id}/download`)
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        notifyError(data.error || 'Failed to download backup')
+        return
+      }
+      const blob = await res.blob()
+      await downloadBlob(record.file_name, blob, { skipProgress: true })
+    } catch {
+      notifyError('Failed to download backup')
+    }
+  }
+
+  const deleteBackupRecord = async (record: DBBackupRecord) => {
+    try {
+      const res = await apiFetch(`/developer-settings/db-backup/records/${record.id}`, {
+        method: 'DELETE',
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        notifyError(data.error || 'Failed to delete backup')
+        return
+      }
+      notifySuccess('Backup deleted')
+      await refreshBackupInfo()
+    } catch {
+      notifyError('Failed to delete backup')
+    }
+  }
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return '—'
+    const units = ['B', 'KB', 'MB', 'GB']
+    let size = bytes
+    let unit = 0
+    while (size >= 1024 && unit < units.length - 1) {
+      size /= 1024
+      unit++
+    }
+    return `${size.toFixed(size >= 100 || unit === 0 ? 0 : 1)} ${units[unit]}`
+  }
+
   if (authLoading || loading) {
     return (
       <DashboardLayout>
@@ -336,7 +1152,7 @@ export default function DeveloperSettingsPage() {
         )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab}>
-          <TabsList className="grid w-full grid-cols-6">
+          <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="general" className="flex items-center gap-2">
               <Clock className="h-4 w-4" />
               General
@@ -357,9 +1173,17 @@ export default function DeveloperSettingsPage() {
               <Sparkles className="h-4 w-4" />
               AI Features
             </TabsTrigger>
+            <TabsTrigger value="migration" className="flex items-center gap-2">
+              <DatabaseBackup className="h-4 w-4" />
+              Migration
+            </TabsTrigger>
             <TabsTrigger value="pages" className="flex items-center gap-2">
               <LayoutGrid className="h-4 w-4" />
               Pages & Menus
+            </TabsTrigger>
+            <TabsTrigger value="maintenance" className="flex items-center gap-2">
+              <Database className="h-4 w-4" />
+              Maintenance
             </TabsTrigger>
           </TabsList>
 
@@ -455,6 +1279,41 @@ export default function DeveloperSettingsPage() {
                       )}
                     </div>
                   </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="h-5 w-5" />
+                  Daily Profit Report
+                </CardTitle>
+                <CardDescription>
+                  Choose how the Daily Profit Report stays up to date.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">
+                      Asynchronous daily profit updates
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      When enabled, daily profit rows are stored in a materialized table and a
+                      background cron recalculates them every 2 minutes (the report's Refresh
+                      option recalculates a day instantly). The cron&apos;s &quot;today&quot; is
+                      resolved in the timezone configured above (defaults to UTC+5:30). When
+                      disabled, report columns are computed live from each sale, purchase,
+                      return, expense and stock adjustment at read time.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={settings.async_daily_profit}
+                    onCheckedChange={(checked) =>
+                      setSettings({ ...settings, async_daily_profit: checked })
+                    }
+                  />
                 </div>
               </CardContent>
             </Card>
@@ -861,18 +1720,33 @@ export default function DeveloperSettingsPage() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="migration">
+            <MigrationTab />
+          </TabsContent>
+
           <TabsContent value="pages">
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <LayoutGrid className="h-5 w-5" />
-                  Pages & Menus
+                  Pages &amp; Menus
                 </CardTitle>
                 <CardDescription>
                   Disable a page to hide it from the side menu. Opening a disabled URL still shows a Coming Soon screen. Dashboard, core Settings tabs, and Developer Settings stay available. Settings &gt; Reminders and Settings &gt; CA Share can be enabled or disabled below.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                <div className="flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  <Store className="h-3.5 w-3.5 text-gray-500" />
+                  {activeStore ? (
+                    <span>
+                      These toggles apply to <span className="font-medium text-gray-800">{activeStore.name}</span>
+                      {canSwitchStores && ' — switch stores to edit another store\u2019s menu visibility'}
+                    </span>
+                  ) : (
+                    <span>These toggles apply globally (no store selected)</span>
+                  )}
+                </div>
                 <div className="flex flex-wrap gap-2">
                   <Button type="button" variant="outline" size="sm" onClick={() => setAllPages(true)}>
                     Enable all
@@ -911,8 +1785,1730 @@ export default function DeveloperSettingsPage() {
               </CardContent>
             </Card>
           </TabsContent>
+
+          <TabsContent value="maintenance">
+            <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Database className="h-5 w-5" />
+                  Database Maintenance
+                </CardTitle>
+                <CardDescription>
+                  Nightly cleanup that removes dead tuples and prevents table
+                  bloat (VACUUM ANALYZE on PostgreSQL, VACUUM + ANALYZE on
+                  SQLite). Runs daily at the configured time in IST
+                  (Asia/Kolkata).
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Nightly database maintenance</p>
+                    <p className="text-xs text-gray-500">
+                      Vacuum and analyze all tables every day at the configured time.
+                    </p>
+                  </div>
+                  <Switch
+                    checked={dbMaint.is_enabled}
+                    onCheckedChange={(checked) => setDbMaint({ ...dbMaint, is_enabled: checked })}
+                  />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Run time (IST)</Label>
+                    <Input
+                      type="time"
+                      value={dbMaint.run_time}
+                      onChange={(e) => setDbMaint({ ...dbMaint, run_time: e.target.value })}
+                    />
+                    <p className="text-xs text-gray-500">
+                      Interpreted in Asia/Kolkata — default 01:00.
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2 self-center">
+                    <Checkbox
+                      id="vacuum-full"
+                      checked={dbMaint.vacuum_full}
+                      onCheckedChange={(checked) =>
+                        setDbMaint({ ...dbMaint, vacuum_full: checked === true })
+                      }
+                    />
+                    <Label htmlFor="vacuum-full" className="text-sm font-normal">
+                      Full vacuum (VACUUM FULL) — rewrites tables to reclaim disk space,
+                      but takes an exclusive lock per table. Keep off unless bloat is severe.
+                    </Label>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5 rounded-md border bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  <div>
+                    <span className="font-medium text-gray-800">IST time:</span>{' '}
+                    {dbMaintInfo?.ist_time || '—'} ({dbMaintInfo?.ist_timezone || 'Asia/Kolkata'})
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-800">Next run:</span>{' '}
+                    {dbMaintInfo?.next_run_at
+                      ? new Date(dbMaintInfo.next_run_at).toLocaleString()
+                      : '—'}
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-800">Last run:</span>{' '}
+                    {dbMaint.last_run_at ? (
+                      <span>
+                        {new Date(dbMaint.last_run_at).toLocaleString()} —{' '}
+                        {dbMaint.last_run_status || 'unknown'}
+                        {dbMaint.last_run_tables ? ` · ${dbMaint.last_run_tables} tables` : ''}
+                        {dbMaint.last_run_duration_ms
+                          ? ` · ${(dbMaint.last_run_duration_ms / 1000).toFixed(1)}s`
+                          : ''}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">Never</span>
+                    )}
+                  </div>
+                  {dbMaint.last_run_error && (
+                    <div className="text-red-600">Error: {dbMaint.last_run_error}</div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={runMaintenanceNow}
+                    disabled={dbMaintBusy || dbMaintInfo?.running}
+                  >
+                    {(dbMaintBusy || dbMaintInfo?.running) && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Run now
+                  </Button>
+                  <span className="text-xs text-gray-500">
+                    Runs the cleanup immediately in the background.
+                  </span>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CloudUpload className="h-5 w-5" />
+                  Database Backup
+                </CardTitle>
+                <CardDescription>
+                  Compressed database dumps (
+                  {dbBackupInfo?.dialect === 'postgres' ? '.sql.gz' : '.db.gz'})
+                  kept locally in {dbBackupInfo?.backup_dir || 'data/backups'} and
+                  optionally uploaded to a cloud destination after each run.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="flex items-center justify-between rounded-lg border px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium text-gray-900">Scheduled backups</p>
+                    <p className="text-xs text-gray-500">
+                      Automatically back up the database on the configured schedule (IST).
+                    </p>
+                  </div>
+                  <Switch
+                    checked={dbBackup.is_enabled}
+                    onCheckedChange={(checked) => setDbBackup({ ...dbBackup, is_enabled: checked })}
+                  />
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-2">
+                    <Label>Frequency</Label>
+                    <Select
+                      value={dbBackup.frequency}
+                      onValueChange={(v) =>
+                        setDbBackup({ ...dbBackup, frequency: v as DBBackupSettings['frequency'] })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="daily">Daily</SelectItem>
+                        <SelectItem value="weekly">Weekly</SelectItem>
+                        <SelectItem value="monthly">Monthly</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  {dbBackup.frequency === 'weekly' && (
+                    <div className="space-y-2">
+                      <Label>Day of week</Label>
+                      <Select
+                        value={String(dbBackup.weekday)}
+                        onValueChange={(v) => setDbBackup({ ...dbBackup, weekday: Number(v) })}
+                      >
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          {['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'].map(
+                            (d, i) => (
+                              <SelectItem key={d} value={String(i)}>{d}</SelectItem>
+                            )
+                          )}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                  {dbBackup.frequency === 'monthly' && (
+                    <div className="space-y-2">
+                      <Label>Day of month</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={28}
+                        value={dbBackup.month_day}
+                        onChange={(e) =>
+                          setDbBackup({ ...dbBackup, month_day: Number(e.target.value) || 1 })
+                        }
+                      />
+                      <p className="text-xs text-gray-500">1–28 (always exists every month).</p>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <Label>Run time (IST)</Label>
+                    <Input
+                      type="time"
+                      value={dbBackup.run_time}
+                      onChange={(e) => setDbBackup({ ...dbBackup, run_time: e.target.value })}
+                    />
+                    <p className="text-xs text-gray-500">Interpreted in Asia/Kolkata — default 02:00.</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Keep last N local backups</Label>
+                    <Input
+                      type="number"
+                      min={0}
+                      value={dbBackup.retention_count}
+                      onChange={(e) =>
+                        setDbBackup({ ...dbBackup, retention_count: Number(e.target.value) || 0 })
+                      }
+                    />
+                    <p className="text-xs text-gray-500">0 = keep all.</p>
+                  </div>
+                </div>
+
+                <div className="space-y-3 rounded-lg border px-4 py-3">
+                  <div className="space-y-2">
+                    <Label>Upload destination</Label>
+                    <Select
+                      value={dbBackup.destination_type}
+                      onValueChange={(v) =>
+                        setDbBackup({ ...dbBackup, destination_type: v as DBBackupDestination })
+                      }
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="local">Local disk only</SelectItem>
+                        <SelectItem value="s3">S3 / S3-compatible (R2, MinIO, Spaces)</SelectItem>
+                        <SelectItem value="gdrive">Google Drive (service account)</SelectItem>
+                        <SelectItem value="mega">Mega</SelectItem>
+                        <SelectItem value="telegram">Telegram bot</SelectItem>
+                        <SelectItem value="custom">Custom application (webhook)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  {dbBackup.destination_type === 'local' && (
+                    <p className="text-xs text-gray-500">
+                      Backups are only stored in the server's backup directory. Pick a cloud
+                      destination to also upload each dump off-box.
+                    </p>
+                  )}
+
+                  {dbBackup.destination_type === 's3' && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Bucket</Label>
+                        <Input
+                          value={dbBackup.s3_bucket}
+                          onChange={(e) => setDbBackup({ ...dbBackup, s3_bucket: e.target.value })}
+                          placeholder="truerp-backups"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Region</Label>
+                        <Input
+                          value={dbBackup.s3_region}
+                          onChange={(e) => setDbBackup({ ...dbBackup, s3_region: e.target.value })}
+                          placeholder="ap-south-1 (or 'auto' for R2)"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Endpoint (optional)</Label>
+                        <Input
+                          value={dbBackup.s3_endpoint}
+                          onChange={(e) => setDbBackup({ ...dbBackup, s3_endpoint: e.target.value })}
+                          placeholder="https://<account>.r2.cloudflarestorage.com"
+                        />
+                        <p className="text-xs text-gray-500">Leave empty for AWS S3.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Key prefix (optional)</Label>
+                        <Input
+                          value={dbBackup.s3_prefix}
+                          onChange={(e) => setDbBackup({ ...dbBackup, s3_prefix: e.target.value })}
+                          placeholder="backups/truerp"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Access key ID</Label>
+                        <Input
+                          value={dbBackup.s3_access_key}
+                          onChange={(e) => setDbBackup({ ...dbBackup, s3_access_key: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Secret access key</Label>
+                        <Input
+                          type="password"
+                          value={dbBackupSecrets.s3_secret_key}
+                          onChange={(e) =>
+                            setDbBackupSecrets({ ...dbBackupSecrets, s3_secret_key: e.target.value })
+                          }
+                          placeholder={dbBackup.has_s3_secret ? 'Saved — enter to replace' : ''}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {dbBackup.destination_type === 'gdrive' && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Service-account JSON key</Label>
+                        <Textarea
+                          rows={4}
+                          value={dbBackupSecrets.gdrive_service_account_json}
+                          onChange={(e) =>
+                            setDbBackupSecrets({
+                              ...dbBackupSecrets,
+                              gdrive_service_account_json: e.target.value,
+                            })
+                          }
+                          placeholder={
+                            dbBackup.has_gdrive_credentials
+                              ? 'Saved — paste a new JSON key to replace'
+                              : '{"type":"service_account","client_email":"...","private_key":"..."}'
+                          }
+                        />
+                        <p className="text-xs text-gray-500">
+                          Create a service account in Google Cloud with the Drive API enabled. Files
+                          land in the service account&apos;s own Drive unless a shared folder ID is
+                          given below.
+                        </p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Folder ID (optional)</Label>
+                        <Input
+                          value={dbBackup.gdrive_folder_id}
+                          onChange={(e) =>
+                            setDbBackup({ ...dbBackup, gdrive_folder_id: e.target.value })
+                          }
+                          placeholder="1AbC… (share the folder with the service-account email)"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {dbBackup.destination_type === 'mega' && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Mega account email</Label>
+                        <Input
+                          type="email"
+                          value={dbBackup.mega_email}
+                          onChange={(e) => setDbBackup({ ...dbBackup, mega_email: e.target.value })}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Mega password</Label>
+                        <Input
+                          type="password"
+                          value={dbBackupSecrets.mega_password}
+                          onChange={(e) =>
+                            setDbBackupSecrets({ ...dbBackupSecrets, mega_password: e.target.value })
+                          }
+                          placeholder={dbBackup.has_mega_password ? 'Saved — enter to replace' : ''}
+                        />
+                      </div>
+                      <p className="text-xs text-gray-500 sm:col-span-2">
+                        Uploads to the account&apos;s root folder. Use a dedicated Mega account or a
+                        strong unique password — credentials are stored encrypted.
+                      </p>
+                    </div>
+                  )}
+
+                  {dbBackup.destination_type === 'telegram' && (
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Bot token</Label>
+                        <Input
+                          type="password"
+                          value={dbBackupSecrets.telegram_bot_token}
+                          onChange={(e) =>
+                            setDbBackupSecrets({
+                              ...dbBackupSecrets,
+                              telegram_bot_token: e.target.value,
+                            })
+                          }
+                          placeholder={
+                            dbBackup.has_telegram_bot_token
+                              ? 'Saved — enter to replace'
+                              : '123456:ABC-DEF…'
+                          }
+                        />
+                        <p className="text-xs text-gray-500">From @BotFather on Telegram.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Chat ID</Label>
+                        <Input
+                          value={dbBackup.telegram_chat_id}
+                          onChange={(e) =>
+                            setDbBackup({ ...dbBackup, telegram_chat_id: e.target.value })
+                          }
+                          placeholder="123456789 or -100…"
+                        />
+                        <p className="text-xs text-gray-500">
+                          The chat/group the bot should send backups to. Max ~50 MB per file.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {dbBackup.destination_type === 'custom' && (
+                    <div className="space-y-3">
+                      <div className="space-y-2">
+                        <Label>Endpoint URL</Label>
+                        <Input
+                          value={dbBackup.custom_url}
+                          onChange={(e) => setDbBackup({ ...dbBackup, custom_url: e.target.value })}
+                          placeholder="https://your-app.example.com/backups"
+                        />
+                        <p className="text-xs text-gray-500">
+                          The dump is POSTed as a multipart/form-data file field named
+                          &quot;file&quot;.
+                        </p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label>Authorization header (optional)</Label>
+                          <Input
+                            type="password"
+                            value={dbBackupSecrets.custom_auth_header}
+                            onChange={(e) =>
+                              setDbBackupSecrets({
+                                ...dbBackupSecrets,
+                                custom_auth_header: e.target.value,
+                              })
+                            }
+                            placeholder={
+                              dbBackup.has_custom_auth_header
+                                ? 'Saved — enter to replace'
+                                : 'Bearer eyJ…'
+                            }
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Extra headers (optional, JSON)</Label>
+                          <Input
+                            value={dbBackup.custom_headers}
+                            onChange={(e) =>
+                              setDbBackup({ ...dbBackup, custom_headers: e.target.value })
+                            }
+                            placeholder='{"X-Api-Key":"…"}'
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-1.5 rounded-md border bg-gray-50 px-3 py-2 text-xs text-gray-600">
+                  <div>
+                    <span className="font-medium text-gray-800">IST time:</span>{' '}
+                    {dbBackupInfo?.ist_time || '—'} ({dbBackupInfo?.ist_timezone || 'Asia/Kolkata'})
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-800">Next scheduled run:</span>{' '}
+                    {dbBackupInfo?.next_run_at
+                      ? new Date(dbBackupInfo.next_run_at).toLocaleString()
+                      : '—'}
+                    {!dbBackup.is_enabled && (
+                      <span className="text-gray-400"> (schedule disabled)</span>
+                    )}
+                  </div>
+                  <div>
+                    <span className="font-medium text-gray-800">Last run:</span>{' '}
+                    {dbBackup.last_run_at ? (
+                      <span>
+                        {new Date(dbBackup.last_run_at).toLocaleString()} —{' '}
+                        {dbBackup.last_run_status || 'unknown'}
+                        {dbBackup.last_run_file ? ` · ${dbBackup.last_run_file}` : ''}
+                        {dbBackup.last_run_size_bytes
+                          ? ` · ${formatBytes(dbBackup.last_run_size_bytes)}`
+                          : ''}
+                        {dbBackup.last_run_duration_ms
+                          ? ` · ${(dbBackup.last_run_duration_ms / 1000).toFixed(1)}s`
+                          : ''}
+                      </span>
+                    ) : (
+                      <span className="text-gray-400">Never</span>
+                    )}
+                  </div>
+                  {dbBackup.last_run_error && (
+                    <div className="text-red-600">Error: {dbBackup.last_run_error}</div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={runBackupNow}
+                    disabled={dbBackupBusy || dbBackupInfo?.running}
+                  >
+                    {(dbBackupBusy || dbBackupInfo?.running) && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    <DatabaseBackup className="mr-2 h-4 w-4" />
+                    Backup now
+                  </Button>
+                  {dbBackup.destination_type !== 'local' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={testBackupDestination}
+                      disabled={dbBackupTesting}
+                    >
+                      {dbBackupTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Test destination
+                    </Button>
+                  )}
+                  <span className="text-xs text-gray-500">
+                    Saves aren&apos;t needed for &quot;Test destination&quot; — it uses the values in
+                    the form.
+                  </span>
+                </div>
+
+                <div className="space-y-2">
+                  <p className="text-sm font-medium text-gray-900">Recent backups</p>
+                  {(dbBackupInfo?.records ?? []).length === 0 ? (
+                    <p className="text-xs text-gray-500">No backups yet.</p>
+                  ) : (
+                    <div className="divide-y rounded-md border">
+                      {(dbBackupInfo?.records ?? []).map((rec) => (
+                        <div
+                          key={rec.id}
+                          className="flex items-center justify-between gap-3 px-3 py-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium text-gray-800">
+                              {rec.file_name || '(failed run)'}
+                            </p>
+                            <p className="text-gray-500">
+                              {new Date(rec.created_at).toLocaleString()} · {rec.trigger} ·{' '}
+                              {formatBytes(rec.size_bytes)} · {rec.destination}
+                              {rec.upload_detail ? ` → ${rec.upload_detail}` : ''}
+                            </p>
+                            {rec.error && <p className="text-red-600">{rec.error}</p>}
+                          </div>
+                          <div className="flex shrink-0 items-center gap-1">
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                                rec.status === 'success'
+                                  ? 'bg-green-100 text-green-700'
+                                  : rec.status === 'partial'
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : 'bg-red-100 text-red-700'
+                              }`}
+                            >
+                              {rec.status}
+                            </span>
+                            {rec.local_available && (
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => downloadBackupRecord(rec)}
+                                title="Download"
+                              >
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            )}
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => deleteBackupRecord(rec)}
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-500" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+            </div>
+          </TabsContent>
         </Tabs>
       </div>
     </DashboardLayout>
+  )
+}
+
+// -----------------------------------------------------------------------------
+// Data Migration tab
+//
+// Renders the myBillBook ZIP orchestrator and the per-entity CSV importers.
+// Mirrors the previous standalone /migration page; all importers are super
+// admin gated by the route group and idempotent (skip duplicates by name or
+// bill number).
+// -----------------------------------------------------------------------------
+function MigrationTab() {
+  const { stores, activeStore } = useStore()
+  const [selectedStoreId, setSelectedStoreId] = useState<string>('')
+  const [zipFile, setZipFile] = useState<File | null>(null)
+  const [snapshotHtml, setSnapshotHtml] = useState(false)
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<MigrationResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [job, setJob] = useState<MigrationJob | null>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Default to the active store once stores have loaded.
+  useEffect(() => {
+    if (!selectedStoreId && activeStore?.id) {
+      setSelectedStoreId(activeStore.id)
+    }
+  }, [selectedStoreId, activeStore?.id])
+
+  // Headers that scope the import request to the selected store. When a store
+  // is selected, this overrides the global X-Store-ID for migration requests
+  // only (the rest of the app keeps using the active store).
+  const storeHeaders: Record<string, string> = selectedStoreId
+    ? { 'X-Store-ID': selectedStoreId }
+    : {}
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    setZipFile(f ?? null)
+    setResult(null)
+    setError(null)
+  }
+
+  const handleRun = async () => {
+    if (!zipFile) {
+      notifyError('Please select a myBillBook ZIP export first')
+      return
+    }
+    setRunning(true)
+    setError(null)
+    setResult(null)
+    setJob(null)
+    try {
+      const form = new FormData()
+      form.append('file', zipFile)
+      form.append('kind', 'mybillbook')
+      if (snapshotHtml) form.append('snapshot_html', 'true')
+      // Enqueue the async job and poll for per-row progress.
+      const enqueueRes = await apiFetch('/migration/jobs', {
+        method: 'POST',
+        headers: storeHeaders,
+        body: form,
+        timeoutMs: 2 * 60 * 1000,
+      })
+      if (!enqueueRes.ok) {
+        const err = await enqueueRes.json().catch(() => ({}))
+        throw new Error(err.error || 'Migration failed to start')
+      }
+      const enqueued = (await enqueueRes.json()) as { job_id: string }
+      await pollZipJob(enqueued.job_id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Migration failed')
+      notifyError(err instanceof Error ? err.message : 'Migration failed')
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  // pollZipJob polls the migration job status and updates the progress bar.
+  // On completion it parses the steps summary from the result payload.
+  const pollZipJob = async (jobID: string) => {
+    const pollIntervalMs = 1000
+    const maxAttempts = 60 * 60 // ~1 hour at 1s cadence (ZIP can be large)
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const res = await apiFetch(`/migration/jobs/${jobID}`, {
+        method: 'GET',
+        headers: storeHeaders,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || 'failed to fetch migration job status')
+      }
+      const j = (await res.json()) as MigrationJob
+      setJob(j)
+      if (j.status === 'completed' || j.status === 'failed') {
+        if (j.status === 'failed') {
+          throw new Error(j.failure_reason || 'Migration failed')
+        }
+        let parsed: MigrationResult | null = null
+        if (j.result) {
+          try {
+            const r = JSON.parse(j.result) as { steps?: unknown }
+            if (Array.isArray(r.steps)) {
+              parsed = { steps: r.steps as MigrationStep[] }
+            }
+          } catch {
+            // fall through to empty result
+          }
+        }
+        setResult(parsed ?? { steps: [] })
+        const totalImported = (parsed?.steps || []).reduce((s, st) => s + st.imported, 0)
+        notifySuccess(`Migration complete — ${totalImported} record${totalImported === 1 ? '' : 's'} imported`)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+    throw new Error('Migration timed out waiting for completion')
+  }
+
+  const totalImported = result?.steps.reduce((s, st) => s + st.imported, 0) ?? 0
+  const totalErrors = result?.steps.reduce((s, st) => s + st.errors.length, 0) ?? 0
+
+  return (
+    <div className="space-y-4">
+      {/* Store selector — all imports below go into the selected store. */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Store className="h-5 w-5" /> Target store
+          </CardTitle>
+          <CardDescription>
+            All imports below — the ZIP orchestrator and every per-entity
+            importer — will store data in the store selected here. This is
+            independent of the store switcher in the header, so you can import
+            into a specific store without changing your current view.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <Label htmlFor="migration-store">Import into store</Label>
+            <Select
+              value={selectedStoreId}
+              onValueChange={setSelectedStoreId}
+              disabled={stores.length === 0}
+            >
+              <SelectTrigger id="migration-store" className="w-full sm:w-80">
+                <SelectValue placeholder="Select a store…" />
+              </SelectTrigger>
+              <SelectContent>
+                {stores
+                  .filter((s) => s.is_active)
+                  .map((s) => (
+                    <SelectItem key={s.id} value={s.id}>
+                      {s.name} {s.code ? `(${s.code})` : ''}
+                    </SelectItem>
+                  ))}
+              </SelectContent>
+            </Select>
+            {stores.length === 0 && (
+              <p className="text-xs text-amber-600">
+                No stores available. Create a store first under Security →
+                Stores.
+              </p>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileArchive className="h-5 w-5" /> myBillBook ZIP import
+          </CardTitle>
+          <CardDescription>
+            Upload the ZIP of myBillBook report CSVs and the migration
+            orchestrator will run a phased import (parties, purchase bills,
+            payments, expenses) with row-level error reporting.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="zip-file">myBillBook export ZIP</Label>
+            <div className="flex items-center gap-3">
+              <Input
+                id="zip-file"
+                ref={inputRef}
+                type="file"
+                accept=".zip,application/zip"
+                onChange={handleFileChange}
+                disabled={running}
+              />
+              {zipFile && (
+                <span className="whitespace-nowrap text-sm text-gray-500">
+                  {zipFile.name} ({(zipFile.size / 1024).toFixed(0)} KB)
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-gray-400">
+              The ZIP should contain the myBillBook report CSVs
+              (all_party_balance_*.csv, purchase_summary_report_*.csv,
+              cash_and_bank_statement_*.csv, expense_transactions_*.csv).
+              File matching is by name substring, so the date suffix does not
+              matter.
+            </p>
+          </div>
+
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={snapshotHtml}
+              onChange={(e) => setSnapshotHtml(e.target.checked)}
+              disabled={running}
+              className="h-4 w-4 rounded border-gray-300"
+            />
+            <span>
+              Snapshot purchase source pages as HTML during import
+              (recommended — preserves the original source document even if
+              the myBillBook link later disappears)
+            </span>
+          </label>
+
+          <div className="flex items-center gap-3">
+            <Button onClick={() => void handleRun()} disabled={running || !zipFile}>
+              {running ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Upload className="mr-2 h-4 w-4" />
+              )}
+              {running ? 'Running migration…' : 'Run migration'}
+            </Button>
+            {zipFile && !running && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setZipFile(null)
+                  setResult(null)
+                  setError(null)
+                  setJob(null)
+                  if (inputRef.current) inputRef.current.value = ''
+                }}
+              >
+                Clear
+              </Button>
+            )}
+          </div>
+
+          {running && job && (
+            <MigrationJobProgress job={job} />
+          )}
+
+          {error && (
+            <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {result && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-green-600" /> Migration results
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex flex-wrap gap-4 text-sm">
+              <div className="rounded-md bg-green-50 px-3 py-2">
+                <span className="font-medium text-green-700">{totalImported}</span>
+                <span className="ml-1 text-green-600">records imported</span>
+              </div>
+              <div className="rounded-md bg-amber-50 px-3 py-2">
+                <span className="font-medium text-amber-700">{totalErrors}</span>
+                <span className="ml-1 text-amber-600">row warnings/errors</span>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              {result.steps.map((step) => (
+                <div key={step.step} className="rounded-md border p-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-medium capitalize">
+                      {step.step.replace(/_/g, ' ')}
+                    </span>
+                    <span className="text-sm text-gray-500">
+                      {step.imported} imported
+                      {step.errors.length > 0 && (
+                        <span className="ml-2 text-amber-600">
+                          · {step.errors.length} error{step.errors.length === 1 ? '' : 's'}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                  {step.errors.length > 0 && (
+                    <details className="mt-2">
+                      <summary className="cursor-pointer text-xs text-gray-500">
+                        Show row errors
+                      </summary>
+                      <ul className="mt-2 max-h-48 space-y-1 overflow-auto text-xs text-amber-700">
+                        {step.errors.map((e, i) => (
+                          <li key={i} className="font-mono">{e}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <p className="text-xs text-gray-400">
+              Re-running the migration with the same ZIP is safe — already
+              imported records (matched by party name or bill number) are
+              skipped. Purchase bills imported from myBillBook keep their
+              original source link on the purchase invoice page, where you can
+              open or download the source document.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileUp className="h-5 w-5" /> Import a single entity
+          </CardTitle>
+          <CardDescription>
+            Import one entity at a time by uploading its CSV. Download the
+            template for each entity to see the expected columns and a sample
+            row. Each importer is idempotent — already imported records
+            (matched by name, email, or bill number) are skipped.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          {ENTITY_GROUPS.map((group) => (
+            <div key={group} className="space-y-3">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-gray-500">
+                {group}
+              </h3>
+              {ENTITY_IMPORTS.filter((cfg) => cfg.group === group).map((cfg) => (
+                <EntityImportRow key={cfg.key} config={cfg} storeHeaders={storeHeaders} />
+              ))}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+    </div>
+  )
+}
+
+// Unique groups in display order.
+const ENTITY_GROUPS = Array.from(new Set(ENTITY_IMPORTS.map((e) => e.group)))
+
+// downloadCSVTemplate triggers a browser download of the template content as
+// a .csv file.
+function downloadCSVTemplate(config: EntityImportConfig) {
+  const blob = new Blob([config.template], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${config.key}-template.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+// -----------------------------------------------------------------------------
+// Client-side CSV parse / serialize for the editable preview.
+// -----------------------------------------------------------------------------
+interface CSVPreviewData {
+  headers: string[]
+  rows: string[][]
+}
+
+// parseCSVText parses CSV content into headers + rows. Handles BOM, CRLF, and
+// quoted fields with embedded commas and quotes (RFC 4180).
+function parseCSVText(content: string): CSVPreviewData | null {
+  // Strip BOM.
+  if (content.charCodeAt(0) === 0xfeff) content = content.slice(1)
+  // Normalize CRLF.
+  content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines: string[][] = []
+  let field = ''
+  let row: string[] = []
+  let inQuotes = false
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i]
+    if (inQuotes) {
+      if (ch === '"') {
+        if (content[i + 1] === '"') {
+          field += '"'
+          i++
+        } else {
+          inQuotes = false
+        }
+      } else {
+        field += ch
+      }
+    } else {
+      if (ch === '"') {
+        inQuotes = true
+      } else if (ch === ',') {
+        row.push(field)
+        field = ''
+      } else if (ch === '\n') {
+        row.push(field)
+        lines.push(row)
+        row = []
+        field = ''
+      } else {
+        field += ch
+      }
+    }
+  }
+  // Last field/row.
+  if (field !== '' || row.length > 0) {
+    row.push(field)
+    lines.push(row)
+  }
+  if (lines.length === 0) return null
+  // Remove trailing empty lines.
+  while (lines.length > 1 && lines[lines.length - 1].every((c) => c.trim() === '')) {
+    lines.pop()
+  }
+  const headers = lines[0]
+  const rows = lines.slice(1).filter((r) => r.some((c) => c.trim() !== ''))
+  return { headers, rows }
+}
+
+// serializeCSV converts headers + rows back into CSV text (RFC 4180 quoting).
+function serializeCSV(data: CSVPreviewData): string {
+  const escape = (v: string) => {
+    if (v.includes(',') || v.includes('"') || v.includes('\n')) {
+      return '"' + v.replace(/"/g, '""') + '"'
+    }
+    return v
+  }
+  const lines = [data.headers.map(escape).join(','), ...data.rows.map((r) => r.map(escape).join(','))]
+  return lines.join('\n')
+}
+
+// splitQuantityColumn transforms the preview data so that a column like
+// "Stock Quantity" containing "33.0 PCS" is split into two columns: the
+// original column keeps "33.0" and a new column (unitLabel) gets "PCS".
+function splitQuantityColumn(data: CSVPreviewData, source: string, unitLabel: string): CSVPreviewData {
+  const colIdx = data.headers.findIndex((h) => h.trim().toLowerCase() === source.trim().toLowerCase())
+  if (colIdx === -1) return data
+  const headers = [...data.headers.slice(0, colIdx + 1), unitLabel, ...data.headers.slice(colIdx + 1)]
+  const rows = data.rows.map((r) => {
+    const raw = (r[colIdx] ?? '').trim()
+    const parts = raw.split(/\s+/)
+    const value = parts[0] ?? ''
+    const unit = parts.slice(1).join(' ')
+    // Replace the original column with just the numeric value, then insert
+    // the unit column right after it.
+    const newRow = [...r]
+    newRow[colIdx] = value
+    return [...newRow.slice(0, colIdx + 1), unit, ...newRow.slice(colIdx + 1)]
+  })
+  return { headers, rows }
+}
+
+// headerMatchScore returns the fraction of an importer's template columns
+// that appear in the uploaded header (case-insensitive). Used to warn when a
+// file clearly belongs to a different importer — e.g. the myBillBook "Sales"
+// summary export uploaded to "Sales invoice items".
+function headerMatchScore(config: EntityImportConfig, uploaded: Set<string>): number {
+  const cols = (parseCSVText(config.template)?.headers ?? [])
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean)
+  if (cols.length === 0) return 0
+  return cols.filter((h) => uploaded.has(h)).length / cols.length
+}
+
+// mergeQuantityColumn reverses splitQuantityColumn: combines the numeric
+// column and the unit column back into "value unit" format for the backend.
+function mergeQuantityColumn(data: CSVPreviewData, source: string, unitLabel: string): CSVPreviewData {
+  const colIdx = data.headers.findIndex((h) => h.trim().toLowerCase() === source.trim().toLowerCase())
+  const unitIdx = data.headers.findIndex((h) => h.trim().toLowerCase() === unitLabel.trim().toLowerCase())
+  if (colIdx === -1 || unitIdx === -1) return data
+  const headers = data.headers.filter((_, i) => i !== unitIdx)
+  const rows = data.rows.map((r) => {
+    const value = (r[colIdx] ?? '').trim()
+    const unit = (r[unitIdx] ?? '').trim()
+    const merged = unit ? `${value} ${unit}` : value
+    const newRow = [...r]
+    newRow[colIdx] = merged
+    return newRow.filter((_, i) => i !== unitIdx)
+  })
+  return { headers, rows }
+}
+
+// -----------------------------------------------------------------------------
+// CSVPreview — editable table shown after a file is uploaded.
+// -----------------------------------------------------------------------------
+function CSVPreview({
+  data,
+  onChange,
+  disabled,
+}: {
+  data: CSVPreviewData
+  onChange: (data: CSVPreviewData) => void
+  disabled?: boolean
+}) {
+  const updateCell = (rowIdx: number, colIdx: number, value: string) => {
+    const rows = data.rows.map((r, i) =>
+      i === rowIdx ? r.map((c, j) => (j === colIdx ? value : c)) : r
+    )
+    onChange({ headers: data.headers, rows })
+  }
+
+  const addRow = () => {
+    onChange({ headers: data.headers, rows: [...data.rows, data.headers.map(() => '')] })
+  }
+
+  const deleteRow = (rowIdx: number) => {
+    onChange({ headers: data.headers, rows: data.rows.filter((_, i) => i !== rowIdx) })
+  }
+
+  return (
+    <div className="mt-3 overflow-auto rounded-md border">
+      <table className="w-full text-xs">
+        <thead className="bg-gray-100">
+          <tr>
+            <th className="px-2 py-1 text-left font-medium text-gray-500">#</th>
+            {data.headers.map((h, i) => (
+              <th key={i} className="px-2 py-1 text-left font-medium text-gray-600">
+                {h}
+              </th>
+            ))}
+            <th className="px-2 py-1" />
+          </tr>
+        </thead>
+        <tbody>
+          {data.rows.map((row, rowIdx) => (
+            <tr key={rowIdx} className="border-t hover:bg-gray-50">
+              <td className="px-2 py-1 text-gray-400">{rowIdx + 1}</td>
+              {data.headers.map((_, colIdx) => (
+                <td key={colIdx} className="px-1 py-0.5">
+                  <input
+                    type="text"
+                    value={row[colIdx] ?? ''}
+                    onChange={(e) => updateCell(rowIdx, colIdx, e.target.value)}
+                    disabled={disabled}
+                    className="w-full rounded border border-transparent px-1 py-0.5 text-xs hover:border-gray-300 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:opacity-50"
+                  />
+                </td>
+              ))}
+              <td className="px-2 py-1">
+                <button
+                  type="button"
+                  onClick={() => deleteRow(rowIdx)}
+                  disabled={disabled}
+                  className="text-xs text-red-500 hover:text-red-700 disabled:opacity-50"
+                  title="Delete row"
+                >
+                  ✕
+                </button>
+              </td>
+            </tr>
+          ))}
+          {data.rows.length === 0 && (
+            <tr>
+              <td colSpan={data.headers.length + 2} className="px-2 py-3 text-center text-xs text-gray-400">
+                No data rows. Click "Add row" to create one.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <div className="flex items-center justify-between border-t bg-gray-50 px-2 py-1">
+        <span className="text-xs text-gray-500">
+          {data.rows.length} row{data.rows.length === 1 ? '' : 's'}
+        </span>
+        <button
+          type="button"
+          onClick={addRow}
+          disabled={disabled}
+          className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
+        >
+          + Add row
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// MigrationJobProgress renders a per-row progress bar for an in-flight
+// migration job. The total may be 0 (unknown) until the runner has parsed
+// the file; in that case an indeterminate bar is shown.
+function MigrationJobProgress({ job }: { job: MigrationJob }) {
+  const total = job.total_rows > 0 ? job.total_rows : 0
+  const current = job.current_row > 0 ? job.current_row : 0
+  const pct = total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0
+  const statusLabel =
+    job.status === 'queued'
+      ? 'Queued…'
+      : job.status === 'running'
+        ? job.step
+          ? `Running: ${job.step} (${current}/${total || '…'})`
+        : `Running (${current}/${total || '…'})`
+      : job.status
+  return (
+    <div className="mt-2 rounded-md border bg-gray-50 p-2">
+      <div className="mb-1 flex items-center justify-between text-xs text-gray-600">
+        <span className="flex items-center gap-1">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          {statusLabel}
+        </span>
+        <span>
+          {job.imported} imported
+          {job.error_count > 0 && (
+            <span className="ml-2 text-amber-600">{job.error_count} error{job.error_count === 1 ? '' : 's'}</span>
+          )}
+        </span>
+      </div>
+      {total > 0 ? (
+        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+          <div
+            className="h-2 rounded-full bg-blue-500 transition-all duration-300"
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : (
+        <div className="h-2 w-full overflow-hidden rounded-full bg-gray-200">
+          <div className="h-2 w-1/3 animate-pulse rounded-full bg-blue-400" />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EntityImportRow({
+  config,
+  storeHeaders,
+}: {
+  config: EntityImportConfig
+  storeHeaders: Record<string, string>
+}) {
+  const [file, setFile] = useState<File | null>(null)
+  const [preview, setPreview] = useState<CSVPreviewData | null>(null)
+  const [parseError, setParseError] = useState<string | null>(null)
+  const [formatWarning, setFormatWarning] = useState<string | null>(null)
+  const [running, setRunning] = useState(false)
+  const [result, setResult] = useState<EntityImportResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [job, setJob] = useState<MigrationJob | null>(null)
+  const [optionValues, setOptionValues] = useState<Record<string, string>>(() => {
+    // Initialize from each option's defaultValue.
+    const init: Record<string, string> = {}
+    for (const opt of config.options ?? []) {
+      if (opt.defaultValue) init[opt.formKey] = opt.defaultValue
+    }
+    return init
+  })
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]
+    setFile(f ?? null)
+    setResult(null)
+    setError(null)
+    setParseError(null)
+    setFormatWarning(null)
+    if (!f) {
+      setPreview(null)
+      return
+    }
+    try {
+      const text = await f.text()
+      const parsed = parseCSVText(text)
+      if (!parsed || parsed.headers.length === 0) {
+        setParseError('Could not parse CSV — file appears to be empty or malformed')
+        setPreview(null)
+        return
+      }
+      // Warn when the columns clearly match a different importer's template.
+      const uploaded = new Set(
+        parsed.headers.map((h) => h.trim().toLowerCase()).filter(Boolean)
+      )
+      const ownScore = headerMatchScore(config, uploaded)
+      let best: EntityImportConfig | null = null
+      let bestScore = 0
+      for (const other of ENTITY_IMPORTS) {
+        if (other.key === config.key) continue
+        const s = headerMatchScore(other, uploaded)
+        if (s > bestScore) {
+          bestScore = s
+          best = other
+        }
+      }
+      if (best && bestScore >= 0.6 && bestScore - ownScore >= 0.2) {
+        setFormatWarning(
+          `This file's columns look like "${best.label}". You can still import here, but that importer is probably the right one.`
+        )
+      }
+      // If this entity has a splitColumn config (e.g. stock summary's
+      // "Stock Quantity" → "Stock Quantity" + "Quantity Type"), apply it
+      // so the preview shows the unit as a separate editable column.
+      if (config.splitColumn) {
+        setPreview(splitQuantityColumn(parsed, config.splitColumn.source, config.splitColumn.unitLabel))
+      } else {
+        setPreview(parsed)
+      }
+    } catch {
+      setParseError('Failed to read file')
+      setPreview(null)
+    }
+  }
+
+  const handleImport = async (extraOptions?: Record<string, string>) => {
+    if (!file) {
+      notifyError(`Select a ${config.label} CSV to import`)
+      return
+    }
+    setRunning(true)
+    setError(null)
+    setResult(null)
+    setJob(null)
+    try {
+      const form = new FormData()
+      // If we have an edited preview, send the serialized CSV; otherwise send
+      // the original file unchanged.
+      if (preview) {
+        // Merge split columns back before serializing so the backend
+        // receives the original "value unit" format.
+        const dataToSend = config.splitColumn
+          ? mergeQuantityColumn(preview, config.splitColumn.source, config.splitColumn.unitLabel)
+          : preview
+        const editedCSV = serializeCSV(dataToSend)
+        const blob = new Blob([editedCSV], { type: 'text/csv;charset=utf-8' })
+        form.append('file', blob, file.name)
+      } else {
+        form.append('file', file)
+      }
+      // Append any option values that have been set.
+      for (const [key, value] of Object.entries(optionValues)) {
+        if (value !== '') form.append(key, value)
+      }
+      // Caller-supplied extras (e.g. import_unmatched=true when the user
+      // confirms importing rows that matched no existing record).
+      for (const [key, value] of Object.entries(extraOptions ?? {})) {
+        form.append(key, value)
+      }
+
+      // Async path: enqueue a migration job and poll for per-row progress.
+      if (config.kind) {
+        form.append('kind', config.kind)
+        const enqueueRes = await apiFetch('/migration/jobs', {
+          method: 'POST',
+          headers: storeHeaders,
+          body: form,
+          // Uploading large files can take a moment; the actual processing
+          // happens in the background after this returns.
+          timeoutMs: 2 * 60 * 1000,
+        })
+        if (!enqueueRes.ok) {
+          const err = await enqueueRes.json().catch(() => ({}))
+          throw new Error(err.error || `${config.label} import failed to start`)
+        }
+        const enqueued = (await enqueueRes.json()) as { job_id: string }
+        await pollMigrationJob(enqueued.job_id)
+        return
+      }
+
+      // Synchronous fallback (no kind configured).
+      const res = await apiFetch(config.endpoint, {
+        method: 'POST',
+        headers: storeHeaders,
+        body: form,
+        // Imports can process thousands of rows (categories, products, stock,
+        // invoices, …) and routinely exceed the default 8s request timeout.
+        timeoutMs: 5 * 60 * 1000,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || `${config.label} import failed`)
+      }
+      const data = (await res.json()) as EntityImportResult
+      setResult(data)
+      const n = data.imported ?? 0
+      notifySuccess(`${config.label}: ${n} record${n === 1 ? '' : 's'} imported`)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `${config.label} import failed`)
+      notifyError(err instanceof Error ? err.message : `${config.label} import failed`)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  // pollMigrationJob polls GET /migration/jobs/:id until the job reaches a
+  // terminal state, updating the `job` state for the progress bar. On
+  // completion it parses the result payload into the same EntityImportResult
+  // shape used by the synchronous path so the rest of the UI is unchanged.
+  const pollMigrationJob = async (jobID: string) => {
+    const pollIntervalMs = 1000
+    // Overall safety cap so a stuck job does not poll forever; the backend
+    // marks the job failed on panic, but a process restart could leave a
+    // queued/running job orphaned. After this many attempts the UI gives up
+    // and surfaces the last known state.
+    const maxAttempts = 60 * 30 // ~30 minutes at 1s cadence
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const res = await apiFetch(`/migration/jobs/${jobID}`, {
+        method: 'GET',
+        headers: storeHeaders,
+      })
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}))
+        throw new Error(err.error || 'failed to fetch migration job status')
+      }
+      const j = (await res.json()) as MigrationJob
+      setJob(j)
+      if (j.status === 'completed' || j.status === 'failed') {
+        if (j.status === 'failed') {
+          throw new Error(j.failure_reason || `${config.label} import failed`)
+        }
+        // Parse the result payload (JSON string) into EntityImportResult.
+        let parsed: EntityImportResult | null = null
+        if (j.result) {
+          try {
+            const r = JSON.parse(j.result) as Record<string, unknown>
+            parsed = {
+              imported: typeof r.imported === 'number' ? r.imported : j.imported,
+              updated: typeof r.updated === 'number' ? r.updated : undefined,
+              unmatched: Array.isArray(r.unmatched)
+                ? (r.unmatched as UnmatchedRow[])
+                : undefined,
+              mismatches: Array.isArray(r.mismatches)
+                ? (r.mismatches as StockMismatch[])
+                : undefined,
+              payment_in: typeof r.payment_in === 'number' ? r.payment_in : undefined,
+              payment_out: typeof r.payment_out === 'number' ? r.payment_out : undefined,
+              categories_created: typeof r.categories_created === 'number' ? r.categories_created : undefined,
+              products_created: typeof r.products_created === 'number' ? r.products_created : undefined,
+              stock_updated: typeof r.stock_updated === 'number' ? r.stock_updated : undefined,
+              stock_created: typeof r.stock_created === 'number' ? r.stock_created : undefined,
+              sales_invoices: typeof r.sales_invoices === 'number' ? r.sales_invoices : undefined,
+              purchase_bills: typeof r.purchase_bills === 'number' ? r.purchase_bills : undefined,
+              expenses: typeof r.expenses === 'number' ? r.expenses : undefined,
+              cash_transactions: typeof r.cash_transactions === 'number' ? r.cash_transactions : undefined,
+              skipped: typeof r.skipped === 'number' ? r.skipped : undefined,
+              errors: parseJobErrors(j),
+            }
+          } catch {
+            parsed = { imported: j.imported, errors: parseJobErrors(j) }
+          }
+        } else {
+          parsed = { imported: j.imported, errors: parseJobErrors(j) }
+        }
+        setResult(parsed)
+        const n = parsed.imported ?? 0
+        notifySuccess(`${config.label}: ${n} record${n === 1 ? '' : 's'} imported`)
+        return
+      }
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+    }
+    throw new Error(`${config.label} import timed out waiting for completion`)
+  }
+
+  // parseJobErrors decodes the JSON-encoded errors array on a MigrationJob.
+  const parseJobErrors = (j: MigrationJob): string[] => {
+    if (!j.errors) return []
+    try {
+      const arr = JSON.parse(j.errors) as unknown
+      if (Array.isArray(arr)) return arr.filter((x): x is string => typeof x === 'string')
+    } catch {
+      // ignore malformed payload
+    }
+    return []
+  }
+
+  const imported = result?.imported ?? 0
+  const errCount = result?.errors?.length ?? 0
+  const unmatchedRows = result?.unmatched ?? []
+  const mismatchRows = result?.mismatches ?? []
+
+  return (
+    <div className="rounded-md border p-3">
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-medium">{config.label}</span>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => downloadCSVTemplate(config)}
+            >
+              <FileDown className="mr-1 h-3.5 w-3.5" />
+              Template
+            </Button>
+            {result && (
+              <span className="text-sm text-gray-500">
+                {imported} imported
+                {typeof result.updated === 'number' && result.updated > 0 && (
+                  <span className="ml-1 text-gray-400">
+                    ({result.updated} link{result.updated === 1 ? '' : 's'} updated)
+                  </span>
+                )}
+                {typeof result.payment_in === 'number' && typeof result.payment_out === 'number' && (
+                  <span className="ml-1 text-gray-400">
+                    (in {result.payment_in} / out {result.payment_out})
+                  </span>
+                )}
+                {typeof result.categories_created === 'number' && typeof result.products_created === 'number' && (
+                  <span className="ml-1 text-gray-400">
+                    ({result.categories_created} categories, {result.products_created} products, {result.stock_updated ?? 0} stock)
+                  </span>
+                )}
+                {typeof result.stock_updated === 'number' && typeof result.categories_created !== 'number' && (
+                  <span className="ml-1 text-gray-400">
+                    ({result.stock_updated} stock updated{typeof result.stock_created === 'number' && result.stock_created > 0 ? `, ${result.stock_created} created` : ''})
+                  </span>
+                )}
+                {mismatchRows.length > 0 && (
+                  <span className="ml-2 text-amber-600">
+                    · {mismatchRows.length} stock mismatch{mismatchRows.length === 1 ? '' : 'es'}
+                  </span>
+                )}
+                {typeof result.cash_transactions === 'number' && (
+                  <span className="ml-1 text-gray-400">
+                    ({[
+                      typeof result.sales_invoices === 'number' && result.sales_invoices > 0 ? `${result.sales_invoices} sales` : null,
+                      typeof result.purchase_bills === 'number' && result.purchase_bills > 0 ? `${result.purchase_bills} bills` : null,
+                      typeof result.expenses === 'number' && result.expenses > 0 ? `${result.expenses} expenses` : null,
+                      result.cash_transactions > 0 ? `${result.cash_transactions} cash txns` : null,
+                      typeof result.skipped === 'number' && result.skipped > 0 ? `${result.skipped} skipped` : null,
+                    ].filter(Boolean).join(', ')})
+                  </span>
+                )}
+                {typeof result.cash_transactions !== 'number' &&
+                  typeof result.skipped === 'number' && result.skipped > 0 && (
+                    <span className="ml-1 text-gray-400">
+                      ({result.skipped} skipped)
+                    </span>
+                  )}
+                {errCount > 0 && (
+                  <span className="ml-2 text-amber-600">
+                    · {errCount} error{errCount === 1 ? '' : 's'}
+                  </span>
+                )}
+              </span>
+            )}
+          </div>
+        </div>
+        <p className="text-xs text-gray-500">{config.description}</p>
+      </div>
+
+      <div className="mt-3 flex items-center gap-3">
+        <Input
+          ref={inputRef}
+          type="file"
+          accept=".csv,text/csv"
+          onChange={handleFileChange}
+          disabled={running}
+          className="flex-1"
+        />
+        <Button onClick={() => void handleImport()} disabled={running || !file} size="sm">
+          {running ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <Upload className="mr-2 h-4 w-4" />
+          )}
+          {running ? 'Importing…' : 'Import'}
+        </Button>
+        {file && !running && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setFile(null)
+              setPreview(null)
+              setParseError(null)
+              setFormatWarning(null)
+              setResult(null)
+              setError(null)
+              if (inputRef.current) inputRef.current.value = ''
+            }}
+          >
+            Clear
+          </Button>
+        )}
+      </div>
+
+      {running && job && (
+        <MigrationJobProgress job={job} />
+      )}
+
+      {parseError && (
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{parseError}</span>
+        </div>
+      )}
+
+      {formatWarning && (
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{formatWarning}</span>
+        </div>
+      )}
+
+      {preview && (
+        <div className="mt-3">
+          <div className="mb-1.5 flex items-center justify-between">
+            <span className="text-xs font-medium text-gray-600">
+              Preview — edit cells before importing
+            </span>
+          </div>
+          <CSVPreview
+            data={preview}
+            onChange={setPreview}
+            disabled={running}
+          />
+        </div>
+      )}
+
+      {config.options && config.options.length > 0 && (
+        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-md bg-gray-50 p-2">
+          <span className="text-xs font-medium text-gray-500">Defaults</span>
+          {config.options.map((opt) => (
+            <div key={opt.formKey} className="flex flex-col gap-1">
+              <Label className="text-xs text-gray-500">{opt.label}</Label>
+              {opt.type === 'select' && opt.choices ? (
+                <Select
+                  value={optionValues[opt.formKey] ?? ''}
+                  onValueChange={(v) =>
+                    setOptionValues((prev) => ({ ...prev, [opt.formKey]: v }))
+                  }
+                  disabled={running}
+                >
+                  <SelectTrigger className="h-8 w-40 text-xs">
+                    <SelectValue placeholder={opt.placeholder ?? 'Select…'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {opt.choices.map((c) => (
+                      <SelectItem key={c} value={c}>
+                        {c}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              ) : (
+                <Input
+                  type="text"
+                  value={optionValues[opt.formKey] ?? ''}
+                  placeholder={opt.placeholder}
+                  onChange={(e) =>
+                    setOptionValues((prev) => ({
+                      ...prev,
+                      [opt.formKey]: e.target.value,
+                    }))
+                  }
+                  disabled={running}
+                  className="h-8 w-40 text-xs"
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {result && errCount > 0 && (
+        <details className="mt-2">
+          <summary className="cursor-pointer text-xs text-gray-500">
+            Show row errors
+          </summary>
+          <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-amber-700">
+            {result.errors.map((e, i) => (
+              <li key={i} className="font-mono">{e}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+
+      {result && mismatchRows.length > 0 && (
+        <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-2">
+          <p className="text-xs font-medium text-amber-800">
+            {mismatchRows.length} stock mismatch{mismatchRows.length === 1 ? '' : 'es'} — CSV
+            current stock differs from inventory (inventory left unchanged)
+          </p>
+          <ul className="mt-2 max-h-40 space-y-1 overflow-auto text-xs text-amber-700">
+            {mismatchRows.map((m, i) => (
+              <li key={i} className="font-mono">
+                Row {m.row} · {m.item_name} · {m.batch_no || '(no batch)'} — report{' '}
+                {m.csv_stock}
+                {m.unit ? ` ${m.unit}` : ''}, inventory {m.inventory_stock}
+                {m.unit ? ` ${m.unit}` : ''}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {result && unmatchedRows.length > 0 && (
+        <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+            <div className="flex-1 text-xs text-amber-800">
+              <p className="font-medium">
+                {unmatchedRows.length} row{unmatchedRows.length === 1 ? '' : 's'} did not
+                match any existing record
+              </p>
+              <ul className="mt-2 max-h-40 space-y-0.5 overflow-auto font-mono">
+                {unmatchedRows.map((u) => (
+                  <li key={u.row}>
+                    #{u.ref}
+                    {u.party_name ? ` · ${u.party_name}` : ''}
+                    {u.amount ? ` · ${u.amount}` : ''}
+                  </li>
+                ))}
+              </ul>
+              <div className="mt-2 flex items-center gap-2">
+                <Button
+                  size="sm"
+                  disabled={running}
+                  onClick={() => void handleImport({ import_unmatched: 'true' })}
+                >
+                  {running ? (
+                    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Upload className="mr-2 h-3.5 w-3.5" />
+                  )}
+                  Import {unmatchedRows.length} new record{unmatchedRows.length === 1 ? '' : 's'}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={running}
+                  onClick={() =>
+                    setResult((r) => (r ? { ...r, unmatched: [] } : r))
+                  }
+                >
+                  Skip
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
   )
 }

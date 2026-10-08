@@ -13,11 +13,11 @@ func TestWrapPDFTextFitsWidth(t *testing.T) {
 	pdf.SetFont("Arial", "", 7)
 
 	// Matches buildPeriodReportPDF card inner width and wrap width.
-	innerW := (210.0 - 14 - 14 - 12) / 5 - 8
+	innerW := (210.0-14-14-12)/5 - 8
 	wrapW := innerW - 2.0
 	samples := []string{
 		"Purchases 0 · Ops expenses 0 · AP 0.00",
-		"Sales - purchases - expenses +/- returns",
+		"Sales - expenses - returns/notes",
 		"Sale value - purchase cost on items",
 		"Payments in - out - expenses",
 		"Purchase expense",

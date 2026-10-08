@@ -44,6 +44,7 @@ export interface DailyReport {
   payments_out: DailyReportMetric
   sales_returns: DailyReportMetric
   purchase_returns: DailyReportMetric
+  profit_distributions?: DailyReportMetric
   expense_lines?: ExpenseLine[]
   payments_by_method?: PaymentMethodTotal[]
   accounts_payable: DailyReportMetric
@@ -81,7 +82,7 @@ export const PERIODIC_REPORT_OPTIONS: { value: PeriodicReportPeriod; label: stri
   { value: 'custom', label: 'Custom range' },
 ]
 
-const metricRows: { key: keyof DailyReport; label: string; help: string }[] = [
+const metricRows: { key: keyof DailyReport; label: string; help: string; onlyIfNonZero?: boolean }[] = [
   {
     key: 'sales',
     label: 'Sales (Invoices)',
@@ -115,7 +116,7 @@ const metricRows: { key: keyof DailyReport; label: string; help: string }[] = [
   {
     key: 'expenses',
     label: 'Expenses',
-    help: 'Operating expenses recorded in this period, such as rent or utilities. Purchase bills are counted separately.',
+    help: 'Operating expenses recorded in this period, such as rent, utilities or payroll. Purchase bills are counted separately.',
   },
   {
     key: 'payments_in',
@@ -132,18 +133,30 @@ const metricRows: { key: keyof DailyReport; label: string; help: string }[] = [
     label: 'Purchase Returns',
     help: 'Goods returned to vendors in this period. These reduce net purchases.',
   },
+  {
+    key: 'profit_distributions',
+    label: 'Profit Distribution Deduction',
+    help: 'Profit payouts made to partners in this period. Shown as a deduction from cash/bank, not an operating expense — it does not reduce period profit.',
+    onlyIfNonZero: true,
+  },
 ]
+
+export function visibleMetricRows(report: DailyReport) {
+  return metricRows.filter(
+    (row) => !row.onlyIfNonZero || ((report[row.key] as DailyReportMetric | undefined)?.count ?? 0) > 0
+  )
+}
 
 export const dailyReportSummaryHelp: Record<string, string> = {
   accounts_payable_total:
     'Unpaid vendor balance across all open purchase bills, not only bills from this period.',
   gst_collected: 'GST collected on sales invoices in this period.',
   daily_profit:
-    'Accrual profit for this period: sales − purchases − expenses ± returns and notes. This is not cash in hand.',
+    'Accrual profit for this period: sales − expenses − sales returns and credit notes. Purchases are not deducted. This is not cash in hand.',
   product_profit:
     'Gross margin on items sold: taxable sale value minus product purchase cost, net of sales returns and credit notes.',
   net_cash_flow:
-    'Cash movement for this period: payments received − payment out − expenses.',
+    'Cash movement for this period: payments received − payment out − expenses − profit distributions.',
   loyalty_points_earned:
     'Loyalty points credited to customers from sales in this period (earn transactions).',
   loyalty_points_redeemed:
@@ -224,7 +237,7 @@ export function buildDailyReportShareText(report: DailyReport, heading = 'Daily 
     '-------',
   ]
 
-  for (const row of metricRows) {
+  for (const row of visibleMetricRows(report)) {
     const metric = report[row.key]
     if (isMetric(metric)) {
       lines.push(
@@ -267,7 +280,7 @@ export function buildPeriodReportShareText(report: PeriodReport): string {
     '-------',
   ]
 
-  for (const row of metricRows) {
+  for (const row of visibleMetricRows(report)) {
     const metric = report[row.key]
     if (isMetric(metric)) {
       lines.push(

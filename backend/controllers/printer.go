@@ -19,7 +19,7 @@ import (
 type ThermalPrintRequest struct {
 	DocumentType string    `json:"document_type" binding:"required"` // invoice, expense
 	DocumentID   uuid.UUID `json:"document_id" binding:"required"`
-	PrintSize    string    `json:"print_size" binding:"required"`    // 1inch, 1.5inch, 2inch, 3inch
+	PrintSize    string    `json:"print_size" binding:"required"` // 1inch, 1.5inch, 2inch, 3inch
 }
 
 // normalizeThermalPrintSize accepts receipt widths: 1 / 1.5 / 2 / 3 inch.
@@ -413,9 +413,13 @@ func buildBarcodePreviewHTML(userID uuid.UUID, mode string, labelSizeKey string)
 			LabelMarginMM:  10,
 		}
 	}
+	if strings.TrimSpace(business.Name) == "" {
+		business.Name = "Your Business Name"
+	}
 
 	sample := productLabelData{
 		Name:      "Sample Product",
+		Brand:     business.Name,
 		SKU:       "DEMO-001",
 		ItemCode:  "8901234567890",
 		Category:  "General",
@@ -827,8 +831,8 @@ func prepareInvoiceData(invoice models.Invoice, business models.Business, printS
 			totalLines = append(totalLines, formatLabelValue("SGST", fmt.Sprintf("%.2f", invoice.SGSTTotal), cols))
 		}
 	}
-	if invoice.AdditionalCharges > 0 {
-		totalLines = append(totalLines, formatLabelValue("Addl Charges", fmt.Sprintf("%.2f", invoice.AdditionalCharges), cols))
+	for _, charge := range additionalChargeRows(invoice.AdditionalChargeItems, invoice.AdditionalCharges) {
+		totalLines = append(totalLines, formatLabelValue(truncateString(charge.Label, 12), fmt.Sprintf("%.2f", charge.Amount), cols))
 	}
 	if invoice.LoyaltyDiscount > 0 {
 		totalLines = append(totalLines, formatLabelValue("Loyalty", fmt.Sprintf("-%.2f", invoice.LoyaltyDiscount), cols))

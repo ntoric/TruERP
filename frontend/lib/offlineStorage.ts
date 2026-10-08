@@ -45,6 +45,7 @@ export interface POSSaleRecord {
   session_opening_cash?: number
   invoice_discount?: number
   additional_charges?: number
+  additional_charge_items?: Array<{ label: string; amount: number }>
   loyalty_points_redeemed?: number
   items: Array<{
     product_id: string
@@ -441,10 +442,14 @@ class OfflineStorage {
       })
   }
 
-  async decrementLocalStock(productId: string, quantity: number, batchNo?: string): Promise<void> {
+  async decrementLocalStock(productId: string, quantity: number, batchNo?: string, allowNegative = false): Promise<void> {
+    const applyDelta = (value: unknown) => {
+      const next = Number(value || 0) - quantity
+      return allowNegative ? next : Math.max(0, next)
+    }
     const product = await this.get(STORES.PRODUCTS, productId)
     if (product) {
-      product.stock_qty = Math.max(0, Number(product.stock_qty || 0) - quantity)
+      product.stock_qty = applyDelta(product.stock_qty)
       await this.put(STORES.PRODUCTS, product)
     }
     if (!batchNo) return
@@ -453,8 +458,8 @@ class OfflineStorage {
       (batch) => String(batch.product_id) === String(productId) && String(batch.batch_no || '') === String(batchNo)
     )
     if (match) {
-      match.available_qty = Math.max(0, Number(match.available_qty || 0) - quantity)
-      match.quantity = Math.max(0, Number(match.quantity || 0) - quantity)
+      match.available_qty = applyDelta(match.available_qty)
+      match.quantity = applyDelta(match.quantity)
       await this.put(STORES.BATCHES, match)
     }
   }

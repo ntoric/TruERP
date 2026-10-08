@@ -1,15 +1,15 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/services"
-	"truerp/utils"
 	"encoding/json"
 	"fmt"
 	"mime/multipart"
 	"net/http"
 	"strings"
 	"time"
+	"truerp/models"
+	"truerp/services"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -21,16 +21,35 @@ var allowedInvoiceStatuses = map[string]bool{
 
 func syncOverdueInvoices(userID uuid.UUID) {
 	now := time.Now()
-	var invoices []models.Invoice
-	utils.DB.Where("user_id = ? AND status IN ? AND due_date IS NOT NULL AND due_date < ? AND total_amount > amount_paid",
-		userID, []string{"sent", "partial"}, now).Find(&invoices)
-	for _, inv := range invoices {
-		prev := inv.Status
-		inv.Status = "overdue"
-		if err := utils.DB.Model(&inv).Update("status", "overdue").Error; err == nil && prev != "overdue" {
-			recordInvoiceStatusHistory(inv.ID, userID, prev, "overdue", "Automatically marked overdue", "system")
-		}
+	var stale []models.Invoice
+	utils.DB.Select("id", "status").Where(
+		"user_id = ? AND status IN ? AND due_date IS NOT NULL AND due_date < ? AND total_amount > amount_paid",
+		userID, []string{"sent", "partial"}, now).Find(&stale)
+	if len(stale) == 0 {
+		return
 	}
+	ids := make([]uuid.UUID, 0, len(stale))
+	for _, inv := range stale {
+		ids = append(ids, inv.ID)
+	}
+	if err := utils.DB.Model(&models.Invoice{}).Where("id IN ?", ids).
+		Update("status", "overdue").Error; err != nil {
+		return
+	}
+	entries := make([]models.InvoiceStatusHistory, 0, len(stale))
+	for _, inv := range stale {
+		entries = append(entries, models.InvoiceStatusHistory{
+			ID:         uuid.New(),
+			InvoiceID:  inv.ID,
+			UserID:     userID,
+			FromStatus: inv.Status,
+			ToStatus:   "overdue",
+			Note:       "Automatically marked overdue",
+			ChangedBy:  "system",
+			CreatedAt:  now,
+		})
+	}
+	utils.DB.Create(&entries)
 }
 
 func normalizeInvoicePaymentStatus(invoice *models.Invoice) {
@@ -47,6 +66,27 @@ func normalizeInvoicePaymentStatus(invoice *models.Invoice) {
 	}
 	if invoice.DueDate != nil && invoice.DueDate.Before(time.Now()) && invoice.Status != "draft" {
 		invoice.Status = "overdue"
+	}
+}
+
+// invoiceStatusForPaidAmount resolves an invoice's status from a proposed
+// amount_paid value. Unlike normalizeInvoicePaymentStatus it also resets to
+// the "sent" baseline when nothing has been paid (used when reversing
+// payments) and keeps "overdue" on partially-paid overdue invoices.
+func invoiceStatusForPaidAmount(invoice models.Invoice, paid float64) string {
+	if invoice.Status == "cancelled" || invoice.Status == "draft" {
+		return invoice.Status
+	}
+	overdue := invoice.DueDate != nil && invoice.DueDate.Before(time.Now())
+	switch {
+	case invoice.TotalAmount > 0 && paid+0.01 >= invoice.TotalAmount:
+		return "paid"
+	case overdue:
+		return "overdue"
+	case paid > 0:
+		return "partial"
+	default:
+		return "sent"
 	}
 }
 
@@ -398,8 +438,8 @@ func UpdateInvoiceStatus(c *gin.Context) {
 	}
 
 	var input struct {
-		Status string  `json:"status" binding:"required"`
-		Note   string  `json:"note"`
+		Status     string   `json:"status" binding:"required"`
+		Note       string   `json:"note"`
 		AmountPaid *float64 `json:"amount_paid"`
 	}
 	if err := c.ShouldBindJSON(&input); err != nil {

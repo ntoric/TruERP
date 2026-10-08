@@ -9,7 +9,7 @@ import PageSkeleton, { FormPageSkeleton } from '@/components/layout/PageSkeleton
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { ArrowLeft, Download, Loader2, Printer as ThermalPrinter, Gift } from 'lucide-react'
+import { ArrowLeft, Download, Loader2, Printer as ThermalPrinter, Gift, ExternalLink } from 'lucide-react'
 import ThermalPrintModal from '@/components/ThermalPrintModal'
 import InvoiceAttachments from '@/components/InvoiceAttachments'
 import InvoiceStatusTracker from '@/components/InvoiceStatusTracker'
@@ -20,6 +20,7 @@ import InvoiceCustomFieldsForm, {
 } from '@/components/InvoiceCustomFieldsForm'
 import { downloadInvoicePdf } from '@/lib/printDocument'
 import { notifyError } from '@/lib/notify'
+import { displayAdditionalChargeRows, type AdditionalChargeItem } from '@/lib/additionalCharges'
 import type { LoyaltySettings } from '@/lib/loyalty-types'
 
 interface InvoiceItem {
@@ -54,18 +55,44 @@ interface Invoice {
   status: string
   sub_total: number
   discount_total: number
+  invoice_discount?: number
+  additional_charges?: number
+  additional_charge_items?: AdditionalChargeItem[]
+  round_off?: number
   cgst_total: number
   sgst_total: number
   igst_total: number
   total_amount: number
   is_inter_state: boolean
   notes: string
+  signature?: string
+  source_url?: string
   custom_fields?: string
   pdf_template?: string
   items: InvoiceItem[]
   loyalty_points_earned?: number
   loyalty_points_redeemed?: number
   loyalty_discount?: number
+}
+
+// Migrated invoices used to carry the myBillBook source link inside Notes as
+// an "Invoice link: <url>" segment (it now lives in invoice.source_url). Split
+// it out so it renders as a link rather than note text even for rows that
+// predate the column.
+const INVOICE_LINK_PREFIX = 'Invoice link: '
+
+function splitInvoiceLink(notes: string): { link: string | null; notes: string } {
+  if (!notes) return { link: null, notes: '' }
+  let link: string | null = null
+  const kept: string[] = []
+  for (const part of notes.split(' | ')) {
+    if (part.startsWith(INVOICE_LINK_PREFIX)) {
+      if (!link) link = part.slice(INVOICE_LINK_PREFIX.length).trim()
+    } else if (part.trim()) {
+      kept.push(part)
+    }
+  }
+  return { link, notes: kept.join(' | ') }
 }
 
 function partyName(invoice: Invoice) {
@@ -167,6 +194,8 @@ function InvoiceViewContent() {
 
   const customValues = parseCustomFieldsFromInvoice(invoice.custom_fields)
   const p = partyDetails(invoice)
+  const { link: notesLink, notes: displayNotes } = splitInvoiceLink(invoice.notes)
+  const sourceUrl = invoice.source_url || notesLink
 
   return (
     <DashboardLayout>
@@ -253,6 +282,18 @@ function InvoiceViewContent() {
                     <span className="text-gray-600">Discount</span>
                     <span className="text-red-600">-{formatCurrency(invoice.discount_total)}</span>
                   </div>
+                  {(invoice.invoice_discount || 0) > 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Invoice Discount</span>
+                      <span className="text-red-600">-{formatCurrency(invoice.invoice_discount || 0)}</span>
+                    </div>
+                  )}
+                  {displayAdditionalChargeRows(invoice.additional_charge_items, invoice.additional_charges).map((charge, index) => (
+                    <div key={index} className="flex justify-between text-sm">
+                      <span className="text-gray-600">{charge.label}</span>
+                      <span>{formatCurrency(charge.amount)}</span>
+                    </div>
+                  ))}
                   {invoice.is_inter_state ? (
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-600">IGST</span>
@@ -269,6 +310,12 @@ function InvoiceViewContent() {
                         <span>{formatCurrency(invoice.sgst_total)}</span>
                       </div>
                     </>
+                  )}
+                  {(invoice.round_off || 0) !== 0 && (
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-600">Round Off</span>
+                      <span>{formatCurrency(invoice.round_off || 0)}</span>
+                    </div>
                   )}
                   <div className="border-t pt-2 mt-2">
                     <div className="flex justify-between text-lg font-bold">
@@ -305,10 +352,33 @@ function InvoiceViewContent() {
                 </div>
               </div>
 
-              {invoice.notes && (
-                <div className="mt-8 border-t pt-4">
-                  <p className="text-sm font-medium text-gray-500">Notes</p>
-                  <p className="text-sm text-gray-600 mt-1">{invoice.notes}</p>
+              {(displayNotes || sourceUrl) && (
+                <div className="mt-8 border-t pt-4 space-y-2">
+                  {sourceUrl && (
+                    <p className="text-sm">
+                      <a
+                        href={sourceUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center font-medium text-blue-700 hover:underline"
+                      >
+                        <ExternalLink className="mr-1 h-4 w-4" /> Open myBillBook link
+                      </a>
+                    </p>
+                  )}
+                  {displayNotes && (
+                    <div>
+                      <p className="text-sm font-medium text-gray-500">Notes</p>
+                      <p className="text-sm text-gray-600 mt-1">{displayNotes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {invoice.signature && (
+                <div className="mt-8 flex flex-col items-end border-t pt-4">
+                  <img src={invoice.signature} alt="Signature" className="max-h-20 max-w-[200px] object-contain" />
+                  <p className="mt-1 text-sm text-gray-500">Authorized Signatory</p>
                 </div>
               )}
 

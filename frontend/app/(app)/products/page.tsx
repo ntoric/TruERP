@@ -30,7 +30,7 @@ import { isProductGstEnabled } from '@/lib/numbers'
 import { runWithExportProgress } from '@/lib/exportProgress'
 import ProductImageField from '@/components/ProductImageField'
 import BulkCreateProductsDialog from '@/components/BulkCreateProductsDialog'
-import { usePagination } from '@/hooks/usePagination'
+import { DEFAULT_PAGE_SIZE } from '@/hooks/usePagination'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import PaginationControls from '@/components/ui/pagination-controls'
 import {
@@ -63,6 +63,25 @@ interface Category {
   name: string
   description?: string
 }
+
+const UNIT_OPTIONS = [
+  { value: 'PCS', label: 'PCS (Pieces)' },
+  { value: 'KG', label: 'KG (Kilogram)' },
+  { value: 'LTR', label: 'LTR (Liter)' },
+  { value: 'MTR', label: 'MTR (Meter)' },
+  { value: 'BOX', label: 'BOX' },
+  { value: 'DOZ', label: 'DOZ (Dozen)' },
+  { value: 'GM', label: 'GM (Gram)' },
+  { value: 'ML', label: 'ML (Milliliter)' },
+  { value: 'FT', label: 'FT (Feet)' },
+  { value: 'INCH', label: 'INCH' },
+  { value: 'SET', label: 'SET' },
+  { value: 'PKT', label: 'PKT (Packet)' },
+  { value: 'BTL', label: 'BTL (Bottle)' },
+  { value: 'CAN', label: 'CAN' },
+  { value: 'BAG', label: 'BAG' },
+  { value: 'ROLL', label: 'ROLL' },
+]
 
 interface Product {
   id: string
@@ -112,12 +131,19 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [selectedCategory, setSelectedCategory] = useState<string>('all')
+  const [selectedUnit, setSelectedUnit] = useState<string>('all')
+  const [units, setUnits] = useState<string[]>([])
   const [searchQuery, setSearchQuery] = useState<string>('')
-  const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set())
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const pageSize = DEFAULT_PAGE_SIZE
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const [selectedItems, setSelectedItems] = useState<Map<string, Product>>(new Map())
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showDraftsModal, setShowDraftsModal] = useState(false)
   const [showPrintDialog, setShowPrintDialog] = useState(false)
-  const [printQuantity, setPrintQuantity] = useState(1)
+  const [printItems, setPrintItems] = useState<{ id: string; name: string; quantity: number }[]>([])
   const [printLabelSize, setPrintLabelSize] = useState<BarcodeLabelSize>('2inch')
   const [printBarcodeMode, setPrintBarcodeMode] = useState<'label' | 'a4'>('a4')
   const [printSheetPreset, setPrintSheetPreset] = useState<A4LabelSheetPresetKey>('48.5x25.4')
@@ -127,7 +153,6 @@ export default function ProductsPage() {
   const [printPreviewHtml, setPrintPreviewHtml] = useState('')
   const [printPreviewLoading, setPrintPreviewLoading] = useState(false)
   const printPreviewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const [selectedProductForPrint, setSelectedProductForPrint] = useState<string | null>(null)
   const [showPreviewDialog, setShowPreviewDialog] = useState(false)
   const [previewProduct, setPreviewProduct] = useState<Product | null>(null)
   const [drafts, setDrafts] = useState<any[]>([])
@@ -186,13 +211,17 @@ export default function ProductsPage() {
     }
   }, [searchParams, router])
   useEffect(() => { if (!authLoading && user) fetchBusinessSettings() }, [authLoading, user])
-  useEffect(() => { if (!authLoading && user) fetchProducts() }, [authLoading, user, selectedCategory, searchQuery])
+  useEffect(() => { if (!authLoading && user) fetchUnits() }, [authLoading, user])
+  useEffect(() => { if (!authLoading && user) fetchProducts() }, [authLoading, user, selectedCategory, selectedUnit, debouncedSearch, page])
 
-  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(products)
-
+  // Debounce the search box so each keystroke doesn't hit the API.
   useEffect(() => {
-    resetPage()
-  }, [selectedCategory, searchQuery])
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+      setPage(1)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
   useEffect(() => { if (showDraftsModal && user) fetchDrafts() }, [showDraftsModal, user])
   useEffect(() => { if (!authLoading && user) fetchInventoryItems() }, [authLoading, user])
 
@@ -220,7 +249,7 @@ export default function ProductsPage() {
     try {
       const res = await apiFetch('/categories')
       if (res.ok) {
-        const data = asArray(await res.json())
+        const data = asArray<Category>(await res.json())
         setCategories(data)
         const defaultName = pickDefaultCategoryName(data)
         setNewItem((prev) =>
@@ -288,14 +317,34 @@ export default function ProductsPage() {
     } catch (err) { console.error(err) }
   }
 
+  const fetchUnits = async () => {
+    try {
+      const res = await apiFetch('/products/units')
+      if (res.ok) {
+        setUnits(asArray<string>(await res.json()))
+      }
+    } catch (err) { console.error(err) }
+  }
+
   const fetchProducts = async () => {
     try {
       const params = new URLSearchParams()
       if (selectedCategory && selectedCategory !== 'all') params.append('category', selectedCategory)
-      if (searchQuery) params.append('search', searchQuery)
+      if (selectedUnit && selectedUnit !== 'all') params.append('unit', selectedUnit)
+      if (debouncedSearch) params.append('search', debouncedSearch)
+      params.append('page', String(page))
+      params.append('per_page', String(pageSize))
       const res = await apiFetch(`/products?${params.toString()}`)
       if (res.ok) {
-        setProducts(asArray(await res.json()))
+        const data = await res.json()
+        // The current page may no longer exist after deletions or filter changes.
+        const maxPage = Math.max(1, Math.ceil((data.total ?? 0) / pageSize))
+        if (page > maxPage) {
+          setPage(maxPage)
+          return
+        }
+        setProducts(asArray<Product>(data.products))
+        setTotal(data.total ?? 0)
       }
     } catch (err) { console.error(err) }
   }
@@ -359,22 +408,29 @@ export default function ProductsPage() {
     } catch (err) { console.error(err) }
   }
 
-  const handleSelectItem = (id: string) => {
-    const newSelected = new Set(selectedItems)
-    if (newSelected.has(id)) {
-      newSelected.delete(id)
-    } else {
-      newSelected.add(id)
-    }
-    setSelectedItems(newSelected)
+  const handleSelectItem = (product: Product) => {
+    setSelectedItems((prev) => {
+      const next = new Map(prev)
+      if (next.has(product.id)) {
+        next.delete(product.id)
+      } else {
+        next.set(product.id, product)
+      }
+      return next
+    })
   }
 
+  const allVisibleSelected = products.length > 0 && products.every((p) => selectedItems.has(p.id))
+
   const handleSelectAll = () => {
-    if (selectedItems.size === products.length) {
-      setSelectedItems(new Set())
-    } else {
-      setSelectedItems(new Set(products.map(p => p.id)))
-    }
+    setSelectedItems((prev) => {
+      const next = new Map(prev)
+      products.forEach((p) => {
+        if (allVisibleSelected) next.delete(p.id)
+        else next.set(p.id, p)
+      })
+      return next
+    })
   }
 
   const handleBulkDelete = async () => {
@@ -385,9 +441,9 @@ export default function ProductsPage() {
     }))) return
     try {
       await Promise.all(
-        Array.from(selectedItems).map(id => apiFetch(`/products/${id}`, { method: 'DELETE' }))
+        Array.from(selectedItems.keys()).map(id => apiFetch(`/products/${id}`, { method: 'DELETE' }))
       )
-      setSelectedItems(new Set())
+      setSelectedItems(new Map())
       fetchProducts()
     } catch (err) { console.error(err) }
   }
@@ -435,7 +491,8 @@ export default function ProductsPage() {
         update(10, 'Fetching products…')
         const params = new URLSearchParams()
         if (selectedCategory && selectedCategory !== 'all') params.append('category', selectedCategory)
-        if (searchQuery) params.append('search', searchQuery)
+        if (selectedUnit && selectedUnit !== 'all') params.append('unit', selectedUnit)
+        if (debouncedSearch) params.append('search', debouncedSearch)
         const res = await apiFetch(`/products/export/csv?${params.toString()}`)
         if (!res.ok) {
           throw new Error('Failed to export products CSV')
@@ -461,7 +518,8 @@ export default function ProductsPage() {
         update(10, 'Fetching products…')
         const params = new URLSearchParams()
         if (selectedCategory && selectedCategory !== 'all') params.append('category', selectedCategory)
-        if (searchQuery) params.append('search', searchQuery)
+        if (selectedUnit && selectedUnit !== 'all') params.append('unit', selectedUnit)
+        if (debouncedSearch) params.append('search', debouncedSearch)
         const res = await apiFetch(`/products/export/excel?${params.toString()}`)
         if (!res.ok) {
           throw new Error('Failed to export products Excel')
@@ -481,9 +539,9 @@ export default function ProductsPage() {
     }
   }
 
-  const handlePrintLabel = async (productId: string) => {
-    setSelectedProductForPrint(productId)
-    setPrintQuantity(1)
+  const openPrintDialog = async (items: { id: string; name: string; quantity: number }[]) => {
+    if (!items.length) return
+    setPrintItems(items)
     setPrintStartPosition(1)
     try {
       const res = await apiFetch('/settings/print')
@@ -506,11 +564,29 @@ export default function ProductsPage() {
     setShowPrintDialog(true)
   }
 
+  const handlePrintLabel = (productId: string) => {
+    const product = products.find((p) => p.id === productId)
+    void openPrintDialog([{ id: productId, name: product?.name ?? 'Product', quantity: 1 }])
+  }
+
+  const handleBulkPrintLabels = () => {
+    const items = Array.from(selectedItems.values())
+      .map((p) => ({ id: p.id, name: p.name, quantity: 1 }))
+    void openPrintDialog(items)
+  }
+
+  const updatePrintItemQuantity = (id: string, quantity: number) => {
+    const q = Number.isFinite(quantity) ? Math.min(500, Math.max(1, Math.round(quantity))) : 1
+    setPrintItems((prev) => prev.map((it) => (it.id === id ? { ...it, quantity: q } : it)))
+  }
+
+  const printTotalLabels = printItems.reduce((sum, it) => sum + (it.quantity || 0), 0)
+
   const printLabelsPerSheet = printSheetColumns * printSheetRows
   const printStartHint = stickerPositionToRowCol(printStartPosition, printSheetColumns)
 
   const refreshPrintPreview = useCallback(async () => {
-    if (!selectedProductForPrint || !showPrintDialog) {
+    if (!printItems.length || !showPrintDialog) {
       setPrintPreviewHtml('')
       return
     }
@@ -530,11 +606,11 @@ export default function ProductsPage() {
         return
       }
 
-      const res = await apiFetch(`/products/${selectedProductForPrint}/print-label`, {
+      const res = await apiFetch('/products/print-labels', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          quantity: Math.min(printQuantity, 8),
+          items: printItems.map((it) => ({ product_id: it.id, quantity: it.quantity })),
           format: 'html',
           start_position: printStartPosition,
           preview: true,
@@ -553,9 +629,8 @@ export default function ProductsPage() {
   }, [
     printBarcodeMode,
     printLabelSize,
-    printQuantity,
+    printItems,
     printStartPosition,
-    selectedProductForPrint,
     showPrintDialog,
   ])
 
@@ -578,7 +653,7 @@ export default function ProductsPage() {
   }, [refreshPrintPreview, showPrintDialog])
 
   const handlePrintConfirm = async () => {
-    if (!selectedProductForPrint) return
+    if (!printItems.length) return
 
     const isThermal = printBarcodeMode === 'label'
 
@@ -594,14 +669,14 @@ export default function ProductsPage() {
         /* optional */
       }
 
-      const res = await apiFetch(`/products/${selectedProductForPrint}/print-label`, {
+      const res = await apiFetch('/products/print-labels', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Accept: isThermal ? 'application/json' : 'text/html',
         },
         body: JSON.stringify({
-          quantity: printQuantity,
+          items: printItems.map((it) => ({ product_id: it.id, quantity: it.quantity })),
           format: isThermal ? 'json' : 'html',
           start_position: isThermal ? undefined : printStartPosition,
         }),
@@ -784,6 +859,7 @@ export default function ProductsPage() {
         clearErrors()
         showSuccessToast('Product created successfully')
         fetchProducts()
+        fetchUnits()
       } else {
         const { fields } = await handleApiError(res, {
           toastTitle: 'Could not create product',
@@ -1007,22 +1083,9 @@ export default function ProductsPage() {
                           <SelectValue placeholder="Select unit" />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="PCS">PCS (Pieces)</SelectItem>
-                          <SelectItem value="KG">KG (Kilogram)</SelectItem>
-                          <SelectItem value="LTR">LTR (Liter)</SelectItem>
-                          <SelectItem value="MTR">MTR (Meter)</SelectItem>
-                          <SelectItem value="BOX">BOX</SelectItem>
-                          <SelectItem value="DOZ">DOZ (Dozen)</SelectItem>
-                          <SelectItem value="GM">GM (Gram)</SelectItem>
-                          <SelectItem value="ML">ML (Milliliter)</SelectItem>
-                          <SelectItem value="FT">FT (Feet)</SelectItem>
-                          <SelectItem value="INCH">INCH</SelectItem>
-                          <SelectItem value="SET">SET</SelectItem>
-                          <SelectItem value="PKT">PKT (Packet)</SelectItem>
-                          <SelectItem value="BTL">BTL (Bottle)</SelectItem>
-                          <SelectItem value="CAN">CAN</SelectItem>
-                          <SelectItem value="BAG">BAG</SelectItem>
-                          <SelectItem value="ROLL">ROLL</SelectItem>
+                          {UNIT_OPTIONS.map((unit) => (
+                            <SelectItem key={unit.value} value={unit.value}>{unit.label}</SelectItem>
+                          ))}
                         </SelectContent>
                       </Select>
                     </div>
@@ -1282,7 +1345,7 @@ export default function ProductsPage() {
                   className="pl-9"
                 />
               </div>
-              <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+              <Select value={selectedCategory} onValueChange={(value) => { setSelectedCategory(value); setPage(1) }}>
                 <SelectTrigger className="w-[200px]">
                   <SelectValue placeholder="All Categories" />
                 </SelectTrigger>
@@ -1290,6 +1353,19 @@ export default function ProductsPage() {
                   <SelectItem value="all">All Categories</SelectItem>
                   {categories.map((cat) => (
                     <SelectItem key={cat.id} value={cat.name}>{cat.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Select value={selectedUnit} onValueChange={(value) => { setSelectedUnit(value); setPage(1) }}>
+                <SelectTrigger className="w-[180px]">
+                  <SelectValue placeholder="All Units" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Units</SelectItem>
+                  {units.map((unit) => (
+                    <SelectItem key={unit} value={unit}>
+                      {UNIT_OPTIONS.find((o) => o.value === unit)?.label ?? unit}
+                    </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
@@ -1307,10 +1383,16 @@ export default function ProductsPage() {
                   Export Excel
                 </Button>
                 {selectedItems.size > 0 && (
-                  <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="gap-2">
-                    <Trash2 className="h-4 w-4" />
-                    Delete ({selectedItems.size})
-                  </Button>
+                  <>
+                    <Button variant="outline" size="sm" onClick={handleBulkPrintLabels} className="gap-2">
+                      <Printer className="h-4 w-4" />
+                      Print Labels ({selectedItems.size})
+                    </Button>
+                    <Button variant="destructive" size="sm" onClick={handleBulkDelete} className="gap-2">
+                      <Trash2 className="h-4 w-4" />
+                      Delete ({selectedItems.size})
+                    </Button>
+                  </>
                 )}
               </div>
             </div>
@@ -1319,7 +1401,7 @@ export default function ProductsPage() {
                 <TableRow>
                   <TableHead className="w-[40px]">
                     <Checkbox
-                      checked={selectedItems.size === products.length && products.length > 0}
+                      checked={allVisibleSelected}
                       onCheckedChange={handleSelectAll}
                     />
                   </TableHead>
@@ -1332,12 +1414,12 @@ export default function ProductsPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedItems.map((p) => (
+                {products.map((p) => (
                   <TableRow key={p.id}>
                     <TableCell>
                       <Checkbox
                         checked={selectedItems.has(p.id)}
-                        onCheckedChange={() => handleSelectItem(p.id)}
+                        onCheckedChange={() => handleSelectItem(p)}
                       />
                     </TableCell>
                     <TableCell className="font-medium">{p.name}</TableCell>
@@ -1384,9 +1466,9 @@ export default function ProductsPage() {
             <PaginationControls
               page={page}
               totalPages={totalPages}
-              totalItems={totalItems}
+              totalItems={total}
               pageSize={pageSize}
-              onPageChange={setPage}
+              onPageChange={(p) => { setPage(p) }}
             />
           </CardContent>
         </Card>
@@ -1398,6 +1480,7 @@ export default function ProductsPage() {
         onCreated={() => {
           fetchProducts()
           fetchCategories()
+          fetchUnits()
         }}
       />
 
@@ -1408,15 +1491,30 @@ export default function ProductsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="printQuantity">Quantity</Label>
-              <Input
-                id="printQuantity"
-                type="number"
-                min="1"
-                max="500"
-                value={printQuantity}
-                onChange={(e) => setPrintQuantity(parseInt(e.target.value) || 1)}
-              />
+              <Label>Labels per product</Label>
+              <div className="max-h-48 space-y-2 overflow-y-auto rounded-md border p-3">
+                {printItems.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3">
+                    <span className="flex-1 truncate text-sm" title={item.name}>
+                      {item.name}
+                    </span>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={500}
+                      className="w-24"
+                      aria-label={`Quantity for ${item.name}`}
+                      value={item.quantity}
+                      onChange={(e) =>
+                        updatePrintItemQuantity(item.id, parseInt(e.target.value) || 1)
+                      }
+                    />
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                {printTotalLabels} label{printTotalLabels === 1 ? '' : 's'} total
+              </p>
             </div>
             <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
               {printBarcodeMode === 'label' ? (
@@ -1502,7 +1600,7 @@ export default function ProductsPage() {
               <Button variant="outline" onClick={() => setShowPrintDialog(false)}>
                 Cancel
               </Button>
-              <Button onClick={handlePrintConfirm}>
+              <Button onClick={handlePrintConfirm} disabled={printTotalLabels < 1}>
                 <Printer className="mr-2 h-4 w-4" />
                 Print
               </Button>

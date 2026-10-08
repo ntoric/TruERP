@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"truerp/models"
 	"truerp/utils"
 
@@ -26,7 +27,8 @@ func GetParties(c *gin.Context) {
 	query := utils.DB.Where("user_id = ?", userID)
 
 	if search != "" {
-		query = query.Where("name LIKE ? OR phone LIKE ? OR email LIKE ? OR category LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(phone) LIKE ? OR LOWER(email) LIKE ? OR LOWER(category) LIKE ?", like, like, like, like)
 	}
 
 	if category != "" {
@@ -212,6 +214,13 @@ func UpdateParty(c *gin.Context) {
 		"pan":          input.PAN,
 		"notes":        input.Notes,
 		"is_active":    input.IsActive,
+	}
+
+	// The opening balance is editable; keep balance consistent by shifting
+	// it with the same delta (balance = opening + net transaction activity).
+	if input.OpeningBalance != party.OpeningBalance {
+		updates["opening_balance"] = input.OpeningBalance
+		updates["balance"] = party.Balance + (input.OpeningBalance - party.OpeningBalance)
 	}
 
 	if err := utils.DB.Model(&party).Updates(updates).Error; err != nil {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import SummaryStat from '@/components/widgets/SummaryStat'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
@@ -14,17 +15,17 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { formatCurrency, formatDate, asArray } from '@/lib/utils'
+import { formatCurrency, formatDate } from '@/lib/utils'
 import { accountingExportDateStamp, downloadBlob, downloadCsv, rowsToCsv } from '@/lib/accountingExport'
 import { runWithExportProgress } from '@/lib/exportProgress'
-import { Plus, Search, Download, MoreVertical, Edit, X, Trash2, Printer, Eye, Loader2, Package, BarChart3, ChevronUp, ChevronDown, ExternalLink } from 'lucide-react'
+import { Plus, Search, Download, MoreVertical, Edit, X, Trash2, Printer, Eye, Loader2, Package, BarChart3, ChevronUp, ChevronDown, ExternalLink, FileText } from 'lucide-react'
 import BulkCreateProductsDialog from '@/components/BulkCreateProductsDialog'
 import JSZip from 'jszip'
 import { notifyError, notifySuccess } from '@/lib/notify'
 import { isSuperAdmin } from '@/lib/roles'
 import { printHtmlDocument } from '@/lib/printDocument'
 import { printBarcodeLabels, type BarcodeLabelsPayload } from '@/lib/barcodeLabelPrint'
-import { usePagination } from '@/hooks/usePagination'
+import { DEFAULT_PAGE_SIZE } from '@/hooks/usePagination'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import PaginationControls from '@/components/ui/pagination-controls'
 import {
@@ -81,6 +82,11 @@ interface PurchaseBillStats {
   unpaid: number
 }
 
+interface PurchaseBillListResponse {
+  bills: PurchaseBill[] | null
+  total: number
+}
+
 export default function PurchaseInvoicesPage() {
   const { confirm, confirmDialog } = useConfirmDialog()
   const { user } = useAuth()
@@ -90,9 +96,14 @@ export default function PurchaseInvoicesPage() {
   const [showStats, setShowStats] = useState(false)
   const [loading, setLoading] = useState(true)
   const [search, setSearch] = useState('')
+  const [debouncedSearch, setDebouncedSearch] = useState('')
   const [filter, setFilter] = useState('')
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const pageSize = DEFAULT_PAGE_SIZE
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
   const [selectedBills, setSelectedBills] = useState<Set<string>>(new Set())
   const [labelModal, setLabelModal] = useState<string | null>(null)
   const [labelConfig, setLabelConfig] = useState({
@@ -124,36 +135,52 @@ export default function PurchaseInvoicesPage() {
 
   useEffect(() => {
     fetchBills()
+  }, [filter, dateFrom, dateTo, debouncedSearch, page])
+
+  useEffect(() => {
     fetchStats()
   }, [filter, dateFrom, dateTo])
 
+  // Debounce the search box so each keystroke doesn't hit the API.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(search.trim())
+      setPage(1)
+      setSelectedBills(new Set())
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [search])
+
+  const resetPageAndSelection = () => {
+    setPage(1)
+    setSelectedBills(new Set())
+  }
+
+  const buildBillParams = (targetPage: number, perPage: number) => {
+    const params = new URLSearchParams()
+    if (filter) params.append('status', filter)
+    if (dateFrom) params.append('from_date', dateFrom)
+    if (dateTo) params.append('to_date', dateTo)
+    if (debouncedSearch) params.append('search', debouncedSearch)
+    params.append('page', String(targetPage))
+    params.append('per_page', String(perPage))
+    return params
+  }
+
   const fetchBills = async () => {
     try {
-      let url = '/purchase/bills'
-      const params = new URLSearchParams()
-      if (filter) params.append('status', filter)
-      if (dateFrom) params.append('from_date', dateFrom)
-      if (dateTo) params.append('to_date', dateTo)
-      if (params.toString()) url += `?${params.toString()}`
-      const res = await apiFetch(url)
+      const res = await apiFetch(`/purchase/bills?${buildBillParams(page, pageSize).toString()}`)
       if (res.ok) {
-        const data = asArray<PurchaseBill>(await res.json())
-        // Fetch items for each bill (needed for barcode labels)
-        const billsWithItems = await Promise.all(
-          data.map(async (bill) => {
-            try {
-              const itemRes = await apiFetch(`/purchase/bills/${bill.id}`)
-              if (itemRes.ok) {
-                const billWithItems = await itemRes.json()
-                return billWithItems as PurchaseBill
-              }
-              return bill
-            } catch {
-              return bill
-            }
-          })
-        )
-        setBills(billsWithItems)
+        const data: PurchaseBillListResponse = await res.json()
+        const rows = data.bills ?? []
+        // The current page may no longer exist after deletions or filter changes.
+        const maxPage = Math.max(1, Math.ceil((data.total ?? 0) / pageSize))
+        if (page > maxPage) {
+          setPage(maxPage)
+          return
+        }
+        setBills(rows)
+        setTotal(data.total ?? 0)
         setSelectedBills(new Set())
       }
     } catch (err) {
@@ -177,20 +204,7 @@ export default function PurchaseInvoicesPage() {
     }
   }
 
-  const filteredBills = bills.filter((bill) => {
-    const query = search.toLowerCase()
-    if (!query) return true
-    return (
-      (bill.bill_number || '').toLowerCase().includes(query) ||
-      (bill.party?.name || '').toLowerCase().includes(query)
-    )
-  })
 
-  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(filteredBills)
-
-  useEffect(() => {
-    resetPage()
-  }, [search, filter, dateFrom, dateTo])
 
   const getStatusBadge = (status: string) => {
     const variants: Record<string, string> = {
@@ -250,18 +264,22 @@ export default function PurchaseInvoicesPage() {
 
   const handleExport = async () => {
     if (exporting) return
-    if (filteredBills.length === 0) {
-      notifyError('No purchase invoices to export')
-      return
-    }
     setExporting(true)
     try {
+      // per_page=0 returns every matching row for the export.
+      const res = await apiFetch(`/purchase/bills?${buildBillParams(1, 0).toString()}`, { timeoutMs: 30000 })
+      const data: PurchaseBillListResponse = res.ok ? await res.json() : { bills: [], total: 0 }
+      const rows = data.bills ?? []
+      if (rows.length === 0) {
+        notifyError('No purchase invoices to export')
+        return
+      }
       await downloadCsv(
         `purchase-invoices_${accountingExportDateStamp()}.csv`,
-        buildExportRows(filteredBills),
+        buildExportRows(rows),
         { label: 'Exporting purchase invoices' }
       )
-      notifySuccess(`Exported ${filteredBills.length} purchase invoice${filteredBills.length === 1 ? '' : 's'}`)
+      notifySuccess(`Exported ${rows.length} purchase invoice${rows.length === 1 ? '' : 's'}`)
     } catch (err) {
       console.error(err)
       notifyError(err instanceof Error ? err.message : 'Failed to export purchase invoices')
@@ -312,15 +330,15 @@ export default function PurchaseInvoicesPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedBills.size === filteredBills.length) {
+    if (selectedBills.size === bills.length) {
       setSelectedBills(new Set())
     } else {
-      setSelectedBills(new Set(filteredBills.map(b => b.id)))
+      setSelectedBills(new Set(bills.map(b => b.id)))
     }
   }
 
   const handleBulkExport = async () => {
-    const selected = filteredBills.filter((b) => selectedBills.has(b.id))
+    const selected = bills.filter((b) => selectedBills.has(b.id))
     if (selected.length === 0) {
       notifyError('No purchase invoices selected')
       return
@@ -421,7 +439,7 @@ export default function PurchaseInvoicesPage() {
   }
 
   const handleBulkDownloadSource = async () => {
-    const selected = filteredBills.filter((b) => selectedBills.has(b.id) && b.source_url)
+    const selected = bills.filter((b) => selectedBills.has(b.id) && b.source_url)
     if (selected.length === 0) {
       notifyError('No selected purchase invoices have a source link')
       return
@@ -465,6 +483,24 @@ export default function PurchaseInvoicesPage() {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const handleViewInvoice = async (bill: PurchaseBill) => {
+    try {
+      const res = await apiFetch(`/purchase/bills/${bill.id}/invoice-file`)
+      const data = await res.json()
+      if (data.found) {
+        if (data.source === 'local' && data.file_url) {
+          window.open(data.file_url, '_blank', 'noopener,noreferrer')
+        } else if (data.source === 'mybillbook' && data.source_url) {
+          window.open(data.source_url, '_blank', 'noopener,noreferrer')
+        }
+      } else {
+        notifyError(data.error || 'No invoice file found for this purchase bill.')
+      }
+    } catch {
+      notifyError('Failed to check for invoice file.')
+    }
+  }
+
   const applySheetLayout = (layout: A4LabelSheetLayout, preset: A4LabelSheetPresetKey) => {
     setLabelConfig((prev) => ({
       ...prev,
@@ -484,8 +520,14 @@ export default function PurchaseInvoicesPage() {
 
   const handlePrintLabels = async (billId: string) => {
     try {
-      const bill = bills.find(b => b.id === billId)
-      if (!bill || !bill.items?.length) {
+      // Items aren't loaded with the list — fetch this bill's detail on demand.
+      const billRes = await apiFetch(`/purchase/bills/${billId}`)
+      if (!billRes.ok) {
+        notifyError('Failed to load bill items')
+        return
+      }
+      const bill = (await billRes.json()) as PurchaseBill
+      if (!bill.items?.length) {
         notifyError('No items found in this purchase invoice')
         return
       }
@@ -731,7 +773,7 @@ export default function PurchaseInvoicesPage() {
               type="button"
               variant="outline"
               onClick={() => void handleExport()}
-              disabled={exporting || loading || filteredBills.length === 0}
+              disabled={exporting || loading || total === 0}
             >
               {exporting ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -748,30 +790,9 @@ export default function PurchaseInvoicesPage() {
 
         {showStats && (
           <div id="purchase-invoices-stats" className="grid gap-4 md:grid-cols-3">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-600">Total Purchase</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-gray-900">{formatCurrency(stats.total_purchase)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-600">Paid</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-green-600">{formatCurrency(stats.paid)}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-gray-600">Unpaid</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold text-orange-600">{formatCurrency(stats.unpaid)}</div>
-              </CardContent>
-            </Card>
+            <SummaryStat tone="brand" label="Total Purchase" value={formatCurrency(stats.total_purchase)} />
+            <SummaryStat tone="success" label="Paid" value={formatCurrency(stats.paid)} />
+            <SummaryStat tone="warning" label="Unpaid" value={formatCurrency(stats.unpaid)} />
           </div>
         )}
 
@@ -789,7 +810,7 @@ export default function PurchaseInvoicesPage() {
               </div>
               <select
                 value={filter}
-                onChange={(e) => setFilter(e.target.value)}
+                onChange={(e) => { setFilter(e.target.value); resetPageAndSelection() }}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value="">All Status</option>
@@ -797,19 +818,18 @@ export default function PurchaseInvoicesPage() {
                 <option value="paid">Paid</option>
                 <option value="unpaid">Unpaid</option>
                 <option value="partial">Partial</option>
-                <option value="partial">Partial</option>
               </select>
               <Input
                 type="date"
                 className="h-10 w-auto"
                 value={dateFrom}
-                onChange={(e) => setDateFrom(e.target.value)}
+                onChange={(e) => { setDateFrom(e.target.value); resetPageAndSelection() }}
               />
               <Input
                 type="date"
                 className="h-10 w-auto"
                 value={dateTo}
-                onChange={(e) => setDateTo(e.target.value)}
+                onChange={(e) => { setDateTo(e.target.value); resetPageAndSelection() }}
               />
             </div>
           </CardHeader>
@@ -873,7 +893,7 @@ export default function PurchaseInvoicesPage() {
                         <input
                           type="checkbox"
                           className="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
-                          checked={filteredBills.length > 0 && selectedBills.size === filteredBills.length}
+                          checked={bills.length > 0 && selectedBills.size === bills.length}
                           onChange={toggleSelectAll}
                         />
                       </th>
@@ -888,7 +908,7 @@ export default function PurchaseInvoicesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedItems.map((bill) => (
+                    {bills.map((bill) => (
                       <tr key={bill.id} className="border-b last:border-0 hover:bg-gray-50">
                         <td className="py-3 pr-2">
                           <input
@@ -936,6 +956,10 @@ export default function PurchaseInvoicesPage() {
                                 <Printer className="mr-2 h-4 w-4" />
                                 Print Labels
                               </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => handleViewInvoice(bill)}>
+                                <FileText className="mr-2 h-4 w-4" />
+                                View Invoice
+                              </DropdownMenuItem>
                               {bill.source_url && (
                                 <DropdownMenuItem onClick={() => handleOpenSource(bill)}>
                                   <ExternalLink className="mr-2 h-4 w-4" />
@@ -966,7 +990,7 @@ export default function PurchaseInvoicesPage() {
                         </td>
                       </tr>
                     ))}
-                    {filteredBills.length === 0 && (
+                    {bills.length === 0 && (
                       <tr>
                         <td colSpan={8} className="py-8 text-center text-gray-500">
                           No purchase invoices found
@@ -982,9 +1006,9 @@ export default function PurchaseInvoicesPage() {
               <PaginationControls
                 page={page}
                 totalPages={totalPages}
-                totalItems={totalItems}
+                totalItems={total}
                 pageSize={pageSize}
-                onPageChange={setPage}
+                onPageChange={(p) => { setPage(p); setSelectedBills(new Set()) }}
               />
             )}
           </CardContent>

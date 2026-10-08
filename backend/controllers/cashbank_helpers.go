@@ -76,10 +76,85 @@ func recordPurchasePaymentOut(tx *gorm.DB, userID uuid.UUID, accountID *uuid.UUI
 	return postPurchasePaymentAccounting(tx, userID, transaction.ID, accountID, amount, date, reference, description)
 }
 
+// recordPaymentCashTxn writes the linked cash/bank ledger row for a standalone
+// payment-in (direction "in", transaction type "add") or payment-out
+// (direction "out", type "reduce") and adjusts the bank account balance. No
+// journal is posted on the transaction — the GL entry lives on the payment's
+// *_record reference (postStandalonePaymentInAccounting /
+// postStandalonePaymentOutAccounting).
+func recordPaymentCashTxn(tx *gorm.DB, userID uuid.UUID, accountID *uuid.UUID, direction string, amount float64, date time.Time, reference, description string) error {
+	if amount <= 0 {
+		return nil
+	}
+	txnType := "add"
+	delta := amount
+	if direction == "out" {
+		txnType = "reduce"
+		delta = -amount
+	}
+	if err := adjustBankAccountBalance(tx, userID, accountID, delta, false); err != nil {
+		return err
+	}
+	return tx.Create(&models.CashTransaction{
+		ID:              uuid.New(),
+		UserID:          userID,
+		AccountID:       accountID,
+		TransactionType: txnType,
+		Amount:          amount,
+		Date:            date,
+		Description:     description,
+		Reference:       reference,
+		IsLinked:        true,
+	}).Error
+}
+
+// paymentOutCashRef is the reference written on the linked cash reduce
+// transaction for a standalone payment out — its payment-out number, or a
+// deterministic fallback so the row can still be located when no number was
+// supplied.
+func paymentOutCashRef(paymentOut *models.PaymentOut) string {
+	if n := strings.TrimSpace(paymentOut.PaymentOutNumber); n != "" {
+		return n
+	}
+	return "POUT-" + paymentOut.ID.String()
+}
+
+// findPaymentCashTransactions locates the linked cash ledger rows written for
+// a payment by its reference or by the "Payment <dir> <num> [for …]"
+// description convention. direction is "in" (add) or "out" (reduce).
+func findPaymentCashTransactions(tx *gorm.DB, userID uuid.UUID, direction, ref string) ([]models.CashTransaction, error) {
+	var txns []models.CashTransaction
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return txns, nil
+	}
+	txnType := "add"
+	if direction == "out" {
+		txnType = "reduce"
+	}
+	desc := fmt.Sprintf("Payment %s %s", direction, ref)
+	err := tx.Where(
+		"user_id = ? AND transaction_type = ? AND is_linked = ? AND (reference = ? OR description = ? OR description LIKE ?)",
+		userID, txnType, true, ref, desc, desc+" for %",
+	).Order("created_at ASC").Find(&txns).Error
+	return txns, err
+}
+
 // createLinkedSalePaymentIn records Payment row(s) for a sales invoice payment
 // and posts cash/bank + AR reduction. Invoice amount_paid/status must already be set.
 // When invoice.PaymentSplits is set, one Payment + cash transaction is created per split.
 func createLinkedSalePaymentIn(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, date time.Time, notes string) error {
+	return createLinkedSalePaymentInInternal(tx, userID, invoice, amount, date, notes, true)
+}
+
+// createLinkedSalePaymentInMigration behaves like createLinkedSalePaymentIn but
+// leaves the party balance unchanged — migrations import party balances from
+// the party balance file instead of deriving them from transactions.
+func createLinkedSalePaymentInMigration(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, date time.Time, notes string) error {
+	return createLinkedSalePaymentInInternal(tx, userID, invoice, amount, date, notes, false)
+}
+
+func createLinkedSalePaymentInInternal(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, date time.Time, notes string, adjustPartyBalance bool) error {
 	if amount <= 0 || invoice == nil {
 		return nil
 	}
@@ -88,7 +163,7 @@ func createLinkedSalePaymentIn(tx *gorm.DB, userID uuid.UUID, invoice *models.In
 		return err
 	}
 	for _, split := range resolved {
-		if err := createLinkedSalePaymentInWithMode(tx, userID, invoice, split.Amount, split.Mode, split.BankAccountID, date, notes); err != nil {
+		if err := createLinkedSalePaymentInWithModeInternal(tx, userID, invoice, split.Amount, split.Mode, split.BankAccountID, date, notes, adjustPartyBalance); err != nil {
 			return err
 		}
 	}
@@ -96,6 +171,17 @@ func createLinkedSalePaymentIn(tx *gorm.DB, userID uuid.UUID, invoice *models.In
 }
 
 func createLinkedSalePaymentInWithMode(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, mode string, accountID *uuid.UUID, date time.Time, notes string) error {
+	return createLinkedSalePaymentInWithModeInternal(tx, userID, invoice, amount, mode, accountID, date, notes, true)
+}
+
+// createLinkedSalePaymentInWithModeMigration behaves like
+// createLinkedSalePaymentInWithMode but leaves the party balance unchanged —
+// migrations import party balances separately.
+func createLinkedSalePaymentInWithModeMigration(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, mode string, accountID *uuid.UUID, date time.Time, notes string) error {
+	return createLinkedSalePaymentInWithModeInternal(tx, userID, invoice, amount, mode, accountID, date, notes, false)
+}
+
+func createLinkedSalePaymentInWithModeInternal(tx *gorm.DB, userID uuid.UUID, invoice *models.Invoice, amount float64, mode string, accountID *uuid.UUID, date time.Time, notes string, adjustPartyBalance bool) error {
 	if amount <= 0 || invoice == nil {
 		return nil
 	}
@@ -135,10 +221,12 @@ func createLinkedSalePaymentInWithMode(tx *gorm.DB, userID uuid.UUID, invoice *m
 		}
 	}
 
-	var party models.Party
-	if err := tx.Where("user_id = ? AND id = ?", userID, invoice.PartyID).First(&party).Error; err == nil {
-		if err := tx.Model(&party).Update("balance", party.Balance-amount).Error; err != nil {
-			return err
+	if adjustPartyBalance {
+		var party models.Party
+		if err := tx.Where("user_id = ? AND id = ?", userID, invoice.PartyID).First(&party).Error; err == nil {
+			if err := tx.Model(&party).Update("balance", party.Balance-amount).Error; err != nil {
+				return err
+			}
 		}
 	}
 
@@ -200,7 +288,7 @@ func bankAccountIDValue(id *uuid.UUID) interface{} {
 // (reduce, expense, payroll, transfer_out) is negative.
 const cashTxnSignedSumSQL = "COALESCE(SUM(CASE WHEN transaction_type IN ('add', 'transfer_in') THEN amount ELSE -amount END), 0)"
 
-func sumSignedCashMovements(db *gorm.DB, userID uuid.UUID, accountID *uuid.UUID) float64 {
+func sumSignedCashMovements(db *gorm.DB, userID uuid.UUID, accountID *uuid.UUID, endDate string) float64 {
 	var total float64
 	q := db.Model(&models.CashTransaction{}).Where("user_id = ?", userID)
 	if accountID == nil {
@@ -209,6 +297,9 @@ func sumSignedCashMovements(db *gorm.DB, userID uuid.UUID, accountID *uuid.UUID)
 		q = q.Where("account_id = ?", *accountID)
 	}
 	q = q.Where("deleted_at IS NULL")
+	if endDate != "" {
+		q = q.Where(utils.SQLDateLTE("date"), endDate)
+	}
 	// "? AS total" forces GORM to treat the aggregate as an expression instead of column names.
 	if err := q.Select("? AS total", gorm.Expr(cashTxnSignedSumSQL)).Scan(&total).Error; err != nil {
 		return 0
@@ -216,19 +307,49 @@ func sumSignedCashMovements(db *gorm.DB, userID uuid.UUID, accountID *uuid.UUID)
 	return total
 }
 
-func applyLedgerBalancesToAccounts(db *gorm.DB, userID uuid.UUID, accounts []models.BankAccount) {
+// sumSignedCashMovementsInRange nets cash/bank movements inside [startDate, endDate].
+// scope selects "cash" (account_id NULL), "bank" (any account), or "" for both.
+func sumSignedCashMovementsInRange(db *gorm.DB, userID uuid.UUID, scope, startDate, endDate string) float64 {
+	var total float64
+	q := db.Model(&models.CashTransaction{}).Where("user_id = ?", userID)
+	switch scope {
+	case "cash":
+		q = q.Where("account_id IS NULL")
+	case "bank":
+		q = q.Where("account_id IS NOT NULL")
+	}
+	q = q.Where("deleted_at IS NULL")
+	if startDate != "" {
+		q = q.Where(utils.SQLDateGTE("date"), startDate)
+	}
+	if endDate != "" {
+		q = q.Where(utils.SQLDateLTE("date"), endDate)
+	}
+	if err := q.Select("? AS total", gorm.Expr(cashTxnSignedSumSQL)).Scan(&total).Error; err != nil {
+		return 0
+	}
+	return total
+}
+
+func applyLedgerBalancesToAccounts(db *gorm.DB, userID uuid.UUID, accounts []models.BankAccount, endDate string) {
 	for i := range accounts {
 		accountID := accounts[i].ID
-		accounts[i].Balance = accounts[i].OpeningBalance + sumSignedCashMovements(db, userID, &accountID)
+		accounts[i].Balance = accounts[i].OpeningBalance + sumSignedCashMovements(db, userID, &accountID, endDate)
 	}
 }
 
-func sumInitialInvestmentCapital(db *gorm.DB, userID uuid.UUID) float64 {
+func sumInitialInvestmentCapital(db *gorm.DB, userID uuid.UUID, startDate, endDate string) float64 {
 	var total float64
 	// Opening stock and other purchases settled as owner's capital.
-	err := db.Model(&models.PaymentOut{}).
-		Where("user_id = ? AND LOWER(TRIM(COALESCE(mode, ''))) = ?", userID, paymentMethodInitialInvestment).
-		Select("? AS total", gorm.Expr("COALESCE(SUM(amount_paid - COALESCE(payment_out_discount, 0)), 0)")).
+	q := db.Model(&models.PaymentOut{}).
+		Where("user_id = ? AND LOWER(TRIM(COALESCE(mode, ''))) = ?", userID, paymentMethodInitialInvestment)
+	if startDate != "" {
+		q = q.Where(utils.SQLDateGTE("date"), startDate)
+	}
+	if endDate != "" {
+		q = q.Where(utils.SQLDateLTE("date"), endDate)
+	}
+	err := q.Select("? AS total", gorm.Expr("COALESCE(SUM(amount_paid - COALESCE(payment_out_discount, 0)), 0)")).
 		Scan(&total).Error
 	if err != nil {
 		return 0
@@ -236,34 +357,52 @@ func sumInitialInvestmentCapital(db *gorm.DB, userID uuid.UUID) float64 {
 	return total
 }
 
-func buildCashBankSummary(db *gorm.DB, userID uuid.UUID, accounts []models.BankAccount) models.CashBankSummary {
-	applyLedgerBalancesToAccounts(db, userID, accounts)
+// buildCashBankSummary reports balances as of endDate (empty = current) and
+// scopes flow stats (initial investment, unlinked, net changes) to [startDate, endDate].
+func buildCashBankSummary(db *gorm.DB, userID uuid.UUID, accounts []models.BankAccount, startDate, endDate string) models.CashBankSummary {
+	applyLedgerBalancesToAccounts(db, userID, accounts, endDate)
 
-	cashInHand := sumSignedCashMovements(db, userID, nil)
+	cashInHand := sumSignedCashMovements(db, userID, nil, endDate)
 
 	totalBankBalance := 0.0
 	for _, acc := range accounts {
 		totalBankBalance += acc.Balance
 	}
 
+	unlinkedQuery := func() *gorm.DB {
+		q := db.Model(&models.CashTransaction{}).
+			Where("user_id = ? AND is_linked = ?", userID, false)
+		if startDate != "" {
+			q = q.Where(utils.SQLDateGTE("date"), startDate)
+		}
+		if endDate != "" {
+			q = q.Where(utils.SQLDateLTE("date"), endDate)
+		}
+		return q
+	}
+
 	var unlinkedCount int64
 	var unlinkedAmount float64
-	db.Model(&models.CashTransaction{}).
-		Where("user_id = ? AND is_linked = ?", userID, false).
-		Count(&unlinkedCount)
-	db.Model(&models.CashTransaction{}).
-		Where("user_id = ? AND is_linked = ?", userID, false).
+	unlinkedQuery().Count(&unlinkedCount)
+	unlinkedQuery().
 		Select("? AS total", gorm.Expr("COALESCE(SUM(amount), 0)")).
 		Scan(&unlinkedAmount)
 
-	return models.CashBankSummary{
+	summary := models.CashBankSummary{
 		TotalBalance:      totalBankBalance + cashInHand,
 		CashInHand:        cashInHand,
-		InitialInvestment: sumInitialInvestmentCapital(db, userID),
+		InitialInvestment: sumInitialInvestmentCapital(db, userID, startDate, endDate),
 		BankAccounts:      accounts,
 		UnlinkedCount:     unlinkedCount,
 		UnlinkedAmount:    unlinkedAmount,
 	}
+
+	if startDate != "" || endDate != "" {
+		summary.CashNetChange = sumSignedCashMovementsInRange(db, userID, "cash", startDate, endDate)
+		summary.BankNetChange = sumSignedCashMovementsInRange(db, userID, "bank", startDate, endDate)
+	}
+
+	return summary
 }
 
 func adjustBankAccountBalance(tx *gorm.DB, userID uuid.UUID, accountID *uuid.UUID, delta float64, requireActive bool) error {
@@ -561,6 +700,17 @@ func resyncLinkedInvoicePayments(db *gorm.DB, userID uuid.UUID, previous, curren
 // createLinkedPurchasePaymentOut records a PaymentOut row for a purchase bill payment
 // and posts cash/bank + AP reduction. Bill paid_amount/balance_due must already be updated.
 func createLinkedPurchasePaymentOut(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill, amount float64, date time.Time, notes string) error {
+	return createLinkedPurchasePaymentOutInternal(tx, userID, bill, amount, date, notes, true)
+}
+
+// createLinkedPurchasePaymentOutMigration behaves like
+// createLinkedPurchasePaymentOut but leaves the party balance unchanged —
+// migrations import party balances separately.
+func createLinkedPurchasePaymentOutMigration(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill, amount float64, date time.Time, notes string) error {
+	return createLinkedPurchasePaymentOutInternal(tx, userID, bill, amount, date, notes, false)
+}
+
+func createLinkedPurchasePaymentOutInternal(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill, amount float64, date time.Time, notes string, adjustPartyBalance bool) error {
 	if amount <= 0 || bill == nil {
 		return nil
 	}
@@ -602,10 +752,12 @@ func createLinkedPurchasePaymentOut(tx *gorm.DB, userID uuid.UUID, bill *models.
 	}
 
 	// Match standalone PaymentOut behaviour: bump party balance by amount paid.
-	var party models.Party
-	if err := tx.Where("user_id = ? AND id = ?", userID, bill.PartyID).First(&party).Error; err == nil {
-		if err := tx.Model(&party).Update("balance", party.Balance+amount).Error; err != nil {
-			return err
+	if adjustPartyBalance {
+		var party models.Party
+		if err := tx.Where("user_id = ? AND id = ?", userID, bill.PartyID).First(&party).Error; err == nil {
+			if err := tx.Model(&party).Update("balance", party.Balance+amount).Error; err != nil {
+				return err
+			}
 		}
 	}
 

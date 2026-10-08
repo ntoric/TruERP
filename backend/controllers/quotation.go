@@ -1,14 +1,15 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"encoding/json"
 	"fmt"
+	"html"
 	"math"
 	"net/http"
 	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -52,6 +53,7 @@ func GetQuotation(c *gin.Context) {
 	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).
 		Preload("Party").
 		Preload("Items").
+		Preload("Items.Product").
 		Preload("Versions").
 		First(&quotation).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Quotation not found"})
@@ -69,34 +71,47 @@ func CreateQuotation(c *gin.Context) {
 	}
 
 	var input struct {
-		QuotationNumber   string    `json:"quotation_number" binding:"required"`
-		PartyID          uuid.UUID `json:"party_id" binding:"required"`
-		Date             time.Time `json:"date" binding:"required"`
-		ValidUntil       *time.Time `json:"valid_until"`
-		PaymentTerms     int       `json:"payment_terms"`
-		Notes            string    `json:"notes"`
-		Terms            string    `json:"terms"`
-		IsInterState     bool      `json:"is_inter_state"`
-		PlaceOfSupply    string    `json:"place_of_supply"`
-		ReverseCharge    bool      `json:"reverse_charge"`
-		Signature       string    `json:"signature"`
-		QuotationDiscount float64  `json:"quotation_discount"`
-		AdditionalCharges float64 `json:"additional_charges"`
-		Items            []struct {
-			Description string  `json:"description"`
-			Quantity    float64 `json:"quantity"`
-			Unit        string  `json:"unit"`
-			UnitPrice   float64 `json:"unit_price"`
-			Discount    float64 `json:"discount"`
-			TaxRate     float64 `json:"tax_rate"`
-			HSNCode     string  `json:"hsn_code"`
-			SACCode     string  `json:"sac_code"`
+		QuotationNumber       string                    `json:"quotation_number"`
+		PartyID               uuid.UUID                 `json:"party_id" binding:"required"`
+		Date                  time.Time                 `json:"date" binding:"required"`
+		ValidUntil            *time.Time                `json:"valid_until"`
+		PaymentTerms          int                       `json:"payment_terms"`
+		Notes                 string                    `json:"notes"`
+		Terms                 string                    `json:"terms"`
+		IsInterState          bool                      `json:"is_inter_state"`
+		PlaceOfSupply         string                    `json:"place_of_supply"`
+		ReverseCharge         bool                      `json:"reverse_charge"`
+		Signature             string                    `json:"signature"`
+		QuotationDiscount     float64                   `json:"quotation_discount"`
+		AdditionalCharges     float64                   `json:"additional_charges"`
+		AdditionalChargeItems []models.AdditionalCharge `json:"additional_charge_items"`
+		Items                 []struct {
+			ProductID   *uuid.UUID           `json:"product_id"`
+			Description string               `json:"description"`
+			Quantity    models.FlexibleFloat `json:"quantity"`
+			Unit        string               `json:"unit"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			HSNCode     string               `json:"hsn_code"`
+			SACCode     string               `json:"sac_code"`
+			BatchNo     string               `json:"batch_no"`
+			ExpDate     *models.FlexibleTime `json:"exp_date"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	chargeItems, err := models.NormalizeAdditionalCharges(input.AdditionalChargeItems)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(chargeItems) > 0 {
+		input.AdditionalCharges = models.SumAdditionalCharges(chargeItems)
 	}
 
 	// Validate party
@@ -106,34 +121,49 @@ func CreateQuotation(c *gin.Context) {
 		return
 	}
 
+	input.QuotationNumber = strings.TrimSpace(input.QuotationNumber)
+	if input.QuotationNumber == "" {
+		input.QuotationNumber = allocateUniqueQuotationNumber(userID)
+	} else if quotationNumberInUse(userID, input.QuotationNumber, uuid.Nil) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Estimate number already in use"})
+		return
+	}
+
 	quotation := models.Quotation{
-		ID:                uuid.New(),
-		UserID:            userID,
-		QuotationNumber:   input.QuotationNumber,
-		PartyID:           input.PartyID,
-		Date:              input.Date,
-		ValidUntil:        input.ValidUntil,
-		PaymentTerms:      input.PaymentTerms,
-		Status:            "draft",
-		ApprovalStatus:    "pending",
-		Notes:             input.Notes,
-		Terms:             input.Terms,
-		IsInterState:      input.IsInterState,
-		PlaceOfSupply:     input.PlaceOfSupply,
-		ReverseCharge:     input.ReverseCharge,
-		Signature:         input.Signature,
-		QuotationDiscount: input.QuotationDiscount,
-		AdditionalCharges: input.AdditionalCharges,
-		Version:           1,
+		ID:                    uuid.New(),
+		UserID:                userID,
+		QuotationNumber:       input.QuotationNumber,
+		PartyID:               input.PartyID,
+		Date:                  input.Date,
+		ValidUntil:            input.ValidUntil,
+		PaymentTerms:          input.PaymentTerms,
+		Status:                "draft",
+		ApprovalStatus:        "pending",
+		Notes:                 input.Notes,
+		Terms:                 input.Terms,
+		IsInterState:          input.IsInterState,
+		PlaceOfSupply:         input.PlaceOfSupply,
+		ReverseCharge:         input.ReverseCharge,
+		Signature:             input.Signature,
+		QuotationDiscount:     input.QuotationDiscount,
+		AdditionalCharges:     input.AdditionalCharges,
+		AdditionalChargeItems: chargeItems,
+		Version:               1,
 	}
 
 	// Calculate totals
 	var subTotal, discountTotal, taxTotal, cgstTotal, sgstTotal, igstTotal float64
 	for _, item := range input.Items {
-		itemTotal := item.Quantity * item.UnitPrice
-		itemDiscount := itemTotal * (item.Discount / 100)
+		qty := item.Quantity.Float64()
+		unitPrice := item.UnitPrice.Float64()
+		discount := item.Discount.Float64()
+		// Billing is tax-free: the item tax rate is ignored.
+		taxRate := 0.0
+
+		itemTotal := qty * unitPrice
+		itemDiscount := itemTotal * (discount / 100)
 		taxableAmount := itemTotal - itemDiscount
-		itemTax := taxableAmount * (item.TaxRate / 100)
+		itemTax := taxableAmount * (taxRate / 100)
 
 		var cgst, sgst, igst float64
 		if input.IsInterState {
@@ -145,18 +175,21 @@ func CreateQuotation(c *gin.Context) {
 
 		quotation.Items = append(quotation.Items, models.QuotationItem{
 			ID:          uuid.New(),
+			ProductID:   item.ProductID,
 			Description: item.Description,
-			Quantity:    item.Quantity,
+			Quantity:    qty,
 			Unit:        item.Unit,
-			UnitPrice:   item.UnitPrice,
-			Discount:    item.Discount,
-			TaxRate:     item.TaxRate,
+			UnitPrice:   unitPrice,
+			Discount:    discount,
+			TaxRate:     taxRate,
 			CGST:        cgst,
 			SGST:        sgst,
 			IGST:        igst,
 			Total:       taxableAmount + cgst + sgst + igst,
 			HSNCode:     item.HSNCode,
 			SACCode:     item.SACCode,
+			BatchNo:     strings.TrimSpace(item.BatchNo),
+			ExpDate:     item.ExpDate.Ptr(),
 		})
 
 		subTotal += itemTotal
@@ -243,27 +276,32 @@ func UpdateQuotation(c *gin.Context) {
 	}
 
 	var input struct {
-		Date             *time.Time `json:"date"`
-		ValidUntil       *time.Time `json:"valid_until"`
-		PaymentTerms     int        `json:"payment_terms"`
-		Notes            string     `json:"notes"`
-		Terms            string     `json:"terms"`
-		IsInterState     bool       `json:"is_inter_state"`
-		PlaceOfSupply    string     `json:"place_of_supply"`
-		ReverseCharge    bool       `json:"reverse_charge"`
-		Signature       string     `json:"signature"`
-		QuotationDiscount float64   `json:"quotation_discount"`
-		AdditionalCharges float64   `json:"additional_charges"`
-		Items            []struct {
-			ID          *uuid.UUID `json:"id"`
-			Description string     `json:"description"`
-			Quantity    float64    `json:"quantity"`
-			Unit        string     `json:"unit"`
-			UnitPrice   float64    `json:"unit_price"`
-			Discount    float64    `json:"discount"`
-			TaxRate     float64    `json:"tax_rate"`
-			HSNCode     string     `json:"hsn_code"`
-			SACCode     string     `json:"sac_code"`
+		QuotationNumber       string                    `json:"quotation_number"`
+		Date                  *time.Time                `json:"date"`
+		ValidUntil            *time.Time                `json:"valid_until"`
+		PaymentTerms          int                       `json:"payment_terms"`
+		Notes                 string                    `json:"notes"`
+		Terms                 string                    `json:"terms"`
+		IsInterState          bool                      `json:"is_inter_state"`
+		PlaceOfSupply         string                    `json:"place_of_supply"`
+		ReverseCharge         bool                      `json:"reverse_charge"`
+		Signature             string                    `json:"signature"`
+		QuotationDiscount     float64                   `json:"quotation_discount"`
+		AdditionalCharges     float64                   `json:"additional_charges"`
+		AdditionalChargeItems []models.AdditionalCharge `json:"additional_charge_items"`
+		Items                 []struct {
+			ID          *uuid.UUID           `json:"id"`
+			ProductID   *uuid.UUID           `json:"product_id"`
+			Description string               `json:"description"`
+			Quantity    models.FlexibleFloat `json:"quantity"`
+			Unit        string               `json:"unit"`
+			UnitPrice   models.FlexibleFloat `json:"unit_price"`
+			Discount    models.FlexibleFloat `json:"discount"`
+			TaxRate     models.FlexibleFloat `json:"tax_rate"`
+			HSNCode     string               `json:"hsn_code"`
+			SACCode     string               `json:"sac_code"`
+			BatchNo     string               `json:"batch_no"`
+			ExpDate     *models.FlexibleTime `json:"exp_date"`
 		} `json:"items"`
 		ChangeReason string `json:"change_reason"`
 	}
@@ -273,7 +311,20 @@ func UpdateQuotation(c *gin.Context) {
 		return
 	}
 
+	chargeItems, err := models.NormalizeAdditionalCharges(input.AdditionalChargeItems)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	// Update fields
+	if num := strings.TrimSpace(input.QuotationNumber); num != "" && num != quotation.QuotationNumber {
+		if quotationNumberInUse(userID, num, quotation.ID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Estimate number already in use"})
+			return
+		}
+		quotation.QuotationNumber = num
+	}
 	if input.Date != nil {
 		quotation.Date = *input.Date
 	}
@@ -286,7 +337,16 @@ func UpdateQuotation(c *gin.Context) {
 	quotation.ReverseCharge = input.ReverseCharge
 	quotation.Signature = input.Signature
 	quotation.QuotationDiscount = input.QuotationDiscount
-	quotation.AdditionalCharges = input.AdditionalCharges
+	if input.AdditionalChargeItems != nil {
+		if len(chargeItems) == 0 {
+			quotation.AdditionalChargeItems = nil
+		} else {
+			quotation.AdditionalChargeItems = chargeItems
+		}
+		quotation.AdditionalCharges = models.SumAdditionalCharges(chargeItems)
+	} else {
+		quotation.AdditionalCharges = input.AdditionalCharges
+	}
 
 	// Recalculate if items provided
 	if len(input.Items) > 0 {
@@ -295,10 +355,16 @@ func UpdateQuotation(c *gin.Context) {
 
 		var subTotal, discountTotal, taxTotal, cgstTotal, sgstTotal, igstTotal float64
 		for _, item := range input.Items {
-			itemTotal := item.Quantity * item.UnitPrice
-			itemDiscount := itemTotal * (item.Discount / 100)
+			qty := item.Quantity.Float64()
+			unitPrice := item.UnitPrice.Float64()
+			discount := item.Discount.Float64()
+			// Billing is tax-free: the item tax rate is ignored.
+			taxRate := 0.0
+
+			itemTotal := qty * unitPrice
+			itemDiscount := itemTotal * (discount / 100)
 			taxableAmount := itemTotal - itemDiscount
-			itemTax := taxableAmount * (item.TaxRate / 100)
+			itemTax := taxableAmount * (taxRate / 100)
 
 			var cgst, sgst, igst float64
 			if quotation.IsInterState {
@@ -311,18 +377,21 @@ func UpdateQuotation(c *gin.Context) {
 			quotation.Items = append(quotation.Items, models.QuotationItem{
 				ID:          uuid.New(),
 				QuotationID: quotation.ID,
+				ProductID:   item.ProductID,
 				Description: item.Description,
-				Quantity:    item.Quantity,
+				Quantity:    qty,
 				Unit:        item.Unit,
-				UnitPrice:   item.UnitPrice,
-				Discount:    item.Discount,
-				TaxRate:     item.TaxRate,
+				UnitPrice:   unitPrice,
+				Discount:    discount,
+				TaxRate:     taxRate,
 				CGST:        cgst,
 				SGST:        sgst,
 				IGST:        igst,
 				Total:       taxableAmount + cgst + sgst + igst,
 				HSNCode:     item.HSNCode,
 				SACCode:     item.SACCode,
+				BatchNo:     strings.TrimSpace(item.BatchNo),
+				ExpDate:     item.ExpDate.Ptr(),
 			})
 
 			subTotal += itemTotal
@@ -378,7 +447,7 @@ func UpdateQuotation(c *gin.Context) {
 		c.ClientIP(),
 		c.GetHeader("User-Agent"),
 		map[string]interface{}{
-			"version": quotation.Version,
+			"version":       quotation.Version,
 			"change_reason": input.ChangeReason,
 		},
 		"success",
@@ -434,14 +503,55 @@ func DeleteQuotation(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "Quotation deleted successfully"})
 }
 
+func quotationNumberInUse(userID uuid.UUID, number string, excludeID uuid.UUID) bool {
+	var count int64
+	query := utils.DB.Model(&models.Quotation{}).Where("user_id = ? AND quotation_number = ?", userID, number)
+	if excludeID != uuid.Nil {
+		query = query.Where("id != ?", excludeID)
+	}
+	query.Count(&count)
+	return count > 0
+}
+
+// allocateUniqueQuotationNumber returns the next EST-XXXX estimate number that is not in use.
+func allocateUniqueQuotationNumber(userID uuid.UUID) string {
+	var numbers []string
+	utils.DB.Model(&models.Quotation{}).
+		Where("user_id = ?", userID).
+		Pluck("quotation_number", &numbers)
+
+	var maxSeq int64
+	for _, number := range numbers {
+		if seq := trailingNumberSequence(number); seq > maxSeq {
+			maxSeq = seq
+		}
+	}
+	for i := maxSeq + 1; i < maxSeq+10000; i++ {
+		candidate := fmt.Sprintf("EST-%04d", i)
+		if !quotationNumberInUse(userID, candidate, uuid.Nil) {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("EST-%d", time.Now().Unix())
+}
+
+func trailingNumberSequence(number string) int64 {
+	number = strings.TrimSpace(number)
+	idx := len(number)
+	for idx > 0 && number[idx-1] >= '0' && number[idx-1] <= '9' {
+		idx--
+	}
+	if idx == len(number) {
+		return 0
+	}
+	var seq int64
+	fmt.Sscanf(number[idx:], "%d", &seq)
+	return seq
+}
+
 func GetNextQuotationNumber(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
-
-	var count int64
-	utils.DB.Model(&models.Quotation{}).Where("user_id = ?", userID).Count(&count)
-
-	nextNum := fmt.Sprintf("QUOT-%04d", count+1)
-	c.JSON(http.StatusOK, gin.H{"quotation_number": nextNum})
+	c.JSON(http.StatusOK, gin.H{"quotation_number": allocateUniqueQuotationNumber(userID)})
 }
 
 func ApproveQuotation(c *gin.Context) {
@@ -484,64 +594,85 @@ func ApproveQuotation(c *gin.Context) {
 
 func ConvertToInvoice(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	userName := ""
+	if name, exists := c.Get("user_name"); exists {
+		userName = name.(string)
+	}
 	id := c.Param("id")
+
+	// Optional payment details collected during conversion (e.g. "Mark as Sale").
+	var input struct {
+		PaymentMode   string                `json:"payment_mode"`
+		AmountPaid    float64               `json:"amount_paid"`
+		PaymentSplits []models.PaymentSplit `json:"payment_splits"`
+		BankAccountID *uuid.UUID            `json:"bank_account_id"`
+	}
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	var quotation models.Quotation
 	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).
 		Preload("Party").
 		Preload("Items").
 		First(&quotation).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Quotation not found"})
-		return
-	}
-
-	if quotation.Status != "accepted" && quotation.ApprovalStatus != "approved" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Quotation must be approved before converting to invoice"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Estimate not found"})
 		return
 	}
 
 	if quotation.Status == "converted" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Quotation already converted to invoice"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Estimate already converted to invoice"})
 		return
 	}
 
-	// Get next invoice number
-	var count int64
-	utils.DB.Model(&models.Invoice{}).Where("user_id = ?", userID).Count(&count)
-	invoiceNumber := fmt.Sprintf("INV-%04d", count+1)
+	resolvedBankAccount, err := resolveBankAccountForPaymentMode(userID, input.PaymentMode, input.BankAccountID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
+		return
+	}
+
+	invoiceNumber := allocateUniqueInvoiceNumber(userID, "")
 
 	// Create invoice from quotation
 	invoice := models.Invoice{
-		ID:                uuid.New(),
-		UserID:            userID,
-		InvoiceNumber:     invoiceNumber,
-		InvoiceType:       "tax_invoice",
-		PartyID:           quotation.PartyID,
-		Date:              time.Now(),
-		PaymentTerms:      quotation.PaymentTerms,
-		Status:            "draft",
-		SubTotal:          quotation.SubTotal,
-		DiscountTotal:     quotation.DiscountTotal,
-		InvoiceDiscount:   quotation.QuotationDiscount,
-		AdditionalCharges: quotation.AdditionalCharges,
-		TaxTotal:          quotation.TaxTotal,
-		CGSTTotal:         quotation.CGSTTotal,
-		SGSTTotal:         quotation.SGSTTotal,
-		IGSTTotal:         quotation.IGSTTotal,
-		RoundOff:          quotation.RoundOff,
-		TotalAmount:       quotation.TotalAmount,
-		Notes:             quotation.Notes,
-		Terms:             quotation.Terms,
-		IsInterState:      quotation.IsInterState,
-		PlaceOfSupply:     quotation.PlaceOfSupply,
-		ReverseCharge:     quotation.ReverseCharge,
-		Signature:         quotation.Signature,
+		ID:                    uuid.New(),
+		UserID:                userID,
+		InvoiceNumber:         invoiceNumber,
+		InvoiceType:           "tax_invoice",
+		PartyID:               quotation.PartyID,
+		Date:                  time.Now(),
+		PaymentTerms:          quotation.PaymentTerms,
+		Status:                "sent",
+		SubTotal:              quotation.SubTotal,
+		DiscountTotal:         quotation.DiscountTotal,
+		InvoiceDiscount:       quotation.QuotationDiscount,
+		AdditionalCharges:     quotation.AdditionalCharges,
+		AdditionalChargeItems: quotation.AdditionalChargeItems,
+		TaxTotal:              quotation.TaxTotal,
+		CGSTTotal:             quotation.CGSTTotal,
+		SGSTTotal:             quotation.SGSTTotal,
+		IGSTTotal:             quotation.IGSTTotal,
+		RoundOff:              quotation.RoundOff,
+		TotalAmount:           quotation.TotalAmount,
+		PaymentMode:           input.PaymentMode,
+		AmountPaid:            input.AmountPaid,
+		BankAccountID:         resolvedBankAccount,
+		Notes:                 quotation.Notes,
+		Terms:                 quotation.Terms,
+		IsInterState:          quotation.IsInterState,
+		PlaceOfSupply:         quotation.PlaceOfSupply,
+		ReverseCharge:         quotation.ReverseCharge,
+		Signature:             quotation.Signature,
 	}
 
 	// Copy items
 	for _, qItem := range quotation.Items {
 		invoice.Items = append(invoice.Items, models.InvoiceItem{
 			ID:          uuid.New(),
+			ProductID:   qItem.ProductID,
 			Description: qItem.Description,
 			Quantity:    qItem.Quantity,
 			Unit:        qItem.Unit,
@@ -554,13 +685,39 @@ func ConvertToInvoice(c *gin.Context) {
 			Total:       qItem.Total,
 			HSNCode:     qItem.HSNCode,
 			SACCode:     qItem.SACCode,
+			BatchNo:     qItem.BatchNo,
+			ExpDate:     qItem.ExpDate,
 		})
 	}
 
-	if err := utils.DB.Create(&invoice).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create invoice from quotation"})
+	if err := finalizeInvoicePaymentSplits(userID, &invoice, input.PaymentSplits, input.PaymentMode, input.BankAccountID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
 		return
 	}
+	normalizeInvoicePaymentStatus(&invoice)
+
+	if err := utils.DB.Create(&invoice).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create invoice from estimate"})
+		return
+	}
+
+	recordInvoiceStatusHistory(invoice.ID, userID, "", invoice.Status, fmt.Sprintf("Converted from estimate %s", quotation.QuotationNumber), userName)
+
+	applyInvoiceSaleStock(userID, &invoice)
+
+	if err := postInvoiceAccounting(utils.DB, userID, &invoice); err != nil {
+		fmt.Printf("[DEBUG] ConvertToInvoice - accounting error: %v\n", err)
+	}
+
+	if invoice.AmountPaid > 0 {
+		notes := fmt.Sprintf("Auto-created from estimate %s conversion", quotation.QuotationNumber)
+		if err := createLinkedSalePaymentIn(utils.DB, userID, &invoice, invoice.AmountPaid, invoice.Date, notes); err != nil {
+			fmt.Printf("[DEBUG] ConvertToInvoice - payment in error: %v\n", err)
+		}
+	}
+
+	// Update party balance
+	utils.DB.Model(&quotation.Party).Update("balance", quotation.Party.Balance+invoice.TotalAmount)
 
 	// Update quotation status
 	now := time.Now()
@@ -569,6 +726,27 @@ func ConvertToInvoice(c *gin.Context) {
 	quotation.ConvertedAt = &now
 	utils.DB.Save(&quotation)
 
+	CreateAuditLog(
+		userID,
+		userName,
+		"create",
+		"invoice",
+		&invoice.ID,
+		invoice.InvoiceNumber,
+		fmt.Sprintf("Converted estimate %s to invoice %s - Amount: %.2f", quotation.QuotationNumber, invoice.InvoiceNumber, invoice.TotalAmount),
+		c.ClientIP(),
+		c.GetHeader("User-Agent"),
+		map[string]interface{}{
+			"quotation_id":   quotation.ID,
+			"quotation_no":   quotation.QuotationNumber,
+			"invoice_number": invoice.InvoiceNumber,
+			"total_amount":   invoice.TotalAmount,
+		},
+		"success",
+		"",
+	)
+
+	attachInvoicePaymentSplits(utils.DB, &invoice)
 	c.JSON(http.StatusCreated, invoice)
 }
 
@@ -681,6 +859,8 @@ func RejectQuotation(c *gin.Context) {
 	c.JSON(http.StatusOK, quotation)
 }
 
+// GenerateQuotationPDF renders the estimate print view. Per requirements the
+// print carries no business details — only the "Estimate" title and date at top.
 func GenerateQuotationPDF(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	id := c.Param("id")
@@ -690,17 +870,19 @@ func GenerateQuotationPDF(c *gin.Context) {
 		Preload("Party").
 		Preload("Items").
 		First(&quotation).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Quotation not found"})
+		c.JSON(http.StatusNotFound, gin.H{"error": "Estimate not found"})
 		return
 	}
 
+	esc := html.EscapeString
+
 	// Generate HTML for PDF
-	html := fmt.Sprintf(`
+	htmlDoc := fmt.Sprintf(`
 <!DOCTYPE html>
 <html>
 <head>
 	<meta charset="UTF-8">
-	<title>Quotation - %s</title>
+	<title>Estimate - %s</title>
 	<style>
 		body {
 			font-family: Arial, sans-serif;
@@ -711,16 +893,24 @@ func GenerateQuotationPDF(c *gin.Context) {
 		.header {
 			display: flex;
 			justify-content: space-between;
+			align-items: baseline;
 			margin-bottom: 30px;
+			border-bottom: 2px solid #333;
+			padding-bottom: 12px;
 		}
 		.title {
-			font-size: 24px;
+			font-size: 26px;
 			font-weight: bold;
-			color: #2563eb;
+			letter-spacing: 1px;
 		}
-		.quotation-number {
-			font-size: 18px;
+		.header-date {
+			font-size: 14px;
+			color: #333;
+		}
+		.estimate-number {
+			font-size: 14px;
 			color: #666;
+			margin-bottom: 20px;
 		}
 		.section {
 			margin-bottom: 20px;
@@ -731,17 +921,8 @@ func GenerateQuotationPDF(c *gin.Context) {
 			color: #666;
 			margin-bottom: 10px;
 		}
-		.info-grid {
-			display: grid;
-			grid-template-columns: 1fr 1fr;
-			gap: 10px;
-		}
 		.info-item {
 			margin-bottom: 5px;
-		}
-		.info-label {
-			font-weight: bold;
-			color: #666;
 		}
 		table {
 			width: 100%%;
@@ -776,7 +957,6 @@ func GenerateQuotationPDF(c *gin.Context) {
 		.grand-total {
 			font-size: 18px;
 			font-weight: bold;
-			color: #2563eb;
 		}
 		.footer {
 			margin-top: 40px;
@@ -787,23 +967,6 @@ func GenerateQuotationPDF(c *gin.Context) {
 			font-size: 12px;
 			color: #666;
 		}
-		.status {
-			display: inline-block;
-			padding: 5px 10px;
-			border-radius: 4px;
-			font-size: 12px;
-			font-weight: bold;
-			text-transform: uppercase;
-		}
-		.status-draft { background-color: #f3f4f6; color: #666; }
-		.status-sent { background-color: #dbeafe; color: #1e40af; }
-		.status-accepted { background-color: #d1fae5; color: #065f46; }
-		.status-rejected { background-color: #fee2e2; color: #991b1b; }
-		.status-converted { background-color: #fef3c7; color: #92400e; }
-		.expiry {
-			color: #dc2626;
-			font-weight: bold;
-		}
 		@media print {
 			body { margin: 0; padding: 10px; }
 		}
@@ -811,40 +974,18 @@ func GenerateQuotationPDF(c *gin.Context) {
 </head>
 <body>
 	<div class="header">
-		<div>
-			<div class="title">QUOTATION</div>
-			<div class="quotation-number">%s</div>
-		</div>
-		<div>
-			<span class="status status-%s">%s</span>
-		</div>
+		<div class="title">ESTIMATE</div>
+		<div class="header-date">Date: %s</div>
 	</div>
+
+	<div class="estimate-number">Estimate No: %s</div>
 
 	<div class="section">
 		<div class="section-title">Bill To</div>
 		<div class="info-item">
 			<strong>%s</strong><br>
 			%s<br>
-			%s<br>
-			GSTIN: %s
-		</div>
-	</div>
-
-	<div class="section">
-		<div class="section-title">Quotation Details</div>
-		<div class="info-grid">
-			<div class="info-item">
-				<span class="info-label">Date:</span> %s
-			</div>
-			<div class="info-item">
-				<span class="info-label">Valid Until:</span> <span class="expiry">%s</span>
-			</div>
-			<div class="info-item">
-				<span class="info-label">Payment Terms:</span> %d days
-			</div>
-			<div class="info-item">
-				<span class="info-label">Place of Supply:</span> %s
-			</div>
+			%s
 		</div>
 	</div>
 
@@ -854,8 +995,7 @@ func GenerateQuotationPDF(c *gin.Context) {
 			<thead>
 				<tr>
 					<th>Description</th>
-					<th>Quantity</th>
-					<th>Unit</th>
+					<th>Qty</th>
 					<th>Unit Price</th>
 					<th>Discount %%</th>
 					<th>Tax %%</th>
@@ -881,10 +1021,7 @@ func GenerateQuotationPDF(c *gin.Context) {
 			<span class="total-label">Tax Total:</span>
 			<span class="total-value">₹%.2f</span>
 		</div>
-		<div class="total-row">
-			<span class="total-label">Additional Charges:</span>
-			<span class="total-value">₹%.2f</span>
-		</div>
+		%s
 		<div class="total-row">
 			<span class="total-label">Round Off:</span>
 			<span class="total-value">₹%.2f</span>
@@ -901,6 +1038,7 @@ func GenerateQuotationPDF(c *gin.Context) {
 		%s
 	</div>
 
+	%s
 	<script>
 		window.onload = function() {
 			window.print();
@@ -908,54 +1046,43 @@ func GenerateQuotationPDF(c *gin.Context) {
 	</script>
 </body>
 </html>`,
-		quotation.QuotationNumber,
-		quotation.QuotationNumber,
-		quotation.Status,
-		strings.ToUpper(quotation.Status),
-		quotation.Party.Name,
-		quotation.Party.Address,
-		fmt.Sprintf("%s, %s - %s", quotation.Party.City, quotation.Party.State, quotation.Party.Pincode),
-		quotation.Party.GSTIN,
+		esc(quotation.QuotationNumber),
 		quotation.Date.Format("02-01-2006"),
-		func() string {
-			if quotation.ValidUntil != nil {
-				return quotation.ValidUntil.Format("02-01-2006")
-			}
-			return "N/A"
-		}(),
-		quotation.PaymentTerms,
-		quotation.PlaceOfSupply,
+		esc(quotation.QuotationNumber),
+		esc(quotation.Party.Name),
+		esc(quotation.Party.Address),
+		esc(fmt.Sprintf("%s, %s - %s", quotation.Party.City, quotation.Party.State, quotation.Party.Pincode)),
 		func() string {
 			var rows string
 			for _, item := range quotation.Items {
 				rows += fmt.Sprintf(`<tr>
 					<td>%s</td>
-					<td>%.2f</td>
-					<td>%s</td>
+					<td>%.2f %s</td>
 					<td>₹%.2f</td>
 					<td>%.2f%%</td>
 					<td>%.2f%%</td>
 					<td>₹%.2f</td>
-				</tr>`, item.Description, item.Quantity, item.Unit, item.UnitPrice, item.Discount, item.TaxRate, item.Total)
+				</tr>`, esc(item.Description), item.Quantity, esc(item.Unit), item.UnitPrice, item.Discount, item.TaxRate, item.Total)
 			}
 			return rows
 		}(),
 		quotation.SubTotal,
-		quotation.DiscountTotal + quotation.QuotationDiscount,
+		quotation.DiscountTotal+quotation.QuotationDiscount,
 		quotation.TaxTotal,
-		quotation.AdditionalCharges,
+		additionalChargeRowsHTML(quotation.AdditionalChargeItems, quotation.AdditionalCharges),
 		quotation.RoundOff,
 		quotation.TotalAmount,
-		quotation.Terms,
+		esc(quotation.Terms),
 		func() string {
 			if quotation.Notes != "" {
 				return fmt.Sprintf(`<div class="section-title" style="margin-top: 20px;">Notes</div>
-				<div class="terms">%s</div>`, quotation.Notes)
+				<div class="terms">%s</div>`, esc(quotation.Notes))
 			}
 			return ""
 		}(),
+		signatureBlockHTML(quotation.Signature),
 	)
 
 	c.Header("Content-Type", "text/html")
-	c.String(http.StatusOK, html)
+	c.String(http.StatusOK, htmlDoc)
 }

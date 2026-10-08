@@ -1,11 +1,12 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -35,12 +36,12 @@ func GetAuditLogs(c *gin.Context) {
 
 	// Filter by user name
 	if userName := c.Query("user_name"); userName != "" {
-		query = query.Where("user_name ILIKE ?", "%"+userName+"%")
+		query = query.Where("LOWER(user_name) LIKE ?", "%"+strings.ToLower(userName)+"%")
 	}
 
 	// Filter by IP address
 	if ipAddress := c.Query("ip_address"); ipAddress != "" {
-		query = query.Where("ip_address ILIKE ?", "%"+ipAddress+"%")
+		query = query.Where("LOWER(ip_address) LIKE ?", "%"+strings.ToLower(ipAddress)+"%")
 	}
 
 	// Filter by date range
@@ -74,8 +75,9 @@ func GetAuditLogs(c *gin.Context) {
 
 	// Search in description and entity name
 	if search := c.Query("search"); search != "" {
-		query = query.Where("description ILIKE ? OR entity_name ILIKE ? OR user_name ILIKE ? OR ip_address ILIKE ?",
-			"%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(description) LIKE ? OR LOWER(entity_name) LIKE ? OR LOWER(user_name) LIKE ? OR LOWER(ip_address) LIKE ?",
+			like, like, like, like)
 	}
 
 	// Sort options
@@ -241,20 +243,20 @@ func CreateAuditLog(userID uuid.UUID, userName, action, entityType string, entit
 	}
 
 	auditLog := models.AuditLog{
-		ID:          uuid.New(),
-		UserID:      userID,
-		UserName:    userName,
-		Action:      action,
-		EntityType:  entityType,
-		EntityID:    entityID,
-		EntityName:  entityName,
-		Description: description,
-		IPAddress:   ipAddress,
-		UserAgent:   userAgent,
-		Changes:     changesJSON,
-		Status:      status,
+		ID:           uuid.New(),
+		UserID:       userID,
+		UserName:     userName,
+		Action:       action,
+		EntityType:   entityType,
+		EntityID:     entityID,
+		EntityName:   entityName,
+		Description:  description,
+		IPAddress:    ipAddress,
+		UserAgent:    userAgent,
+		Changes:      changesJSON,
+		Status:       status,
 		ErrorMessage: errorMessage,
-		CreatedAt:   time.Now(),
+		CreatedAt:    time.Now(),
 	}
 
 	return utils.DB.Create(&auditLog).Error
@@ -364,12 +366,12 @@ func ArchiveAuditLogs(c *gin.Context) {
 
 	// For now, we'll just return the count
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "Audit logs archived successfully",
-		"count":        len(auditLogs),
-		"from_date":    input.FromDate,
-		"to_date":      input.ToDate,
-		"archive_id":   uuid.New().String(),
-		"note":         "In production, this would export to file/cloud storage",
+		"message":    "Audit logs archived successfully",
+		"count":      len(auditLogs),
+		"from_date":  input.FromDate,
+		"to_date":    input.ToDate,
+		"archive_id": uuid.New().String(),
+		"note":       "In production, this would export to file/cloud storage",
 	})
 }
 

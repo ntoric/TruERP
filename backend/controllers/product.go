@@ -1,19 +1,22 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+	"truerp/models"
+	"truerp/services"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tealeg/xlsx/v3"
+	"gorm.io/gorm"
 )
 
 const itemCodeMaxLen = 14
@@ -68,27 +71,68 @@ func GetProducts(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var products []models.Product
-	query := utils.DB.Where("user_id = ?", userID)
+	query := utils.DB.Model(&models.Product{}).Where("user_id = ?", userID)
 
 	if category := c.Query("category"); category != "" && category != "all" {
 		query = query.Where("category = ?", category)
 	}
 
-	if search := c.Query("search"); search != "" {
-		query = query.Where("name LIKE ? OR sku LIKE ? OR item_code LIKE ? OR plu LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+	if unit := c.Query("unit"); unit != "" && unit != "all" {
+		query = query.Where("unit = ?", unit)
 	}
 
-	if err := query.Order("created_at DESC").Find(&products).Error; err != nil {
+	if search := c.Query("search"); search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(sku) LIKE ? OR LOWER(item_code) LIKE ? OR LOWER(plu) LIKE ? OR LOWER(hsn_code) LIKE ? OR LOWER(category) LIKE ?", like, like, like, like, like, like)
+	}
+
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy array shape.
+	paginated := c.Query("page") != "" || c.Query("per_page") != ""
+	var total int64
+	page, perPage := 1, 0
+	if paginated {
+		page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ = strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+			return
+		}
+	}
+
+	findQuery := query.Order("created_at DESC")
+	if paginated && perPage > 0 {
+		findQuery = findQuery.Limit(perPage).Offset((page - 1) * perPage)
+	}
+	if err := findQuery.Find(&products).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
 		return
 	}
 
 	stockByProduct := map[uuid.UUID]float64{}
 	if len(products) > 0 {
-		var stocks []models.InventoryStock
-		if err := utils.DB.Where("user_id = ?", userID).Find(&stocks).Error; err == nil {
-			for _, stock := range stocks {
-				stockByProduct[stock.ProductID] += stock.AvailableQty
+		stockQuery := utils.DB.Model(&models.InventoryStock{}).
+			Select("product_id, COALESCE(SUM(available_qty), 0) AS stock_qty").
+			Where("user_id = ?", userID).
+			Group("product_id")
+		if paginated {
+			productIDs := make([]uuid.UUID, 0, len(products))
+			for _, p := range products {
+				productIDs = append(productIDs, p.ID)
+			}
+			stockQuery = stockQuery.Where("product_id IN ?", productIDs)
+		}
+		var stockRows []struct {
+			ProductID uuid.UUID
+			StockQty  float64
+		}
+		if err := stockQuery.Scan(&stockRows).Error; err == nil {
+			for _, row := range stockRows {
+				stockByProduct[row.ProductID] = row.StockQty
 			}
 		}
 	}
@@ -105,7 +149,32 @@ func GetProducts(c *gin.Context) {
 		})
 	}
 
+	if paginated {
+		c.JSON(http.StatusOK, gin.H{
+			"products": out,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, out)
+}
+
+func GetProductUnits(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var units []string
+	if err := utils.DB.Model(&models.Product{}).
+		Where("user_id = ?", userID).
+		Where("unit <> ''").
+		Distinct().
+		Order("unit").
+		Pluck("unit", &units).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch product units"})
+		return
+	}
+	c.JSON(http.StatusOK, units)
 }
 
 func GetProduct(c *gin.Context) {
@@ -588,8 +657,13 @@ func ExportProductsCSV(c *gin.Context) {
 		query = query.Where("category = ?", category)
 	}
 
+	if unit := c.Query("unit"); unit != "" && unit != "all" {
+		query = query.Where("unit = ?", unit)
+	}
+
 	if search := c.Query("search"); search != "" {
-		query = query.Where("name LIKE ? OR sku LIKE ? OR item_code LIKE ? OR plu LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(sku) LIKE ? OR LOWER(item_code) LIKE ? OR LOWER(plu) LIKE ?", like, like, like, like)
 	}
 
 	if err := query.Order("created_at DESC").Find(&products).Error; err != nil {
@@ -654,8 +728,13 @@ func ExportProductsExcel(c *gin.Context) {
 		query = query.Where("category = ?", category)
 	}
 
+	if unit := c.Query("unit"); unit != "" && unit != "all" {
+		query = query.Where("unit = ?", unit)
+	}
+
 	if search := c.Query("search"); search != "" {
-		query = query.Where("name LIKE ? OR sku LIKE ? OR item_code LIKE ? OR plu LIKE ?", "%"+search+"%", "%"+search+"%", "%"+search+"%", "%"+search+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(sku) LIKE ? OR LOWER(item_code) LIKE ? OR LOWER(plu) LIKE ?", like, like, like, like)
 	}
 
 	if err := query.Order("created_at DESC").Find(&products).Error; err != nil {
@@ -795,6 +874,7 @@ func PrintProductLabel(c *gin.Context) {
 
 	labelData := productLabelData{
 		Name:      product.Name,
+		Brand:     business.Name,
 		SKU:       product.SKU,
 		ItemCode:  product.ItemCode,
 		Category:  product.Category,
@@ -809,6 +889,7 @@ func PrintProductLabel(c *gin.Context) {
 		code := barcodeValueForProduct(labelData)
 		entry := BarcodeLabelItemJSON{
 			Name:    labelData.Name,
+			Brand:   labelData.Brand,
 			Barcode: code,
 			SKU:     labelData.SKU,
 			Price:   labelData.SalePrice,
@@ -858,6 +939,211 @@ func PrintProductLabel(c *gin.Context) {
 	c.String(http.StatusOK, html)
 }
 
+// PrintProductLabels prints barcode labels for several products in one job.
+// Body: { items: [{product_id, quantity}], label_size, format, start_position, preview }
+func PrintProductLabels(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var input struct {
+		Items []struct {
+			ProductID string `json:"product_id"`
+			Quantity  int    `json:"quantity"`
+		} `json:"items"`
+		LabelSize     string `json:"label_size"`
+		Format        string `json:"format"`
+		StartPosition int    `json:"start_position"`
+		Preview       bool   `json:"preview"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+	if len(input.Items) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No products selected"})
+		return
+	}
+	if len(input.Items) > 200 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Too many products (max 200)"})
+		return
+	}
+
+	ids := make([]string, 0, len(input.Items))
+	seen := make(map[string]bool, len(input.Items))
+	qtyByID := make(map[string]int, len(input.Items))
+	for _, it := range input.Items {
+		pid := strings.TrimSpace(it.ProductID)
+		if pid == "" {
+			continue
+		}
+		q := it.Quantity
+		if q < 1 {
+			q = 1
+		}
+		if q > 500 {
+			q = 500
+		}
+		if !seen[pid] {
+			seen[pid] = true
+			ids = append(ids, pid)
+		}
+		qtyByID[pid] = q
+	}
+	if len(ids) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No products selected"})
+		return
+	}
+
+	var products []models.Product
+	if err := utils.DB.Where("user_id = ? AND id IN ?", userID, ids).Find(&products).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch products"})
+		return
+	}
+	productByID := make(map[string]models.Product, len(products))
+	for _, p := range products {
+		productByID[p.ID.String()] = p
+	}
+
+	// Fetch business settings for label printing (same defaults as single-product print)
+	var business models.Business
+	if err := utils.DB.Where("user_id = ?", userID).First(&business).Error; err != nil {
+		business = models.Business{
+			LabelPaperSize: "A4",
+			LabelWidthMM:   50,
+			LabelHeightMM:  30,
+			LabelColumns:   3,
+			LabelRows:      8,
+			LabelMarginMM:  10,
+		}
+	}
+
+	barcodeMode := "a4"
+	labelSizeKey := "2inch"
+	var printSettings models.PrintSettings
+	if err := utils.DB.Where("user_id = ?", userID).First(&printSettings).Error; err == nil {
+		if printSettings.BarcodePrintMode == "label" {
+			barcodeMode = "label"
+		}
+		labelSizeKey = normalizeBarcodeLabelSize(printSettings.BarcodeLabelSize)
+	}
+	if input.LabelSize != "" {
+		labelSizeKey = normalizeBarcodeLabelSize(input.LabelSize)
+		// Explicit size from the print dialog always targets thermal label rolls
+		barcodeMode = "label"
+	}
+	labelSize := getBarcodeLabelSize(labelSizeKey)
+	compact := labelSizeKey == "1inch" || labelSizeKey == "1.5inch"
+
+	type labelJob struct {
+		data productLabelData
+		qty  int
+	}
+	jobs := make([]labelJob, 0, len(ids))
+	total := 0
+	for _, pid := range ids {
+		p, ok := productByID[pid]
+		if !ok {
+			continue
+		}
+		q := qtyByID[pid]
+		total += q
+		jobs = append(jobs, labelJob{
+			data: productLabelData{
+				Name:      p.Name,
+				Brand:     business.Name,
+				SKU:       p.SKU,
+				ItemCode:  p.ItemCode,
+				Category:  p.Category,
+				SalePrice: p.SalePrice,
+				MRP:       p.MRP,
+			},
+			qty: q,
+		})
+	}
+	if len(jobs) == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Products not found"})
+		return
+	}
+	if total > 2000 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Too many labels in one job (max 2000)"})
+		return
+	}
+	if input.Preview && total > 8 {
+		// Trim quantities so the preview stays light.
+		remaining := 8
+		for i := range jobs {
+			if jobs[i].qty > remaining {
+				jobs[i].qty = remaining
+			}
+			remaining -= jobs[i].qty
+			if remaining <= 0 {
+				jobs = jobs[:i+1]
+				break
+			}
+		}
+	}
+
+	format := strings.ToLower(strings.TrimSpace(input.Format))
+	if format == "" {
+		format = strings.ToLower(strings.TrimSpace(c.Query("format")))
+	}
+
+	if barcodeMode == "label" && (format == "json" || wantsJSONResponse(c)) {
+		labels := make([]BarcodeLabelItemJSON, 0, total)
+		for _, job := range jobs {
+			entry := BarcodeLabelItemJSON{
+				Name:    job.data.Name,
+				Brand:   job.data.Brand,
+				Barcode: barcodeValueForProduct(job.data),
+				SKU:     job.data.SKU,
+				Price:   job.data.SalePrice,
+			}
+			if job.data.MRP > 0 {
+				entry.MRP = job.data.MRP
+			}
+			for i := 0; i < job.qty; i++ {
+				labels = append(labels, entry)
+			}
+		}
+		c.JSON(http.StatusOK, BarcodeLabelsResponse{
+			Title:    "Product Labels",
+			Size:     labelSize.Key,
+			WidthMM:  labelSize.WidthMM,
+			HeightMM: labelSize.HeightMM,
+			Compact:  compact,
+			Labels:   labels,
+		})
+		return
+	}
+
+	if barcodeMode == "label" {
+		var labelsHTML strings.Builder
+		for _, job := range jobs {
+			single := buildProductLabelHTML(job.data, labelSize, compact)
+			for i := 0; i < job.qty; i++ {
+				labelsHTML.WriteString(single)
+			}
+		}
+		html := wrapBarcodeLabelDocument("Product Labels", barcodeLabelPageCSS(labelSize), labelsHTML.String())
+		c.Header("Content-Type", "text/html; charset=utf-8")
+		c.String(http.StatusOK, html)
+		return
+	}
+
+	sheetLayout := a4LabelSheetLayoutFromBusiness(business)
+	a4Size := barcodeLabelSizeForA4Layout(sheetLayout)
+	labelHTMLs := make([]string, 0, total)
+	for _, job := range jobs {
+		single := buildProductLabelHTML(job.data, a4Size, false)
+		for i := 0; i < job.qty; i++ {
+			labelHTMLs = append(labelHTMLs, single)
+		}
+	}
+
+	html := buildA4LabelsSheetDocument("Product Labels", labelHTMLs, sheetLayout, input.StartPosition, input.Preview)
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, html)
+}
+
 func ImportProductsCSV(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 	_ = utils.EnsureDefaultCategories(utils.DB, userID)
@@ -874,24 +1160,42 @@ func ImportProductsCSV(c *gin.Context) {
 		return
 	}
 	defer src.Close()
+	content, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read file"})
+		return
+	}
 
-	reader := csv.NewReader(src)
+	result, errs, perr := importProductsRows(userID, content, nil)
+	if perr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": perr.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"imported": result["imported"], "errors": errs})
+}
+
+func importProductsRows(userID uuid.UUID, content []byte, progress services.ProgressFunc) (map[string]interface{}, []string, error) {
+	reader := csv.NewReader(strings.NewReader(string(content)))
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
 	records, err := reader.ReadAll()
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read CSV"})
-		return
+		return nil, nil, fmt.Errorf("failed to read CSV: %w", err)
 	}
 
 	if len(records) < 2 {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "CSV file is empty or has no data"})
-		return
+		return nil, nil, fmt.Errorf("CSV file is empty or has no data")
 	}
 
 	headers := records[0]
+	dataRows := records[1:]
 	var importedCount int
 	var errors []string
 
-	for i, record := range records[1:] {
+	for i, record := range dataRows {
+		if progress != nil {
+			progress(i+1, len(dataRows), importedCount)
+		}
 		if len(record) != len(headers) {
 			errors = append(errors, fmt.Sprintf("Row %d: Column count mismatch", i+2))
 			continue
@@ -948,10 +1252,7 @@ func ImportProductsCSV(c *gin.Context) {
 		importedCount++
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"imported": importedCount,
-		"errors":   errors,
-	})
+	return map[string]interface{}{"imported": importedCount}, errors, nil
 }
 
 func ImportProductsExcel(c *gin.Context) {

@@ -10,19 +10,19 @@
     --card-foreground: 222.2 84% 4.9%;
     --popover: 0 0% 100%;
     --popover-foreground: 222.2 84% 4.9%;
-    --primary: 221 83% 53%;
-    --primary-foreground: 210 40% 98%;
-    --theme-50: 214 100% 97%;
-    --theme-100: 214 95% 93%;
-    --theme-200: 213 97% 87%;
-    --theme-300: 212 96% 78%;
-    --theme-400: 213 94% 68%;
-    --theme-500: 217 91% 60%;
-    --theme-600: 221 83% 53%;
-    --theme-700: 224 76% 48%;
-    --theme-800: 226 71% 40%;
-    --theme-900: 224 64% 33%;
-    --theme-950: 226 57% 21%;
+    --primary: 350 74% 45%;
+    --primary-foreground: 0 0% 100%;
+    --theme-50: 355 100% 97%;
+    --theme-100: 355 93% 94%;
+    --theme-200: 354 90% 88%;
+    --theme-300: 353 86% 78%;
+    --theme-400: 351 80% 64%;
+    --theme-500: 350 74% 53%;
+    --theme-600: 350 74% 45%;
+    --theme-700: 350 76% 38%;
+    --theme-800: 350 72% 31%;
+    --theme-900: 349 66% 25%;
+    --theme-950: 350 80% 14%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
     --muted: 210 40% 96.1%;
@@ -33,7 +33,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 214.3 31.8% 91.4%;
     --input: 214.3 31.8% 91.4%;
-    --ring: 221 83% 53%;
+    --ring: 350 74% 45%;
     --radius: 0.375rem;
     /* Compact app chrome — comfortable on ~21" / 1080p displays */
     --app-header-h: 3rem;
@@ -154,7 +154,7 @@ aside button:focus-visible {
 @layer components {
   /* Compact density for typical ERP page titles on ~21" screens */
   .app-page-title {
-    @apply text-sm font-semibold leading-none tracking-tight text-slate-900 sm:text-base;
+    @apply text-sm font-semibold leading-none tracking-tight text-[#20212b] sm:text-base;
   }
 
   /*
@@ -164,7 +164,7 @@ aside button:focus-visible {
     under the app header.
   */
   .app-page-subheader {
-    @apply sticky top-[var(--app-header-h)] z-20 -mx-3 -mt-3 mb-1.5 flex min-h-[3.5rem] flex-wrap items-center justify-between gap-x-2 gap-y-1 overflow-visible border-b border-slate-200/80 bg-gray-50/95 px-3 py-1.5 backdrop-blur-sm sm:-mx-4 sm:-mt-4 sm:px-4 lg:-mx-5 lg:-mt-5 lg:px-5;
+    @apply sticky top-[var(--app-header-h)] z-20 -mx-3 -mt-3 mb-1.5 flex min-h-[3.5rem] flex-wrap items-center justify-between gap-x-2 gap-y-1 overflow-visible border-b border-[#e4e6ef] bg-[#f6f7fb]/95 px-3 py-1.5 backdrop-blur-sm sm:-mx-4 sm:-mt-4 sm:px-4 lg:-mx-5 lg:-mt-5 lg:px-5;
   }
 
   .app-page-subheader > :first-child {
@@ -217,7 +217,7 @@ aside button:focus-visible {
 
   .table-scroll thead th,
   .table-scroll thead td {
-    background-color: #fff;
+    background-color: #f6f7fb;
     box-shadow: inset 0 -1px 0 hsl(var(--border));
   }
 

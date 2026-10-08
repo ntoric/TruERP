@@ -27,6 +27,10 @@ func main() {
 	controllers.EnsureStoresMigrated()
 	_ = services.GetDefaultStorageService()
 
+	// Register all migration importers with the async job framework so the
+	// /api/v1/migration/jobs endpoints can dispatch by kind.
+	controllers.RegisterMigrationRunners()
+
 	// Start the background scheduler that auto-sends email campaigns when
 	// their scheduled date/time arrives.
 	controllers.StartEmailCampaignScheduler()
@@ -34,6 +38,24 @@ func main() {
 	// Start the background scheduler that auto-emails the daily/periodic
 	// report PDF to configured recipients at the configured time each day.
 	controllers.StartDailyReportEmailScheduler()
+
+	// Start the background scheduler that runs the nightly database
+	// maintenance (dead-tuple / bloat cleanup) at the configured IST time
+	// when enabled in Developer Settings.
+	controllers.StartDBMaintenanceScheduler()
+
+	// Start the background scheduler that produces database backups on the
+	// configured schedule and uploads them to the configured destination.
+	controllers.StartDBBackupScheduler()
+
+	// Start the background scheduler that rolls the daily closing-stock
+	// snapshots forward (and catches up days missed while the server was down).
+	controllers.StartStockSnapshotScheduler()
+
+	// Start the background cron that recalculates the materialized daily
+	// profit rows every 2 minutes for users who enabled asynchronous
+	// daily-profit updates in Developer Settings, plus priority refresh jobs.
+	controllers.StartDailyProfitScheduler()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()

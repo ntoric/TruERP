@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import SummaryStat from '@/components/widgets/SummaryStat'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
@@ -20,8 +21,8 @@ import {
   buildDailyReportShareText,
   buildPeriodReportShareText,
   buildPeriodicReportQuery,
-  dailyReportSections,
   dailyReportSummaryHelp,
+  visibleMetricRows,
   downloadDailyReportJson,
   downloadDailyReportPdf,
   downloadPeriodReportJson,
@@ -182,7 +183,7 @@ function PaymentsByMethodTable({ report }: { report: DailyReport }) {
         <TermHelp
           label="Payments by method"
           hideLabel
-          help="Money received and paid for each payment method in this period. Cash, UPI, Card, Bank Transfer, and Cheque are always listed."
+          help="Money received for each payment method in this period. Cash, UPI, Card, Bank Transfer, and Cheque are always listed."
         />
       </div>
       <div className="table-scroll">
@@ -191,7 +192,6 @@ function PaymentsByMethodTable({ report }: { report: DailyReport }) {
             <tr>
               <th className="px-4 py-3 font-medium">Method</th>
               <th className="px-4 py-3 font-medium text-right">Received</th>
-              <th className="px-4 py-3 font-medium text-right">Paid</th>
             </tr>
           </thead>
           <tbody>
@@ -219,12 +219,6 @@ function PaymentsByMethodTable({ report }: { report: DailyReport }) {
                     </p>
                     <p className="text-xs text-gray-500">{row.in.count} txn</p>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <p className="font-semibold text-amber-800">
-                      {formatCurrency(row.out.total_amount)}
-                    </p>
-                    <p className="text-xs text-gray-500">{row.out.count} txn</p>
-                  </td>
                 </tr>
               )
             })}
@@ -235,12 +229,6 @@ function PaymentsByMethodTable({ report }: { report: DailyReport }) {
                   {formatCurrency(report.payments_in.total_amount)}
                 </p>
                 <p className="text-xs text-blue-800">{report.payments_in.count} txn</p>
-              </td>
-              <td className="px-4 py-3 text-right">
-                <p className="font-semibold text-amber-900">
-                  {formatCurrency(report.payments_out.total_amount)}
-                </p>
-                <p className="text-xs text-blue-800">{report.payments_out.count} txn</p>
               </td>
             </tr>
           </tbody>
@@ -417,116 +405,48 @@ function ReportSummaryBody({
   return (
     <>
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <div className="rounded-lg border bg-green-50 p-4">
-          <div className="flex items-center gap-2 text-green-800">
-            <TrendingUp className="h-4 w-4" />
-            <span className="text-sm font-medium">Sales</span>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-green-900">
-            {formatCurrency(report.sales.total_amount)}
-          </p>
-          <p className="text-xs text-green-700">{report.sales.count} invoices</p>
-        </div>
-        <div className="rounded-lg border bg-orange-50 p-4">
-          <div className="flex items-center gap-2 text-orange-800">
-            <TrendingDown className="h-4 w-4" />
-            <span className="text-sm font-medium">Purchase expense</span>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-orange-900">
-            {formatCurrency(report.purchases.total_amount)}
-          </p>
-          <p className="text-xs text-orange-700">
-            {report.purchases.count} bills · full invoice total
-          </p>
-        </div>
-        <div className="rounded-lg border bg-amber-50 p-4">
-          <div className="flex items-center gap-2 text-amber-800">
-            <TrendingDown className="h-4 w-4" />
-            <span className="text-sm font-medium">Payment out</span>
-          </div>
-          <p className="mt-2 text-2xl font-bold text-amber-900">
-            {formatCurrency(report.payments_out.total_amount)}
-          </p>
-          <p className="text-xs text-amber-700">
-            {report.payments_out.count} payments · AP{' '}
-            {formatCurrency(report.accounts_payable?.total_amount || 0)}
-          </p>
-        </div>
-        <div
-          className={cn(
-            'rounded-lg border p-4',
-            (report.daily_profit ?? 0) >= 0 ? 'bg-emerald-50' : 'bg-red-50'
-          )}
-        >
-          <div
-            className={cn(
-              'flex items-center gap-2',
-              (report.daily_profit ?? 0) >= 0 ? 'text-emerald-800' : 'text-red-800'
-            )}
-          >
-            <CircleDollarSign className="h-4 w-4" />
-            <span className="text-sm font-medium">{profitLabel}</span>
-          </div>
-          <p
-            className={cn(
-              'mt-2 text-2xl font-bold',
-              (report.daily_profit ?? 0) >= 0 ? 'text-emerald-900' : 'text-red-900'
-            )}
-          >
-            {formatCurrency(report.daily_profit ?? 0)}
-          </p>
-          <p className="text-xs text-gray-600">Sales − purchases − expenses ± returns</p>
-        </div>
-        <div
-          className={cn(
-            'rounded-lg border p-4',
-            (report.product_profit ?? 0) >= 0 ? 'bg-teal-50' : 'bg-red-50'
-          )}
-        >
-          <div
-            className={cn(
-              'flex items-center gap-2',
-              (report.product_profit ?? 0) >= 0 ? 'text-teal-800' : 'text-red-800'
-            )}
-          >
-            <Package className="h-4 w-4" />
-            <span className="text-sm font-medium">Product profit</span>
-          </div>
-          <p
-            className={cn(
-              'mt-2 text-2xl font-bold',
-              (report.product_profit ?? 0) >= 0 ? 'text-teal-900' : 'text-red-900'
-            )}
-          >
-            {formatCurrency(report.product_profit ?? 0)}
-          </p>
-          <p className="text-xs text-gray-600">Sale value − purchase cost on items sold</p>
-        </div>
-        <div
-          className={cn(
-            'rounded-lg border p-4',
-            report.net_cash_flow >= 0 ? 'bg-blue-50' : 'bg-red-50'
-          )}
-        >
-          <div
-            className={cn(
-              'flex items-center gap-2',
-              report.net_cash_flow >= 0 ? 'text-blue-800' : 'text-red-800'
-            )}
-          >
-            <Wallet className="h-4 w-4" />
-            <span className="text-sm font-medium">Net cash flow</span>
-          </div>
-          <p
-            className={cn(
-              'mt-2 text-2xl font-bold',
-              report.net_cash_flow >= 0 ? 'text-blue-900' : 'text-red-900'
-            )}
-          >
-            {formatCurrency(report.net_cash_flow)}
-          </p>
-          <p className="text-xs text-gray-600">Payments in − out − expenses</p>
-        </div>
+        <SummaryStat
+          tone="brand"
+          icon={TrendingUp}
+          label="Sales"
+          value={formatCurrency(report.sales.total_amount)}
+          hint={`${report.sales.count} invoices`}
+        />
+        <SummaryStat
+          tone="warning"
+          icon={TrendingDown}
+          label="Purchase expense"
+          value={formatCurrency(report.purchases.total_amount)}
+          hint={`${report.purchases.count} bills · full invoice total`}
+        />
+        <SummaryStat
+          tone="warning"
+          icon={TrendingDown}
+          label="Payment out"
+          value={formatCurrency(report.payments_out.total_amount)}
+          hint={`${report.payments_out.count} payments · AP ${formatCurrency(report.accounts_payable?.total_amount || 0)}`}
+        />
+        <SummaryStat
+          tone={(report.daily_profit ?? 0) >= 0 ? 'success' : 'danger'}
+          icon={CircleDollarSign}
+          label={profitLabel}
+          value={formatCurrency(report.daily_profit ?? 0)}
+          hint="Sales − expenses − returns/notes"
+        />
+        <SummaryStat
+          tone={(report.product_profit ?? 0) >= 0 ? 'success' : 'danger'}
+          icon={Package}
+          label="Product profit"
+          value={formatCurrency(report.product_profit ?? 0)}
+          hint="Sale value − purchase cost on items sold"
+        />
+        <SummaryStat
+          tone={report.net_cash_flow >= 0 ? 'default' : 'danger'}
+          icon={Wallet}
+          label="Net cash flow"
+          value={formatCurrency(report.net_cash_flow)}
+          hint="Payments in − out − expenses − profit distributions"
+        />
       </div>
 
       <div className="table-scroll rounded-lg border">
@@ -539,7 +459,7 @@ function ReportSummaryBody({
             </tr>
           </thead>
           <tbody>
-            {dailyReportSections.map(({ key, label, help }) => {
+            {visibleMetricRows(report).map(({ key, label, help }) => {
               const metric = report[key] as DailyReport['sales']
               return (
                 <tr key={key} className="border-t">
@@ -633,11 +553,13 @@ function ReportSummaryBody({
       <LoyaltySummaryTable report={report} />
 
       <p className="mt-4 text-xs text-gray-500">
-        Period profit = sales − purchases − expenses ± returns/notes (accrual). Product profit =
+        Period profit = sales − expenses − sales returns/credit notes (accrual). Product profit =
         taxable sale value − product purchase cost on invoice lines, net of sales returns and credit
         notes. Purchase expense = full bill total; Payment out = amount paid; Accounts payable =
-        unpaid balance. A separate Payments by method table lists Cash, UPI, Card, Bank Transfer,
-        and Cheque received vs paid. Cancelled documents are excluded from counts.
+        unpaid balance. Profit distributions are paid out to partners and reduce cash/bank and net
+        cash flow, but are not expenses and do not reduce period profit. A separate Payments by
+        method table lists Cash, UPI, Card, Bank Transfer, and Cheque received. Cancelled
+        documents are excluded from counts.
       </p>
     </>
   )
@@ -1078,9 +1000,29 @@ export default function DailyReportPage() {
           <div>
             <h1 className="app-page-title">Business Reports</h1>
           </div>
-          <Link href="/reports" className="text-sm font-medium text-blue-600 hover:underline">
-            Analytics reports
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/reports/profit-loss"
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Profit &amp; loss
+            </Link>
+            <Link
+              href="/reports/billwise-profit"
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Billwise profit
+            </Link>
+            <Link
+              href="/reports/stock"
+              className="text-sm font-medium text-blue-600 hover:underline"
+            >
+              Stock report
+            </Link>
+            <Link href="/reports" className="text-sm font-medium text-blue-600 hover:underline">
+              Analytics reports
+            </Link>
+          </div>
         </div>
 
         <Tabs defaultValue="daily" className="space-y-4">

@@ -29,14 +29,14 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { Plus, Pencil, Trash2, FileText, Power, MoreVertical, Download } from 'lucide-react'
+import { Plus, Pencil, Trash2, FileText, Power, MoreVertical, Download, Search } from 'lucide-react'
 import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
 import { Checkbox } from '@/components/ui/checkbox'
 import { notifyError, notifySuccess } from '@/lib/notify'
 import { FieldError } from '@/components/ui/field-error'
 import { useFormErrors } from '@/hooks/useFormErrors'
-import { cn, formatDate } from '@/lib/utils'
-import { usePagination } from '@/hooks/usePagination'
+import { asArray, cn, formatDate } from '@/lib/utils'
+import { DEFAULT_PAGE_SIZE } from '@/hooks/usePagination'
 import PaginationControls from '@/components/ui/pagination-controls'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import PageHeaderActions from '@/components/layout/PageHeaderActions'
@@ -69,17 +69,45 @@ export default function CategoriesPage() {
   const [selectedCategories, setSelectedCategories] = useState<Set<string>>(new Set())
   const [formData, setFormData] = useState({ name: '', description: '', is_active: true })
 
+  const [searchQuery, setSearchQuery] = useState<string>('')
+  const [debouncedSearch, setDebouncedSearch] = useState<string>('')
+
+  const [page, setPage] = useState(1)
+  const [total, setTotal] = useState(0)
+  const pageSize = DEFAULT_PAGE_SIZE
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
   useEffect(() => {
     if (!authLoading && user) fetchCategories()
-  }, [authLoading, user])
-  useEffect(() => { if (showDraftsModal && user) fetchDrafts() }, [showDraftsModal, user])
+  }, [authLoading, user, page, debouncedSearch])
 
-  const { page, setPage, totalPages, totalItems, paginatedItems, pageSize } = usePagination(categories)
+  // Debounce the search box so each keystroke doesn't hit the API.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim())
+      setPage(1)
+      setSelectedCategories(new Set())
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [searchQuery])
+  useEffect(() => { if (showDraftsModal && user) fetchDrafts() }, [showDraftsModal, user])
 
   const fetchCategories = async () => {
     try {
-      const res = await apiFetch('/categories')
-      if (res.ok) setCategories(await res.json())
+      const params = new URLSearchParams({ page: String(page), per_page: String(pageSize) })
+      if (debouncedSearch) params.append('search', debouncedSearch)
+      const res = await apiFetch(`/categories?${params}`)
+      if (res.ok) {
+        const data = await res.json()
+        // The current page may no longer exist after deletions.
+        const maxPage = Math.max(1, Math.ceil((data.total ?? 0) / pageSize))
+        if (page > maxPage) {
+          setPage(maxPage)
+          return
+        }
+        setCategories(asArray<Category>(data.categories))
+        setTotal(data.total ?? 0)
+      }
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
@@ -221,10 +249,16 @@ export default function CategoriesPage() {
   }
 
   const handleExport = async () => {
+    // The paginated fetch only holds the current page; exports need every row.
+    let allCategories: Category[] = []
+    try {
+      const res = await apiFetch('/categories')
+      if (res.ok) allCategories = asArray<Category>(await res.json())
+    } catch (err) { console.error(err) }
     const exportList =
       selectedCategories.size > 0
-        ? categories.filter((cat) => selectedCategories.has(cat.id))
-        : categories
+        ? allCategories.filter((cat) => selectedCategories.has(cat.id))
+        : allCategories
     if (exportList.length === 0) {
       notifyError('No categories to export')
       return
@@ -361,6 +395,17 @@ export default function CategoriesPage() {
             </div>
           )}
           <CardContent className="p-0">
+            <div className="p-4 border-b">
+              <div className="relative max-w-sm">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Search categories..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+            </div>
             <Table>
               <TableHeader>
                 <TableRow>
@@ -379,7 +424,7 @@ export default function CategoriesPage() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {paginatedItems.map((cat) => (
+                {categories.map((cat) => (
                   <TableRow key={cat.id}>
                     <TableCell>
                       <Checkbox
@@ -433,9 +478,9 @@ export default function CategoriesPage() {
             <PaginationControls
               page={page}
               totalPages={totalPages}
-              totalItems={totalItems}
+              totalItems={total}
               pageSize={pageSize}
-              onPageChange={setPage}
+              onPageChange={(p) => { setPage(p); setSelectedCategories(new Set()) }}
             />
           </CardContent>
         </Card>

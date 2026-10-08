@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"fmt"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 	"truerp/models"
@@ -10,13 +12,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 func GetPayments(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
+	search := strings.TrimSpace(c.Query("search"))
 
-	var payments []models.Payment
-	query := utils.DB.Where("user_id = ?", userID).Preload("Party").Preload("Invoice")
+	query := utils.DB.Model(&models.Payment{}).Where("user_id = ?", userID)
 
 	if invoiceID := c.Query("invoice_id"); invoiceID != "" {
 		query = query.Where("invoice_id = ?", invoiceID)
@@ -24,8 +27,61 @@ func GetPayments(c *gin.Context) {
 	if partyID := c.Query("party_id"); partyID != "" {
 		query = query.Where("party_id = ?", partyID)
 	}
+	if mode := c.Query("mode"); mode != "" {
+		query = query.Where("mode = ?", mode)
+	}
+	// Day-inclusive range: payments.date is a timestamp.
+	if from := c.Query("from"); from != "" {
+		query = query.Where(utils.SQLDateGTE("payments.date"), from)
+	}
+	if to := c.Query("to"); to != "" {
+		query = query.Where(utils.SQLDateLTE("payments.date"), to)
+	}
+	if search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where(
+			"LOWER(payments.payment_in_number) LIKE ? OR LOWER(payments.reference) LIKE ? OR LOWER(payments.notes) LIKE ? OR payments.party_id IN (SELECT id FROM parties WHERE LOWER(name) LIKE ?)",
+			like, like, like, like,
+		)
+	}
+	query = query.Order("payments.updated_at DESC")
 
-	if err := query.Order("updated_at DESC").Find(&payments).Error; err != nil {
+	payments := make([]models.Payment, 0)
+
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy plain array.
+	if c.Query("page") != "" || c.Query("per_page") != "" {
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		var total int64
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payments"})
+			return
+		}
+
+		pageQuery := query.Preload("Party").Preload("Invoice")
+		if perPage > 0 {
+			pageQuery = pageQuery.Limit(perPage).Offset((page - 1) * perPage)
+		}
+		if err := pageQuery.Find(&payments).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payments"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"payments": payments,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
+
+	if err := query.Preload("Party").Preload("Invoice").Find(&payments).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch payments"})
 		return
 	}
@@ -76,6 +132,10 @@ func CreatePayment(c *gin.Context) {
 
 	// Calculate net amount (amount received minus discount)
 	netAmount := input.AmountReceived - input.PaymentInDiscount
+	if netAmount <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Amount received must be greater than the discount"})
+		return
+	}
 
 	payment := models.Payment{
 		ID:                uuid.New(),
@@ -85,40 +145,81 @@ func CreatePayment(c *gin.Context) {
 		AmountReceived:    input.AmountReceived,
 		PaymentInDiscount: input.PaymentInDiscount,
 		PaymentInNumber:   paymentNumber,
-		Mode:              input.Mode,
+		Mode:              normalizePaymentMethod(input.Mode),
 		Date:              input.Date,
 		Reference:         input.Reference,
 		Notes:             input.Notes,
 	}
 
-	if err := utils.DB.Create(&payment).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create payment"})
-		return
-	}
-
-	if err := postStandalonePaymentInAccounting(utils.DB, userID, &payment, netAmount); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Payment saved but failed to post to accounting"})
-		return
-	}
-
-	// Update invoice if provided
-	if input.InvoiceID != nil {
-		var invoice models.Invoice
-		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *input.InvoiceID).First(&invoice).Error; err == nil {
-			newPaid := invoice.AmountPaid + netAmount
-			status := invoice.Status
-			if newPaid >= invoice.TotalAmount {
-				status = "paid"
-			}
-			utils.DB.Model(&invoice).Updates(map[string]interface{}{
-				"amount_paid": newPaid,
-				"status":      status,
-			})
+	// Load the linked invoice up front — invoice edits locate payment-in cash
+	// transactions by the invoice number, so the cash row must carry it. An
+	// unknown or mismatched invoice must fail loudly: saving the payment
+	// anyway would leave it looking linked while the invoice's paid amount
+	// and status never update.
+	var linkedInvoice models.Invoice
+	if input.InvoiceID != nil && *input.InvoiceID != uuid.Nil {
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *input.InvoiceID).First(&linkedInvoice).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid invoice"})
+			return
+		}
+		if linkedInvoice.PartyID != input.PartyID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invoice does not belong to the selected party"})
+			return
 		}
 	}
 
-	// Update party balance
-	utils.DB.Model(&party).Update("balance", party.Balance-netAmount)
+	// Resolve the destination account up front. Initial-investment payments
+	// settle against owner's equity and never touch cash or bank.
+	var accountID *uuid.UUID
+	if !isInitialInvestmentPayment(payment.Mode) && netAmount > 0 {
+		resolved, err := resolveBankAccountForPaymentMode(userID, payment.Mode, nil)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
+			return
+		}
+		accountID = resolved
+	}
+
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&payment).Error; err != nil {
+			return err
+		}
+
+		if err := postStandalonePaymentInAccounting(tx, userID, &payment, netAmount); err != nil {
+			return err
+		}
+
+		// Record the cash/bank movement so the payment in shows in Cash &
+		// Bank.
+		if !isInitialInvestmentPayment(payment.Mode) && netAmount > 0 {
+			cashRef := paymentNumber
+			desc := fmt.Sprintf("Payment in %s", paymentNumber)
+			if linkedInvoice.ID != uuid.Nil {
+				cashRef = linkedInvoice.InvoiceNumber
+				desc = fmt.Sprintf("Payment in %s for invoice %s", paymentNumber, linkedInvoice.InvoiceNumber)
+			}
+			if err := recordPaymentCashTxn(tx, userID, accountID, "in", netAmount, input.Date, cashRef, desc); err != nil {
+				return err
+			}
+		}
+
+		// Update invoice if provided
+		if linkedInvoice.ID != uuid.Nil {
+			newPaid := linkedInvoice.AmountPaid + netAmount
+			if err := tx.Model(&linkedInvoice).Updates(map[string]interface{}{
+				"amount_paid": newPaid,
+				"status":      invoiceStatusForPaidAmount(linkedInvoice, newPaid),
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Update party balance
+		return tx.Model(&party).Update("balance", party.Balance-netAmount).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create payment"})
+		return
+	}
 
 	// Log payment creation
 	CreateAuditLog(
@@ -132,11 +233,11 @@ func CreatePayment(c *gin.Context) {
 		c.ClientIP(),
 		c.GetHeader("User-Agent"),
 		map[string]interface{}{
-			"party_id":    input.PartyID,
-			"party_name":  party.Name,
-			"amount":      netAmount,
-			"mode":        input.Mode,
-			"invoice_id":  input.InvoiceID,
+			"party_id":   input.PartyID,
+			"party_name": party.Name,
+			"amount":     netAmount,
+			"mode":       input.Mode,
+			"invoice_id": input.InvoiceID,
 		},
 		"success",
 		"",
@@ -162,32 +263,64 @@ func DeletePayment(c *gin.Context) {
 	// Calculate net amount (amount received minus discount)
 	netAmount := payment.AmountReceived - payment.PaymentInDiscount
 
-	// Reverse invoice payment
+	var linkedInvoice models.Invoice
 	if payment.InvoiceID != nil {
-		var invoice models.Invoice
-		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *payment.InvoiceID).First(&invoice).Error; err == nil {
-			newPaid := invoice.AmountPaid - netAmount
+		utils.DB.Where("user_id = ? AND id = ?", userID, *payment.InvoiceID).First(&linkedInvoice)
+	}
+
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		// Reverse the standalone journal and the linked cash/bank ledger row.
+		if err := reverseAccountingByRef(tx, userID, "payment_in_record", payment.ID); err != nil {
+			return err
+		}
+		txns, err := findPaymentCashTransactions(tx, userID, "in", payment.PaymentInNumber)
+		if err != nil {
+			return err
+		}
+		if len(txns) == 0 && linkedInvoice.ID != uuid.Nil {
+			// Payments created at sale time write the cash row with the
+			// "Sales invoice <n>" convention instead of the payment number.
+			found, ferr := findInvoiceCashTransactions(tx, userID, linkedInvoice.InvoiceNumber)
+			if ferr != nil {
+				return ferr
+			}
+			for _, txn := range found {
+				if math.Abs(txn.Amount-netAmount) < 0.01 {
+					txns = []models.CashTransaction{txn}
+					break
+				}
+			}
+		}
+		for _, txn := range txns {
+			if err := reverseCashAddTransaction(tx, userID, txn); err != nil {
+				return err
+			}
+		}
+
+		// Reverse invoice payment
+		if linkedInvoice.ID != uuid.Nil {
+			newPaid := linkedInvoice.AmountPaid - netAmount
 			if newPaid < 0 {
 				newPaid = 0
 			}
-			status := "sent"
-			if newPaid <= 0 {
-				status = "sent"
-			}
-			utils.DB.Model(&invoice).Updates(map[string]interface{}{
+			if err := tx.Model(&linkedInvoice).Updates(map[string]interface{}{
 				"amount_paid": newPaid,
-				"status":      status,
-			})
+				"status":      invoiceStatusForPaidAmount(linkedInvoice, newPaid),
+			}).Error; err != nil {
+				return err
+			}
 		}
-	}
 
-	// Reverse party balance
-	var party models.Party
-	if err := utils.DB.Where("user_id = ? AND id = ?", userID, payment.PartyID).First(&party).Error; err == nil {
-		utils.DB.Model(&party).Update("balance", party.Balance+netAmount)
-	}
+		// Reverse party balance
+		var party models.Party
+		if err := tx.Where("user_id = ? AND id = ?", userID, payment.PartyID).First(&party).Error; err == nil {
+			if err := tx.Model(&party).Update("balance", party.Balance+netAmount).Error; err != nil {
+				return err
+			}
+		}
 
-	if err := utils.DB.Delete(&payment).Error; err != nil {
+		return tx.Delete(&payment).Error
+	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete payment"})
 		return
 	}

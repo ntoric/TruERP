@@ -1,20 +1,46 @@
 package controllers
 
 import (
-	"truerp/models"
-	"truerp/utils"
 	"encoding/csv"
 	"fmt"
 	"math"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"truerp/models"
+	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/tealeg/xlsx/v3"
 	"gorm.io/gorm"
 )
+
+// fetchWarehouseNames returns a map of warehouse ID to name for the given
+// outlet IDs, deduplicating them before issuing the query.
+func fetchWarehouseNames(outletIDs []uuid.UUID) map[uuid.UUID]string {
+	warehouseMap := make(map[uuid.UUID]string)
+	seen := make(map[uuid.UUID]struct{}, len(outletIDs))
+	uniqueIDs := make([]uuid.UUID, 0, len(outletIDs))
+	for _, id := range outletIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return warehouseMap
+	}
+	var warehouses []models.Warehouse
+	utils.DB.Where("id IN ?", uniqueIDs).Find(&warehouses)
+	for _, wh := range warehouses {
+		warehouseMap[wh.ID] = wh.Name
+	}
+	return warehouseMap
+}
 
 type StockBalance struct {
 	ProductID   uuid.UUID `json:"product_id"`
@@ -34,7 +60,7 @@ func GetStockBalance(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetStockBalance - UserID: %s, OutletID: %s\n", userID, outletID)
 
 	var stocks []models.InventoryStock
-	query := utils.DB.Where("user_id = ?", userID).Preload("Product")
+	query := utils.DB.Where("user_id = ?", userID)
 
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
@@ -48,18 +74,29 @@ func GetStockBalance(c *gin.Context) {
 
 	fmt.Printf("[DEBUG] GetStockBalance - Found %d stock rows (before consolidation)\n", len(stocks))
 
-	// Fetch outlet names
+	// Fetch referenced products and outlet names with deduped IDs.
+	productIDSet := make(map[uuid.UUID]struct{})
 	var outletIDs []uuid.UUID
 	for _, stock := range stocks {
+		productIDSet[stock.ProductID] = struct{}{}
 		outletIDs = append(outletIDs, stock.OutletID)
 	}
-	var warehouses []models.Warehouse
-	if len(outletIDs) > 0 {
-		utils.DB.Where("id IN ?", outletIDs).Find(&warehouses)
-	}
-	warehouseMap := make(map[uuid.UUID]string)
-	for _, wh := range warehouses {
-		warehouseMap[wh.ID] = wh.Name
+	warehouseMap := fetchWarehouseNames(outletIDs)
+
+	productMap := make(map[uuid.UUID]models.Product, len(productIDSet))
+	if len(productIDSet) > 0 {
+		productIDs := make([]uuid.UUID, 0, len(productIDSet))
+		for id := range productIDSet {
+			productIDs = append(productIDs, id)
+		}
+		var products []models.Product
+		if err := utils.DB.Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch stock balance"})
+			return
+		}
+		for _, p := range products {
+			productMap[p.ID] = p
+		}
 	}
 
 	// Consolidate batches into one row per product + outlet.
@@ -81,8 +118,8 @@ func GetStockBalance(c *gin.Context) {
 		}
 		balanceMap[key] = &StockBalance{
 			ProductID:   stock.ProductID,
-			ProductName: stock.Product.Name,
-			SKU:         stock.Product.SKU,
+			ProductName: productMap[stock.ProductID].Name,
+			SKU:         productMap[stock.ProductID].SKU,
 			StockQty:    stock.Quantity,
 			CostPrice:   stock.AverageCost,
 			Value:       lineValue,
@@ -96,8 +133,111 @@ func GetStockBalance(c *gin.Context) {
 		balances = append(balances, *balance)
 	}
 
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		needle := strings.ToLower(search)
+		filtered := balances[:0]
+		for _, balance := range balances {
+			if strings.Contains(strings.ToLower(balance.ProductName), needle) ||
+				strings.Contains(strings.ToLower(balance.SKU), needle) {
+				filtered = append(filtered, balance)
+			}
+		}
+		balances = filtered
+	}
+
+	sort.Slice(balances, func(i, j int) bool {
+		if balances[i].ProductName != balances[j].ProductName {
+			return balances[i].ProductName < balances[j].ProductName
+		}
+		return balances[i].OutletName < balances[j].OutletName
+	})
+
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy {data: [...]} shape.
+	paginated := c.Query("page") != "" || c.Query("per_page") != ""
+	if paginated {
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		total := len(balances)
+		if perPage > 0 {
+			start := (page - 1) * perPage
+			if start >= total {
+				balances = balances[:0]
+			} else {
+				end := start + perPage
+				if end > total {
+					end = total
+				}
+				balances = balances[start:end]
+			}
+		}
+
+		fmt.Printf("[DEBUG] GetStockBalance - Returning %d of %d consolidated balances\n", len(balances), total)
+		c.JSON(http.StatusOK, gin.H{
+			"data":     balances,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
+
 	fmt.Printf("[DEBUG] GetStockBalance - Returning %d consolidated balances\n", len(balances))
 	c.JSON(http.StatusOK, gin.H{"data": balances})
+}
+
+// GetInventoryStats returns the aggregate figures behind the inventory stat
+// widgets: stock value, units, distinct products/outlets, and the count of
+// consolidated low-stock alerts (product + outlet pairs at or below min_stock).
+func GetInventoryStats(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	var stats struct {
+		TotalValue   float64 `json:"total_value"`
+		TotalQty     float64 `json:"total_qty"`
+		ProductCount int64   `json:"product_count"`
+		OutletCount  int64   `json:"outlet_count"`
+	}
+	if err := utils.DB.Raw(`
+		SELECT COALESCE(SUM(quantity * average_cost), 0) AS total_value,
+			COALESCE(SUM(quantity), 0) AS total_qty,
+			COUNT(DISTINCT product_id) AS product_count,
+			COUNT(DISTINCT outlet_id) AS outlet_count
+		FROM inventory_stocks WHERE user_id = ?
+	`, userID).Scan(&stats).Error; err != nil {
+		fmt.Printf("[DEBUG] GetInventoryStats - DB error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch inventory stats"})
+		return
+	}
+
+	var lowStockCount int64
+	// Same consolidation rule as GetLowStockAlerts: one row per product + outlet.
+	if err := utils.DB.Raw(`
+		SELECT COUNT(*) FROM (
+			SELECT p.id
+			FROM products p
+			INNER JOIN inventory_stocks s ON p.id = s.product_id
+			WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.low_stock_alert = true
+			GROUP BY p.id, p.min_stock, s.outlet_id
+			HAVING SUM(s.quantity) <= p.min_stock
+		) consolidated
+	`, userID).Scan(&lowStockCount).Error; err != nil {
+		fmt.Printf("[DEBUG] GetInventoryStats - low stock count error: %v\n", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch inventory stats"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"total_value":     stats.TotalValue,
+		"total_qty":       stats.TotalQty,
+		"product_count":   stats.ProductCount,
+		"outlet_count":    stats.OutletCount,
+		"low_stock_count": lowStockCount,
+	})
 }
 
 func GetStockEntries(c *gin.Context) {
@@ -112,7 +252,7 @@ func GetStockEntries(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetStockEntries - UserID: %s, ProductID: %s, EntryType: %s, OutletID: %s\n", userID, productID, entryType, outletID)
 
 	var entries []models.StockEntry
-	query := utils.DB.Where("user_id = ?", userID).Preload("Product")
+	query := utils.DB.Model(&models.StockEntry{}).Where("user_id = ?", userID)
 
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
@@ -135,13 +275,45 @@ func GetStockEntries(c *gin.Context) {
 	}
 
 	if fromDate != "" {
-		query = query.Where("entry_date >= ?", fromDate)
+		query = query.Where(utils.SQLDateGTE("entry_date"), fromDate)
 	}
 	if toDate != "" {
-		query = query.Where("entry_date <= ?", toDate)
+		query = query.Where(utils.SQLDateLTE("entry_date"), toDate)
 	}
 
-	if err := query.Order("entry_date DESC").Find(&entries).Error; err != nil {
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where(
+			"LOWER(stock_entries.item_name) LIKE ? OR LOWER(stock_entries.item_code) LIKE ? OR LOWER(stock_entries.batch_no) LIKE ? OR stock_entries.product_id IN (SELECT id FROM products WHERE LOWER(name) LIKE ? OR LOWER(sku) LIKE ?)",
+			like, like, like, like, like,
+		)
+	}
+	query = query.Order("entry_date DESC")
+
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy {data: [...]} shape.
+	paginated := c.Query("page") != "" || c.Query("per_page") != ""
+	var total int64
+	page, perPage := 1, 0
+	if paginated {
+		page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ = strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			fmt.Printf("[DEBUG] GetStockEntries - count error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch entries"})
+			return
+		}
+	}
+
+	findQuery := query.Preload("Product")
+	if paginated && perPage > 0 {
+		findQuery = findQuery.Limit(perPage).Offset((page - 1) * perPage)
+	}
+	if err := findQuery.Find(&entries).Error; err != nil {
 		fmt.Printf("[DEBUG] GetStockEntries - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch entries"})
 		return
@@ -154,14 +326,7 @@ func GetStockEntries(c *gin.Context) {
 	for _, entry := range entries {
 		outletIDs = append(outletIDs, entry.OutletID)
 	}
-	var warehouses []models.Warehouse
-	if len(outletIDs) > 0 {
-		utils.DB.Where("id IN ?", outletIDs).Find(&warehouses)
-	}
-	warehouseMap := make(map[uuid.UUID]string)
-	for _, wh := range warehouses {
-		warehouseMap[wh.ID] = wh.Name
-	}
+	warehouseMap := fetchWarehouseNames(outletIDs)
 
 	// Add outlet names to entries
 	type StockEntryWithDetails struct {
@@ -176,6 +341,15 @@ func GetStockEntries(c *gin.Context) {
 		})
 	}
 
+	if paginated {
+		c.JSON(http.StatusOK, gin.H{
+			"data":     entriesWithDetails,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{"data": entriesWithDetails})
 }
 
@@ -424,8 +598,8 @@ func ensureProductForAdhocItem(tx *gorm.DB, userID uuid.UUID, item *models.Purch
 			item.ProductID = &existing.ID
 			item.IsNewItem = false
 			return tx.Model(item).Updates(map[string]interface{}{
-				"product_id":   existing.ID,
-				"is_new_item":  false,
+				"product_id":  existing.ID,
+				"is_new_item": false,
 			}).Error
 		}
 	}
@@ -1008,13 +1182,56 @@ func GetStockTransfers(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetStockTransfers - UserID: %s, Status: %s\n", userID, status)
 
 	var transfers []models.StockTransfer
-	query := utils.DB.Where("user_id = ?", userID).Preload("Items")
+	query := utils.DB.Model(&models.StockTransfer{}).Where("user_id = ?", userID)
 
 	if status != "" {
 		query = query.Where("status = ?", status)
 	}
+	if fromDate := c.Query("from_date"); fromDate != "" {
+		query = query.Where(utils.SQLDateGTE("created_at"), fromDate)
+	}
+	if toDate := c.Query("to_date"); toDate != "" {
+		query = query.Where(utils.SQLDateLTE("created_at"), toDate)
+	}
+	query = query.Order("created_at DESC")
 
-	if err := query.Order("created_at DESC").Find(&transfers).Error; err != nil {
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy plain array.
+	if c.Query("page") != "" || c.Query("per_page") != "" {
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		var total int64
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			fmt.Printf("[DEBUG] GetStockTransfers - count error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transfers"})
+			return
+		}
+
+		pageQuery := query.Preload("Items")
+		if perPage > 0 {
+			pageQuery = pageQuery.Limit(perPage).Offset((page - 1) * perPage)
+		}
+		if err := pageQuery.Find(&transfers).Error; err != nil {
+			fmt.Printf("[DEBUG] GetStockTransfers - DB error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transfers"})
+			return
+		}
+
+		fmt.Printf("[DEBUG] GetStockTransfers - Found %d transfers (total %d)\n", len(transfers), total)
+		c.JSON(http.StatusOK, gin.H{
+			"data":     transfers,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
+
+	if err := query.Preload("Items").Find(&transfers).Error; err != nil {
 		fmt.Printf("[DEBUG] GetStockTransfers - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transfers"})
 		return
@@ -1062,13 +1279,13 @@ func CreateStockTransfer(c *gin.Context) {
 	fmt.Printf("[DEBUG] CreateStockTransfer - UserID: %s, ToOutletID: %s, Items: %d\n", userID, input.ToOutletID, len(input.Items))
 
 	transfer := models.StockTransfer{
-		ID:            uuid.New(),
-		UserID:        userID,
-		FromOutletID:  input.FromOutletID,
-		ToOutletID:    input.ToOutletID,
-		Status:        "draft",
-		TotalItems:    len(input.Items),
-		Notes:         input.Notes,
+		ID:           uuid.New(),
+		UserID:       userID,
+		FromOutletID: input.FromOutletID,
+		ToOutletID:   input.ToOutletID,
+		Status:       "draft",
+		TotalItems:   len(input.Items),
+		Notes:        input.Notes,
 	}
 
 	for _, item := range input.Items {
@@ -1076,10 +1293,10 @@ func CreateStockTransfer(c *gin.Context) {
 		var product models.Product
 		if err := utils.DB.Where("user_id = ? AND id = ?", userID, item.ProductID).First(&product).Error; err == nil {
 			transfer.Items = append(transfer.Items, models.StockTransferItem{
-				ID:        uuid.New(),
+				ID:         uuid.New(),
 				TransferID: transfer.ID,
-				ProductID: item.ProductID,
-				Quantity:  item.Quantity,
+				ProductID:  item.ProductID,
+				Quantity:   item.Quantity,
 			})
 			transfer.TotalQuantity += item.Quantity
 		}
@@ -1168,7 +1385,7 @@ func GetInventoryValuation(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetInventoryValuation - UserID: %s, OutletID: %s\n", userID, outletID)
 
 	var stocks []models.InventoryStock
-	query := utils.DB.Where("user_id = ?", userID).Preload("Product")
+	query := utils.DB.Where("user_id = ?", userID)
 
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
@@ -1194,18 +1411,29 @@ func GetInventoryValuation(c *gin.Context) {
 	var results []ValuationResult
 	var totalValue float64
 
-	// Fetch outlet names
+	// Fetch outlet names and referenced products with deduped IDs.
+	productIDSet := make(map[uuid.UUID]struct{})
 	var outletIDs []uuid.UUID
 	for _, stock := range stocks {
+		productIDSet[stock.ProductID] = struct{}{}
 		outletIDs = append(outletIDs, stock.OutletID)
 	}
-	var warehouses []models.Warehouse
-	if len(outletIDs) > 0 {
-		utils.DB.Where("id IN ?", outletIDs).Find(&warehouses)
-	}
-	warehouseMap := make(map[uuid.UUID]string)
-	for _, wh := range warehouses {
-		warehouseMap[wh.ID] = wh.Name
+	warehouseMap := fetchWarehouseNames(outletIDs)
+
+	productMap := make(map[uuid.UUID]models.Product, len(productIDSet))
+	if len(productIDSet) > 0 {
+		productIDs := make([]uuid.UUID, 0, len(productIDSet))
+		for id := range productIDSet {
+			productIDs = append(productIDs, id)
+		}
+		var products []models.Product
+		if err := utils.DB.Where("id IN ?", productIDs).Find(&products).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch valuation"})
+			return
+		}
+		for _, p := range products {
+			productMap[p.ID] = p
+		}
 	}
 
 	for _, stock := range stocks {
@@ -1213,8 +1441,8 @@ func GetInventoryValuation(c *gin.Context) {
 		totalValue += itemValue
 		results = append(results, ValuationResult{
 			ProductID:   stock.ProductID,
-			ProductName: stock.Product.Name,
-			SKU:         stock.Product.SKU,
+			ProductName: productMap[stock.ProductID].Name,
+			SKU:         productMap[stock.ProductID].SKU,
 			StockQty:    stock.Quantity,
 			CostPrice:   stock.AverageCost,
 			TotalValue:  itemValue,
@@ -1242,7 +1470,7 @@ func GetInventoryStocks(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetInventoryStocks - UserID: %s, ProductID: %s, OutletID: %s\n", userID, productID, outletID)
 
 	var stocks []models.InventoryStock
-	query := utils.DB.Where("user_id = ?", userID).Preload("Product")
+	query := utils.DB.Model(&models.InventoryStock{}).Where("user_id = ?", userID)
 
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
@@ -1263,10 +1491,40 @@ func GetInventoryStocks(c *gin.Context) {
 			query = query.Where("exp_date IS NOT NULL AND exp_date <= ?", cutoff)
 		}
 	}
+	if search := strings.TrimSpace(c.Query("search")); search != "" {
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where(
+			"LOWER(inventory_stocks.batch_no) LIKE ? OR inventory_stocks.product_id IN (SELECT id FROM products WHERE LOWER(name) LIKE ? OR LOWER(sku) LIKE ?)",
+			like, like, like,
+		)
+	}
 
 	query = query.Order("CASE WHEN exp_date IS NULL THEN 1 ELSE 0 END ASC, exp_date ASC, batch_no ASC")
 
-	if err := query.Find(&stocks).Error; err != nil {
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy plain array.
+	paginated := c.Query("page") != "" || c.Query("per_page") != ""
+	var total int64
+	page, perPage := 1, 0
+	if paginated {
+		page, _ = strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ = strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		if err := query.Session(&gorm.Session{}).Count(&total).Error; err != nil {
+			fmt.Printf("[DEBUG] GetInventoryStocks - count error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch inventory stocks"})
+			return
+		}
+	}
+
+	findQuery := query.Preload("Product")
+	if paginated && perPage > 0 {
+		findQuery = findQuery.Limit(perPage).Offset((page - 1) * perPage)
+	}
+	if err := findQuery.Find(&stocks).Error; err != nil {
 		fmt.Printf("[DEBUG] GetInventoryStocks - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch inventory stocks"})
 		return
@@ -1307,14 +1565,7 @@ func GetInventoryStocks(c *gin.Context) {
 	for _, stock := range stocks {
 		outletIDs = append(outletIDs, stock.OutletID)
 	}
-	var warehouses []models.Warehouse
-	if len(outletIDs) > 0 {
-		utils.DB.Where("id IN ?", outletIDs).Find(&warehouses)
-	}
-	warehouseMap := make(map[uuid.UUID]string)
-	for _, wh := range warehouses {
-		warehouseMap[wh.ID] = wh.Name
-	}
+	warehouseMap := fetchWarehouseNames(outletIDs)
 
 	// Add outlet names to stocks
 	type InventoryStockWithOutlet struct {
@@ -1338,6 +1589,15 @@ func GetInventoryStocks(c *gin.Context) {
 		})
 	}
 
+	if paginated {
+		c.JSON(http.StatusOK, gin.H{
+			"data":     stocksWithOutlet,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
 	c.JSON(http.StatusOK, stocksWithOutlet)
 }
 
@@ -1764,7 +2024,7 @@ func GetLowStockAlerts(c *gin.Context) {
 
 	results := make([]LowStockItem, 0)
 	// Consolidate batches per product + outlet (same as GetStockBalance).
-	query := `
+	baseQuery := `
 		SELECT p.id as product_id, p.name as product_name, p.sku, p.min_stock, s.outlet_id,
 			SUM(s.quantity) as current_stock, w.name as outlet_name
 		FROM products p
@@ -1775,7 +2035,46 @@ func GetLowStockAlerts(c *gin.Context) {
 		HAVING SUM(s.quantity) <= p.min_stock
 	`
 
-	if err := utils.DB.Raw(query, userID).Scan(&results).Error; err != nil {
+	// Paginated mode (opt-in via page/per_page); per_page <= 0 returns every
+	// matching row. Unparameterized callers keep the legacy plain array.
+	paginated := c.Query("page") != "" || c.Query("per_page") != ""
+	if paginated {
+		page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+		if page < 1 {
+			page = 1
+		}
+		perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "25"))
+
+		var total int64
+		if err := utils.DB.Raw("SELECT COUNT(*) FROM ("+baseQuery+") consolidated", userID).Scan(&total).Error; err != nil {
+			fmt.Printf("[DEBUG] GetLowStockAlerts - count error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
+			return
+		}
+
+		pageQuery := baseQuery + " ORDER BY product_name ASC, outlet_name ASC"
+		args := []interface{}{userID}
+		if perPage > 0 {
+			pageQuery += " LIMIT ? OFFSET ?"
+			args = append(args, perPage, (page-1)*perPage)
+		}
+		if err := utils.DB.Raw(pageQuery, args...).Scan(&results).Error; err != nil {
+			fmt.Printf("[DEBUG] GetLowStockAlerts - DB error: %v\n", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
+			return
+		}
+
+		fmt.Printf("[DEBUG] GetLowStockAlerts - Found %d of %d low stock alerts\n", len(results), total)
+		c.JSON(http.StatusOK, gin.H{
+			"data":     results,
+			"total":    total,
+			"page":     page,
+			"per_page": perPage,
+		})
+		return
+	}
+
+	if err := utils.DB.Raw(baseQuery, userID).Scan(&results).Error; err != nil {
 		fmt.Printf("[DEBUG] GetLowStockAlerts - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
 		return
@@ -1792,12 +2091,13 @@ func GetInventoryItems(c *gin.Context) {
 	fmt.Printf("[DEBUG] GetInventoryItems - UserID: %s\n", userID)
 
 	type InventoryItem struct {
-		ID              uuid.UUID `json:"id"`
-		Name            string    `json:"name"`
-		SKU             string    `json:"sku"`
-		Type            string    `json:"type"` // "product" or "standalone"
-		IsActive        bool      `json:"is_active"`
-		EnableBatching  bool      `json:"enable_batching"`
+		ID             uuid.UUID `json:"id"`
+		Name           string    `json:"name"`
+		SKU            string    `json:"sku"`
+		Type           string    `json:"type"` // "product" or "standalone"
+		IsActive       bool      `json:"is_active"`
+		EnableBatching bool      `json:"enable_batching"`
+		Unit           string    `json:"unit"`
 	}
 
 	items := make([]InventoryItem, 0)
@@ -1815,6 +2115,7 @@ func GetInventoryItems(c *gin.Context) {
 				Type:           "product",
 				IsActive:       p.IsActive,
 				EnableBatching: p.EnableBatching,
+				Unit:           p.Unit,
 			})
 		}
 	}

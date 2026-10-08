@@ -42,6 +42,7 @@ type developerSettingsInput struct {
 	AWSRegion                 string `json:"aws_region"`
 	SendGridSMSAPIKey         string `json:"sendgrid_sms_api_key"`
 	Timezone                  string `json:"timezone"`
+	AsyncDailyProfit          bool   `json:"async_daily_profit"`
 }
 
 type testEmailInput struct {
@@ -82,6 +83,7 @@ func applyDeveloperSettingsInput(settings *models.DeveloperSettings, input devel
 	settings.AWSAccessKey = input.AWSAccessKey
 	settings.AWSRegion = input.AWSRegion
 	settings.Timezone = input.Timezone
+	settings.AsyncDailyProfit = input.AsyncDailyProfit
 
 	var err error
 	if input.SMTPPassword != "" {
@@ -163,25 +165,26 @@ func applyDeveloperSettingsInput(settings *models.DeveloperSettings, input devel
 func developerSettingsUpdates(input developerSettingsInput) (map[string]interface{}, error) {
 	updates := map[string]interface{}{
 		"email_provider":               input.EmailProvider,
-		"smtp_host":                      input.SMTPHost,
-		"smtp_port":                      input.SMTPPort,
-		"smtp_username":                  input.SMTPUsername,
-		"from_email":                     input.FromEmail,
-		"from_name":                      input.FromName,
-		"mailgun_domain":                 input.MailgunDomain,
-		"whatsapp_provider":              input.WhatsAppProvider,
-		"whatsapp_phone_number_id":       input.WhatsAppPhoneNumberID,
-		"whatsapp_business_account_id":   input.WhatsAppBusinessAccountID,
-		"twilio_account_sid":             input.TwilioAccountSID,
-		"twilio_phone_number":            input.TwilioPhoneNumber,
-		"sms_provider":                   input.SMSProvider,
-		"twilio_sms_account_sid":         input.TwilioSMSAccountSID,
-		"twilio_sms_phone_number":        input.TwilioSMSPhoneNumber,
-		"msg91_sender_id":                input.Msg91SenderID,
-		"textlocal_sender_id":            input.TextLocalSenderID,
-		"aws_access_key":                 input.AWSAccessKey,
-		"aws_region":                     input.AWSRegion,
-		"timezone":                       input.Timezone,
+		"smtp_host":                    input.SMTPHost,
+		"smtp_port":                    input.SMTPPort,
+		"smtp_username":                input.SMTPUsername,
+		"from_email":                   input.FromEmail,
+		"from_name":                    input.FromName,
+		"mailgun_domain":               input.MailgunDomain,
+		"whatsapp_provider":            input.WhatsAppProvider,
+		"whatsapp_phone_number_id":     input.WhatsAppPhoneNumberID,
+		"whatsapp_business_account_id": input.WhatsAppBusinessAccountID,
+		"twilio_account_sid":           input.TwilioAccountSID,
+		"twilio_phone_number":          input.TwilioPhoneNumber,
+		"sms_provider":                 input.SMSProvider,
+		"twilio_sms_account_sid":       input.TwilioSMSAccountSID,
+		"twilio_sms_phone_number":      input.TwilioSMSPhoneNumber,
+		"msg91_sender_id":              input.Msg91SenderID,
+		"textlocal_sender_id":          input.TextLocalSenderID,
+		"aws_access_key":               input.AWSAccessKey,
+		"aws_region":                   input.AWSRegion,
+		"timezone":                     input.Timezone,
+		"async_daily_profit":           input.AsyncDailyProfit,
 	}
 
 	secretFields := []struct {

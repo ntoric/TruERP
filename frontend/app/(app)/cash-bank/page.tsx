@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { apiFetch, useAuth } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
+import SummaryStat from '@/components/widgets/SummaryStat'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -14,7 +15,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
 import { notifyError, notifySuccess } from '@/lib/notify'
-import { usePagination } from '@/hooks/usePagination'
+import { DEFAULT_PAGE_SIZE } from '@/hooks/usePagination'
 import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 import PaginationControls from '@/components/ui/pagination-controls'
 import {
@@ -39,6 +40,7 @@ import {
   ChevronDown,
   ChevronUp,
   Landmark,
+  Banknote,
 } from 'lucide-react'
 import PageHeaderActions from '@/components/layout/PageHeaderActions'
 import { isSuperAdmin } from '@/lib/roles'
@@ -46,6 +48,66 @@ import { isInitialInvestmentMethod } from '@/lib/paymentSplits'
 
 const CASH_IN_HAND_VALUE = 'cash'
 const OWNER_EQUITY_VALUE = 'owner_equity'
+
+type CashBankPeriod = 'all' | 'today' | 'yesterday' | 'week' | 'month' | 'last_month' | 'year' | 'custom'
+
+const PERIOD_OPTIONS: { value: CashBankPeriod; label: string }[] = [
+  { value: 'all', label: 'All Time' },
+  { value: 'today', label: 'Today' },
+  { value: 'yesterday', label: 'Yesterday' },
+  { value: 'week', label: 'This Week' },
+  { value: 'month', label: 'This Month' },
+  { value: 'last_month', label: 'Last Month' },
+  { value: 'year', label: 'This Year' },
+  { value: 'custom', label: 'Custom' },
+]
+
+const toDateInput = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+
+// Preset periods resolve to a concrete [start, end] range; 'all'/'custom' return empty.
+function periodDateRange(period: CashBankPeriod): { start: string; end: string } {
+  const now = new Date()
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayStr = toDateInput(today)
+  switch (period) {
+    case 'today':
+      return { start: todayStr, end: todayStr }
+    case 'yesterday': {
+      const d = new Date(today)
+      d.setDate(d.getDate() - 1)
+      const s = toDateInput(d)
+      return { start: s, end: s }
+    }
+    case 'week': {
+      const day = today.getDay() === 0 ? 7 : today.getDay()
+      const start = new Date(today)
+      start.setDate(start.getDate() - (day - 1))
+      return { start: toDateInput(start), end: todayStr }
+    }
+    case 'month':
+      return { start: toDateInput(new Date(today.getFullYear(), today.getMonth(), 1)), end: todayStr }
+    case 'last_month':
+      return {
+        start: toDateInput(new Date(today.getFullYear(), today.getMonth() - 1, 1)),
+        end: toDateInput(new Date(today.getFullYear(), today.getMonth(), 0)),
+      }
+    case 'year':
+      return { start: toDateInput(new Date(today.getFullYear(), 0, 1)), end: todayStr }
+    default:
+      return { start: '', end: '' }
+  }
+}
+
+const TRANSACTION_TYPE_OPTIONS = [
+  { value: 'add', label: 'Add' },
+  { value: 'reduce', label: 'Reduce' },
+  { value: 'transfer_in', label: 'Transfer In' },
+  { value: 'transfer_out', label: 'Transfer Out' },
+  { value: 'expense', label: 'Expense' },
+  { value: 'payroll', label: 'Payroll' },
+  { value: 'profit_distribution', label: 'Profit Distribution' },
+]
 
 function accountIdForApi(selected: string): string | null {
   if (!selected || selected === CASH_IN_HAND_VALUE || selected === OWNER_EQUITY_VALUE) return null
@@ -85,6 +147,8 @@ interface CashBankSummary {
   bank_accounts: BankAccount[]
   unlinked_count: number
   unlinked_amount: number
+  cash_net_change: number
+  bank_net_change: number
 }
 
 export default function CashBankPage() {
@@ -99,6 +163,9 @@ export default function CashBankPage() {
   const [showTransfer, setShowTransfer] = useState(false)
   const [showAddAccount, setShowAddAccount] = useState(false)
   const [filterUnlinked, setFilterUnlinked] = useState(false)
+  const [filterType, setFilterType] = useState('all')
+  const [filterAccount, setFilterAccount] = useState('all')
+  const [period, setPeriod] = useState<CashBankPeriod>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
   const [addMoneyAccountId, setAddMoneyAccountId] = useState(CASH_IN_HAND_VALUE)
@@ -122,31 +189,107 @@ export default function CashBankPage() {
     setMappingAccounts(next)
   }, [paymentMethodMappings])
 
+  const [page, setPage] = useState(1)
+  const [transactionsTotal, setTransactionsTotal] = useState(0)
+  const [transactionsTotalIn, setTransactionsTotalIn] = useState(0)
+  const [transactionsTotalOut, setTransactionsTotalOut] = useState(0)
+  const pageSize = DEFAULT_PAGE_SIZE
+  const totalPages = Math.max(1, Math.ceil(transactionsTotal / pageSize))
+
   useEffect(() => {
     if (!authLoading && user) {
-      fetchData()
+      fetchSummary()
     }
-  }, [authLoading, user, filterUnlinked, startDate, endDate])
-
-  const { page, setPage, totalPages, totalItems, paginatedItems, resetPage, pageSize } = usePagination(transactions)
+  }, [authLoading, user, startDate, endDate])
 
   useEffect(() => {
-    resetPage()
-  }, [filterUnlinked, startDate, endDate])
+    if (!authLoading && user) {
+      fetchTransactions()
+    }
+  }, [authLoading, user, filterUnlinked, filterType, filterAccount, startDate, endDate, page])
 
-  const fetchData = async () => {
+  useEffect(() => {
+    setPage(1)
+  }, [filterUnlinked, filterType, filterAccount, startDate, endDate])
+
+  const buildTransactionParams = (targetPage: number, perPage: number) => {
+    const params = new URLSearchParams()
+    params.append('unlinked', String(filterUnlinked))
+    if (filterType !== 'all') params.append('transaction_type', filterType)
+    if (filterAccount !== 'all') params.append('account_id', filterAccount)
+    if (startDate) params.append('start_date', startDate)
+    if (endDate) params.append('end_date', endDate)
+    params.append('page', String(targetPage))
+    params.append('per_page', String(perPage))
+    return params
+  }
+
+  const fetchSummary = async () => {
     try {
-      const [summaryRes, transRes] = await Promise.all([
-        apiFetch('/cash-bank/summary'),
-        apiFetch(`/cash-bank/transactions?unlinked=${filterUnlinked}&start_date=${startDate}&end_date=${endDate}`),
-      ])
-      if (summaryRes.ok) setSummary(await summaryRes.json())
-      if (transRes.ok) setTransactions(await transRes.json())
+      const params = new URLSearchParams()
+      if (startDate) params.append('start_date', startDate)
+      if (endDate) params.append('end_date', endDate)
+      const qs = params.toString()
+      const res = await apiFetch(`/cash-bank/summary${qs ? `?${qs}` : ''}`)
+      if (res.ok) setSummary(await res.json())
+    } catch (err) {
+      console.error(err)
+    }
+  }
+
+  const fetchTransactions = async () => {
+    try {
+      const res = await apiFetch(`/cash-bank/transactions?${buildTransactionParams(page, pageSize).toString()}`)
+      if (res.ok) {
+        const data = await res.json()
+        const rows: CashTransaction[] = Array.isArray(data) ? data : data?.transactions ?? []
+        const nextTotal = typeof data?.total === 'number' ? data.total : rows.length
+        // The current page may no longer exist after deletions or filter changes.
+        const maxPage = Math.max(1, Math.ceil(nextTotal / pageSize))
+        if (page > maxPage) {
+          setPage(maxPage)
+          return
+        }
+        const moneyIn = (t: CashTransaction) =>
+          t.transaction_type === 'add' || t.transaction_type === 'transfer_in'
+        setTransactions(rows)
+        setTransactionsTotal(nextTotal)
+        setTransactionsTotalIn(
+          typeof data?.total_in === 'number'
+            ? data.total_in
+            : rows.reduce((sum, t) => sum + (moneyIn(t) ? t.amount : 0), 0)
+        )
+        setTransactionsTotalOut(
+          typeof data?.total_out === 'number'
+            ? data.total_out
+            : rows.reduce((sum, t) => sum + (moneyIn(t) ? 0 : t.amount), 0)
+        )
+      }
     } catch (err) {
       console.error(err)
     } finally {
       setLoading(false)
     }
+  }
+
+  const fetchData = () => {
+    fetchSummary()
+    fetchTransactions()
+  }
+
+  const handlePeriodChange = (next: CashBankPeriod) => {
+    setPeriod(next)
+    if (next === 'custom') return
+    const { start, end } = periodDateRange(next)
+    setStartDate(start)
+    setEndDate(end)
+  }
+
+  // Manual date edits flip the period to custom (or back to all when cleared).
+  const applyDateRange = (start: string, end: string) => {
+    setStartDate(start)
+    setEndDate(end)
+    setPeriod(start || end ? 'custom' : 'all')
   }
 
   const handleAddMoney = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -371,11 +514,22 @@ export default function CashBankPage() {
 
   const handleExport = async () => {
     try {
+      // Export every transaction matching the active filters, not just this page.
+      const res = await apiFetch(
+        `/cash-bank/transactions?${buildTransactionParams(1, 0).toString()}`,
+        { timeoutMs: 30000 }
+      )
+      if (!res.ok) {
+        notifyError('Failed to export transactions')
+        return
+      }
+      const data = await res.json()
+      const exportRows: CashTransaction[] = Array.isArray(data) ? data : data?.transactions ?? []
       await downloadCsv(
         `cash-bank-transactions-${accountingExportDateStamp()}.csv`,
         [
           ['Date', 'Type', 'Account', 'Amount', 'Description', 'Reference', 'Linked'],
-          ...transactions.map((t) => [
+          ...exportRows.map((t) => [
             formatDate(t.date),
             t.transaction_type,
             t.account?.account_name || 'Cash',
@@ -401,6 +555,15 @@ export default function CashBankPage() {
     )
   }
 
+  // In/out totals come from the server and cover the whole filtered set.
+  const filteredTotalIn = transactionsTotalIn
+  const filteredTotalOut = transactionsTotalOut
+  const filteredNetTotal = filteredTotalIn - filteredTotalOut
+  const cashInBank = (summary?.bank_accounts || []).reduce((sum, acc) => sum + (acc.balance || 0), 0)
+  const periodActive = startDate !== '' || endDate !== ''
+  const netChangeInPeriod = (summary?.cash_net_change || 0) + (summary?.bank_net_change || 0)
+  const formatSigned = (v: number) => `${v > 0 ? '+' : ''}${formatCurrency(v)}`
+
   const getTransactionTypeBadge = (type: string) => {
     const variants: Record<string, string> = {
       add: 'bg-green-100 text-green-700',
@@ -409,8 +572,12 @@ export default function CashBankPage() {
       transfer_out: 'bg-orange-100 text-orange-700',
       payroll: 'bg-violet-100 text-violet-700',
       expense: 'bg-amber-100 text-amber-700',
+      profit_distribution: 'bg-teal-100 text-teal-700',
     }
-    return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${variants[type] || 'bg-gray-100 text-gray-700'}`}>{type.replace('_', ' ')}</span>
+    const labels: Record<string, string> = {
+      profit_distribution: 'profit distribution deduction',
+    }
+    return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${variants[type] || 'bg-gray-100 text-gray-700'}`}>{labels[type] || type.replace('_', ' ')}</span>
   }
 
   return (
@@ -421,6 +588,34 @@ export default function CashBankPage() {
             <h1 className="app-page-title">Cash & Bank</h1>
           </div>
           <PageHeaderActions>
+            <Select value={period} onValueChange={(v) => handlePeriodChange(v as CashBankPeriod)}>
+              <SelectTrigger className="w-[140px]" aria-label="Period filter">
+                <SelectValue placeholder="Period" />
+              </SelectTrigger>
+              <SelectContent>
+                {PERIOD_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {period === 'custom' && (
+              <div className="flex items-center gap-2">
+                <Input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => applyDateRange(e.target.value, endDate)}
+                  className="w-auto"
+                  aria-label="Start date"
+                />
+                <Input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => applyDateRange(startDate, e.target.value)}
+                  className="w-auto"
+                  aria-label="End date"
+                />
+              </div>
+            )}
             <Button
               type="button"
               variant={showStats ? 'secondary' : 'outline'}
@@ -657,92 +852,43 @@ export default function CashBankPage() {
 
         {/* Summary Cards — 2 cols until xl so values aren't crushed beside the sidebar */}
         {showStats && (
-        <div id="cash-bank-stats" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5">
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-500">Total Balance</p>
-                  <p className="mt-1 break-words text-xl font-bold tabular-nums text-gray-900 xl:text-2xl">
-                    {formatCurrency(summary?.total_balance || 0)}
-                  </p>
-                </div>
-                <div className="shrink-0 rounded-lg bg-blue-50 p-2.5">
-                  <IndianRupee className="h-5 w-5 text-blue-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-500">Cash in-hand</p>
-                  <p className="mt-1 break-words text-xl font-bold tabular-nums text-gray-900 xl:text-2xl">
-                    {formatCurrency(summary?.cash_in_hand || 0)}
-                  </p>
-                </div>
-                <div className="shrink-0 rounded-lg bg-green-50 p-2.5">
-                  <IndianRupee className="h-5 w-5 text-green-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-500">Initial Investment</p>
-                  <p className="mt-1 break-words text-xl font-bold tabular-nums text-gray-900 xl:text-2xl">
-                    {formatCurrency(summary?.initial_investment || 0)}
-                  </p>
-                  <p className="text-xs text-gray-500">Capital investment</p>
-                </div>
-                <div className="shrink-0 rounded-lg bg-amber-50 p-2.5">
-                  <Landmark className="h-5 w-5 text-amber-700" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-500">Bank Accounts</p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-gray-900 xl:text-2xl">
-                    {summary?.bank_accounts.length || 0}
-                  </p>
-                </div>
-                <div className="shrink-0 rounded-lg bg-purple-50 p-2.5">
-                  <Building2 className="h-5 w-5 text-purple-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card
-            className="cursor-pointer transition-colors hover:border-orange-300"
+        <div id="cash-bank-stats" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+          <SummaryStat
+            label="Total Balance"
+            icon={IndianRupee}
+            value={formatCurrency(summary?.total_balance || 0)}
+            hint={periodActive ? `Net ${formatSigned(netChangeInPeriod)} in period` : undefined}
+          />
+          <SummaryStat
+            tone="success"
+            label="Cash in-hand"
+            icon={IndianRupee}
+            value={formatCurrency(summary?.cash_in_hand || 0)}
+            hint={periodActive ? `Net ${formatSigned(summary?.cash_net_change || 0)} in period` : undefined}
+          />
+          <SummaryStat
+            label="Cash in Bank"
+            icon={Banknote}
+            value={formatCurrency(cashInBank)}
+            hint={periodActive ? `Net ${formatSigned(summary?.bank_net_change || 0)} in period` : undefined}
+          />
+          <SummaryStat tone="warning" label="Initial Investment" icon={Landmark} value={formatCurrency(summary?.initial_investment || 0)} hint="Capital investment" />
+          <SummaryStat label="Bank Accounts" icon={Building2} value={summary?.bank_accounts.length || 0} />
+          <div
+            className="cursor-pointer transition-shadow hover:shadow-md"
             onClick={() => {
               setActiveTab('transactions')
               setFilterUnlinked(true)
             }}
           >
-            <CardContent className="p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium leading-snug text-gray-500">Unlinked Transactions</p>
-                  <p className="mt-1 text-xl font-bold tabular-nums text-gray-900 xl:text-2xl">
-                    {summary?.unlinked_count || 0}
-                  </p>
-                  <p className="break-words text-xs text-gray-500">
-                    {formatCurrency(summary?.unlinked_amount || 0)}
-                  </p>
-                </div>
-                <div className="shrink-0 rounded-lg bg-orange-50 p-2.5">
-                  <Filter className="h-5 w-5 text-orange-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+            <SummaryStat
+              tone="warning"
+              label="Unlinked Transactions"
+              icon={Filter}
+              value={summary?.unlinked_count || 0}
+              hint={formatCurrency(summary?.unlinked_amount || 0)}
+            />
+          </div>
         </div>
         )}
 
@@ -782,7 +928,15 @@ export default function CashBankPage() {
                 ) : (
                   <div className="space-y-3">
                     {summary?.bank_accounts.map((account) => (
-                      <div key={account.id} className="flex items-center justify-between rounded-lg border p-3">
+                      <div
+                        key={account.id}
+                        className="flex cursor-pointer items-center justify-between rounded-lg border p-3 transition-colors hover:border-blue-300 hover:bg-blue-50/40"
+                        title="View transactions for this account"
+                        onClick={() => {
+                          setFilterAccount(account.id)
+                          setActiveTab('transactions')
+                        }}
+                      >
                         <div className="flex items-center gap-3">
                           <div className="rounded-lg bg-blue-50 p-2.5">
                             <Building2 className="h-5 w-5 text-blue-600" />
@@ -808,7 +962,10 @@ export default function CashBankPage() {
                           <Button
                             variant={account.is_primary ? 'secondary' : 'outline'}
                             size="sm"
-                            onClick={() => handleSetPrimary(account.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleSetPrimary(account.id)
+                            }}
                             disabled={account.is_primary}
                             title="Set as primary account for sales & purchases"
                           >
@@ -818,7 +975,10 @@ export default function CashBankPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDeleteAccount(account.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleDeleteAccount(account.id)
+                            }}
                           >
                             <Trash2 className="h-4 w-4 text-red-600" />
                           </Button>
@@ -846,16 +1006,43 @@ export default function CashBankPage() {
                     <Input
                       type="date"
                       value={startDate}
-                      onChange={(e) => setStartDate(e.target.value)}
+                      onChange={(e) => applyDateRange(e.target.value, endDate)}
                       className="w-auto"
                     />
                     <Input
                       type="date"
                       value={endDate}
-                      onChange={(e) => setEndDate(e.target.value)}
+                      onChange={(e) => applyDateRange(startDate, e.target.value)}
                       className="w-auto"
                     />
                   </div>
+                  <Select value={filterAccount} onValueChange={setFilterAccount}>
+                    <SelectTrigger className="w-[190px]">
+                      <SelectValue placeholder="Account" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Accounts</SelectItem>
+                      <SelectItem value={CASH_IN_HAND_VALUE}>Cash in-hand</SelectItem>
+                      {summary?.bank_accounts.map((acc) => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          {acc.account_name} - {acc.bank_name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <Select value={filterType} onValueChange={setFilterType}>
+                    <SelectTrigger className="w-[150px]">
+                      <SelectValue placeholder="Type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All Types</SelectItem>
+                      {TRANSACTION_TYPE_OPTIONS.map((opt) => (
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
                   <Button
                     variant={filterUnlinked ? 'default' : 'outline'}
                     size="sm"
@@ -886,7 +1073,7 @@ export default function CashBankPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedItems.map((trans) => (
+                      {transactions.map((trans) => (
                         <tr key={trans.id} className="border-b last:border-0">
                           <td className="py-3 text-gray-600">{formatDate(trans.date)}</td>
                           <td className="py-3">{getTransactionTypeBadge(trans.transaction_type)}</td>
@@ -922,12 +1109,32 @@ export default function CashBankPage() {
                         </tr>
                       )}
                     </tbody>
+                    {transactionsTotal > 0 && (
+                      <tfoot>
+                        <tr className="border-t bg-gray-50 font-semibold">
+                          <td className="py-3 text-gray-700" colSpan={3}>
+                            Total ({transactionsTotal}{' '}
+                            {transactionsTotal === 1 ? 'transaction' : 'transactions'})
+                          </td>
+                          <td
+                            className={`py-3 ${
+                              filteredNetTotal >= 0 ? 'text-emerald-700' : 'text-red-700'
+                            }`}
+                          >
+                            {formatCurrency(filteredNetTotal)}
+                          </td>
+                          <td className="py-3 text-xs font-normal text-gray-500" colSpan={canDeleteTransactions ? 4 : 3}>
+                            In {formatCurrency(filteredTotalIn)} · Out {formatCurrency(filteredTotalOut)}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
                 <PaginationControls
                   page={page}
                   totalPages={totalPages}
-                  totalItems={totalItems}
+                  totalItems={transactionsTotal}
                   pageSize={pageSize}
                   onPageChange={setPage}
                 />

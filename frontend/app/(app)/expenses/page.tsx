@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
@@ -15,7 +16,7 @@ import {
 import { Input } from '@/components/ui/input'
 import { formatCurrency, formatDate } from '@/lib/utils'
 import { accountingExportDateStamp, downloadCsv } from '@/lib/accountingExport'
-import { Plus, Search, Tags, Printer as ThermalPrinter, MoreVertical, Trash2, Download, Eye, X, Loader2 } from 'lucide-react'
+import { Plus, Search, Tags, Printer as ThermalPrinter, MoreVertical, Trash2, Download, Eye, X, Loader2, Pencil } from 'lucide-react'
 import ThermalPrintModal from '@/components/ThermalPrintModal'
 import { notifyError, notifySuccess } from '@/lib/notify'
 import { usePagination } from '@/hooks/usePagination'
@@ -67,6 +68,7 @@ interface Category {
 }
 
 export default function ExpensesPage() {
+  const router = useRouter()
   const { confirm, confirmDialog } = useConfirmDialog()
   const [expenses, setExpenses] = useState<Expense[]>([])
   const [categories, setCategories] = useState<Category[]>([])
@@ -189,14 +191,21 @@ export default function ExpensesPage() {
     }
   }
 
-  const handleBulkExportExpenses = async () => {
-    const selected = expenses.filter((e) => selectedExpenses.has(e.id))
+  const handleExportExpenses = async () => {
+    const exportList =
+      selectedExpenses.size > 0
+        ? expenses.filter((e) => selectedExpenses.has(e.id))
+        : expenses
+    if (exportList.length === 0) {
+      notifyError('No expenses to export')
+      return
+    }
     try {
       await downloadCsv(
-        `selected-expenses_${accountingExportDateStamp()}.csv`,
+        `expenses_${accountingExportDateStamp()}.csv`,
         [
           ['Date', 'Expense Number', 'Party Name', 'Category', 'Amount'],
-          ...selected.map((expense) => [
+          ...exportList.map((expense) => [
             formatDate(expense.date),
             expense.expense_number,
             expense.vendor || '-',
@@ -206,7 +215,11 @@ export default function ExpensesPage() {
         ],
         { label: 'Exporting expenses' }
       )
-      notifySuccess('Selected expenses exported')
+      notifySuccess(
+        selectedExpenses.size > 0
+          ? `Exported ${exportList.length} selected expenses`
+          : `Exported ${exportList.length} expenses`
+      )
     } catch (err) {
       notifyError(err instanceof Error ? err.message : 'Failed to export expenses')
     }
@@ -241,6 +254,9 @@ export default function ExpensesPage() {
             <h1 className="app-page-title">Expenses</h1>
           </div>
           <PageHeaderActions>
+            <Button variant="outline" onClick={handleExportExpenses} disabled={expenses.length === 0}>
+              <Download className="mr-2 h-4 w-4" /> Export
+            </Button>
             <Link href="/expense-categories">
               <Button variant="outline"><Tags className="mr-2 h-4 w-4" /> Expense Categories</Button>
             </Link>
@@ -300,7 +316,7 @@ export default function ExpensesPage() {
                   <div className="mb-3 flex items-center gap-2 rounded-md border bg-gray-50 px-3 py-2">
                     <span className="text-sm text-gray-600">{selectedExpenses.size} selected</span>
                     <div className="ml-auto flex gap-2">
-                      <Button variant="outline" size="sm" onClick={handleBulkExportExpenses}>
+                      <Button variant="outline" size="sm" onClick={handleExportExpenses}>
                         <Download className="mr-1 h-3.5 w-3.5" /> Export
                       </Button>
                       <Button variant="outline" size="sm" className="text-red-600 hover:bg-red-50" onClick={handleBulkDeleteExpenses}>
@@ -368,6 +384,10 @@ export default function ExpensesPage() {
                               <DropdownMenuItem onClick={() => setPreviewId(e.id)}>
                                 <Eye className="mr-2 h-4 w-4" />
                                 Preview
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => router.push(`/expenses/edit/${e.id}`)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Edit
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => openThermalPrint(e)}>
                                 <ThermalPrinter className="mr-2 h-4 w-4" />

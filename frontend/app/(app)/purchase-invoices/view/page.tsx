@@ -9,9 +9,10 @@ import { FormPageSkeleton } from '@/components/layout/PageSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { formatCurrency, formatDate } from '@/lib/utils'
-import { ArrowLeft, Download, Edit, Loader2, ExternalLink } from 'lucide-react'
+import { ArrowLeft, Download, Edit, Loader2, ExternalLink, FileText, AlertCircle } from 'lucide-react'
 import { notifyError } from '@/lib/notify'
 import { downloadPurchaseBillPdf } from '@/lib/printDocument'
+import { displayAdditionalChargeRows, type AdditionalChargeItem } from '@/lib/additionalCharges'
 
 interface PurchaseBillItem {
   id: string
@@ -42,10 +43,14 @@ interface PurchaseBill {
   stock_status?: string
   sub_total: number
   tax_total: number
+  invoice_discount?: number
+  additional_charges?: number
+  additional_charge_items?: AdditionalChargeItem[]
   total_amount: number
   paid_amount: number
   balance_due: number
   notes: string
+  signature?: string
   source_url?: string
   source_html_url?: string
   items: PurchaseBillItem[]
@@ -57,6 +62,8 @@ function PurchaseBillViewContent() {
   const [bill, setBill] = useState<PurchaseBill | null>(null)
   const [loading, setLoading] = useState(true)
   const [downloading, setDownloading] = useState(false)
+  const [invoiceLoading, setInvoiceLoading] = useState(false)
+  const [invoiceError, setInvoiceError] = useState<string | null>(null)
 
   useEffect(() => {
     if (id) fetchBill()
@@ -70,6 +77,31 @@ function PurchaseBillViewContent() {
       console.error(err)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleViewInvoice = async () => {
+    if (!bill?.id || invoiceLoading) return
+    setInvoiceLoading(true)
+    setInvoiceError(null)
+    try {
+      const res = await apiFetch(`/purchase/bills/${bill.id}/invoice-file`)
+      const data = await res.json()
+      if (data.found) {
+        if (data.source === 'local' && data.file_url) {
+          // Open the local invoice PDF served by the backend.
+          window.open(data.file_url, '_blank')
+        } else if (data.source === 'mybillbook' && data.source_url) {
+          // Fall back to the myBillBook source URL.
+          window.open(data.source_url, '_blank')
+        }
+      } else {
+        setInvoiceError(data.error || 'No invoice file found for this purchase bill.')
+      }
+    } catch (err) {
+      setInvoiceError('Failed to check for invoice file.')
+    } finally {
+      setInvoiceLoading(false)
     }
   }
 
@@ -243,6 +275,18 @@ function PurchaseBillViewContent() {
                     <span className="font-medium">{formatCurrency(bill.tax_total)}</span>
                   </div>
                 )}
+                {(bill.invoice_discount || 0) > 0 && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Discount</span>
+                    <span className="font-medium text-red-600">-{formatCurrency(bill.invoice_discount || 0)}</span>
+                  </div>
+                )}
+                {displayAdditionalChargeRows(bill.additional_charge_items, bill.additional_charges).map((charge, index) => (
+                  <div key={index} className="flex justify-between">
+                    <span className="text-gray-600">{charge.label}</span>
+                    <span className="font-medium">{formatCurrency(charge.amount)}</span>
+                  </div>
+                ))}
                 <div className="flex justify-between border-t pt-2 text-base font-bold">
                   <span>Total</span>
                   <span>{formatCurrency(bill.total_amount)}</span>
@@ -264,37 +308,63 @@ function PurchaseBillViewContent() {
               </div>
             )}
 
-            {(bill.source_url || bill.source_html_url) && (
-              <div className="rounded-lg border bg-blue-50 p-4 text-sm">
-                <p className="font-medium text-blue-900">Source document</p>
-                <p className="mt-1 text-gray-600">
-                  This purchase invoice was migrated from an external source.
-                  The original document is preserved below.
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {bill.source_url && (
-                    <a
-                      href={bill.source_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-blue-700 hover:underline"
-                    >
-                      <ExternalLink className="mr-1 h-4 w-4" /> Open original source link
-                    </a>
-                  )}
-                  {bill.source_html_url && (
-                    <a
-                      href={bill.source_html_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center text-blue-700 hover:underline"
-                    >
-                      <ExternalLink className="mr-1 h-4 w-4" /> Open stored HTML snapshot
-                    </a>
-                  )}
-                </div>
+            {bill.signature && (
+              <div className="flex flex-col items-end rounded-lg border bg-gray-50 p-4">
+                <img src={bill.signature} alt="Signature" className="max-h-20 max-w-[200px] object-contain" />
+                <p className="mt-1 text-sm text-gray-500">Authorized Signatory</p>
               </div>
             )}
+
+            {/* Invoice file viewer — checks local directory first, then
+                falls back to the myBillBook source URL. */}
+            <div className="rounded-lg border bg-blue-50 p-4 text-sm">
+              <p className="font-medium text-blue-900">Invoice</p>
+              <p className="mt-1 text-gray-600">
+                View the purchase invoice document. The system first checks the local invoice directory for a PDF, then falls back to the original myBillBook link if available.
+              </p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleViewInvoice}
+                  disabled={invoiceLoading}
+                  className="h-8"
+                >
+                  {invoiceLoading ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileText className="mr-1 h-4 w-4" />
+                  )}
+                  View Invoice
+                </Button>
+                {bill.source_url && (
+                  <a
+                    href={bill.source_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center text-blue-700 hover:underline"
+                  >
+                    <ExternalLink className="mr-1 h-4 w-4" /> Open myBillBook link
+                  </a>
+                )}
+                {bill.source_html_url && (
+                  <a
+                    href={bill.source_html_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center text-blue-700 hover:underline"
+                  >
+                    <ExternalLink className="mr-1 h-4 w-4" /> Open stored HTML snapshot
+                  </a>
+                )}
+              </div>
+              {invoiceError && (
+                <div className="mt-2 flex items-start gap-2 rounded-md bg-amber-50 border border-amber-200 p-2 text-amber-800">
+                  <AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <span>{invoiceError}</span>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>

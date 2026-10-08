@@ -9,9 +9,7 @@ import (
 
 func SetupRoutes(r *gin.Engine) {
 	// Health check
-	r.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	r.GET("/health", controllers.HealthCheck)
 
 	// Auth routes
 	auth := r.Group("/api/v1/auth")
@@ -25,6 +23,7 @@ func SetupRoutes(r *gin.Engine) {
 		auth.GET("/profile", middleware.AuthRequired(), controllers.GetProfile)
 		auth.PUT("/profile", middleware.AuthRequired(), controllers.UpdateProfile)
 		auth.GET("/my-stores", middleware.AuthRequired(), controllers.MyStores)
+		auth.POST("/app-version", middleware.AuthRequired(), controllers.ReportAppVersion)
 	}
 
 	// Store management (super admin)
@@ -183,6 +182,17 @@ func SetupRoutes(r *gin.Engine) {
 		dashboard.GET("/periodic-report", controllers.GetPeriodicReport)
 		dashboard.GET("/periodic-report/export", controllers.ExportPeriodicReportCSV)
 		dashboard.GET("/periodic-report/pdf", controllers.ExportPeriodicReportPDF)
+		dashboard.GET("/profit-loss-report", controllers.GetProfitLossReport)
+		dashboard.GET("/profit-loss-report/excel", controllers.ExportProfitLossReportExcel)
+		dashboard.GET("/profit-loss-report/pdf", controllers.ExportProfitLossReportPDF)
+		dashboard.GET("/billwise-profit-report", controllers.GetBillwiseProfitReport)
+		dashboard.GET("/billwise-profit-report/excel", controllers.ExportBillwiseProfitReportExcel)
+		dashboard.GET("/billwise-profit-report/pdf", controllers.ExportBillwiseProfitReportPDF)
+		dashboard.GET("/daily-profit-report", controllers.GetDailyProfitReport)
+		dashboard.GET("/daily-profit-report/excel", controllers.ExportDailyProfitReportExcel)
+		dashboard.GET("/daily-profit-report/pdf", controllers.ExportDailyProfitReportPDF)
+		dashboard.POST("/daily-profit-report/refresh", controllers.RefreshDailyProfitReport)
+		dashboard.GET("/stock-report", controllers.GetStockReport)
 
 		// Daily report email automation (auto-mail PDF export to configured recipients)
 		dashboard.GET("/report-email-settings", controllers.GetDailyReportEmailSettingsHandler)
@@ -253,6 +263,14 @@ func SetupRoutes(r *gin.Engine) {
 		// Stock Balance & Valuation
 		inventory.GET("/balance", controllers.GetStockBalance)
 		inventory.GET("/valuation", controllers.GetInventoryValuation)
+		inventory.GET("/stats", controllers.GetInventoryStats)
+		inventory.POST("/snapshots/refresh-closing", controllers.RefreshStockClosing)
+
+		// Opening stock overrides — superadmin only
+		inventory.GET("/snapshots/opening-overrides", middleware.SuperAdminRequired(), controllers.ListOpeningStockOverrides)
+		inventory.GET("/snapshots/position", middleware.SuperAdminRequired(), controllers.GetStockSnapshotPosition)
+		inventory.POST("/snapshots/opening-override", middleware.SuperAdminRequired(), controllers.UpsertOpeningStockOverride)
+		inventory.DELETE("/snapshots/opening-override/:id", middleware.SuperAdminRequired(), controllers.DeleteOpeningStockOverride)
 
 		// Stock Entries
 		inventory.GET("/entries", controllers.GetStockEntries)
@@ -328,6 +346,8 @@ func SetupRoutes(r *gin.Engine) {
 		purchase.POST("/bills", controllers.CreatePurchaseBill)
 		purchase.GET("/bills/stats", controllers.GetPurchaseBillStats)
 		purchase.GET("/bills/:id", controllers.GetPurchaseBill)
+		purchase.GET("/bills/:id/invoice-file", controllers.GetPurchaseBillInvoiceFile)
+		purchase.GET("/bills/:id/invoice-file/serve", controllers.ServePurchaseBillInvoiceFile)
 		purchase.GET("/bills/:id/pdf", controllers.GeneratePurchaseBillPDF)
 		purchase.GET("/bills/:id/download-pdf", controllers.DownloadPurchaseBillPDF)
 		purchase.PUT("/bills/:id", controllers.UpdatePurchaseBill)
@@ -355,30 +375,30 @@ func SetupRoutes(r *gin.Engine) {
 		gst.GET("/ewaybill/history", controllers.GetEWayBillHistory)
 		gst.GET("/hsn-rates", controllers.GetHSNRates)
 		gst.GET("/hsn-search", controllers.SearchHSNCodes)
-		
+
 		// GST Compliance Routes
 		gst.POST("/validate-gstin", controllers.ValidateGSTIN)
 		gst.GET("/state-codes", controllers.GetStateCodes)
-		
+
 		// Tax Period Management
 		gst.POST("/tax-periods", controllers.CreateTaxPeriod)
 		gst.GET("/tax-periods", controllers.GetTaxPeriods)
 		gst.GET("/tax-periods/:id", controllers.GetTaxPeriod)
 		gst.PUT("/tax-periods/:id", controllers.UpdateTaxPeriod)
-		
+
 		// Input Tax Credit (ITC)
 		gst.POST("/itc", controllers.CreateITC)
 		gst.GET("/itc", controllers.GetITC)
 		gst.PUT("/itc/:id/utilize", controllers.UtilizeITC)
-		
+
 		// GST Filing
 		gst.POST("/filing", controllers.RecordGSTFiling)
 		gst.GET("/filing", controllers.GetGSTFilingStatus)
-		
+
 		// GST Portal Exports
 		gst.GET("/export/gstr1", controllers.GenerateGSTR1Export)
 		gst.GET("/export/gstr3b", controllers.GenerateGSTR3BExport)
-		
+
 		// Tax Calculation
 		gst.POST("/calculate", controllers.CalculateTax)
 		gst.POST("/convert-price", controllers.ConvertPrice)
@@ -441,14 +461,15 @@ func SetupRoutes(r *gin.Engine) {
 		accounting.PUT("/journal/:id", controllers.UpdateJournalEntry)
 		accounting.POST("/journal/:id/post", controllers.PostJournalEntry)
 		accounting.DELETE("/journal/:id", controllers.DeleteJournalEntry)
-		
+
 		// Financial Reports
+		accounting.GET("/stats", controllers.GetAccountingStats)
 		accounting.GET("/trial-balance", controllers.GetTrialBalance)
 		accounting.GET("/profit-loss", controllers.GetProfitLoss)
 		accounting.GET("/balance-sheet", controllers.GetBalanceSheet)
 		accounting.GET("/general-ledger/:id", controllers.GetGeneralLedger)
 		accounting.GET("/ledgers", controllers.GetLedgers)
-		
+
 		// Bank Reconciliation
 		accounting.POST("/bank-reconciliation", controllers.CreateBankReconciliation)
 		accounting.GET("/bank-reconciliation", controllers.GetBankReconciliations)
@@ -466,17 +487,17 @@ func SetupRoutes(r *gin.Engine) {
 		notifications.PUT("/read-all", controllers.MarkAllAsRead)
 		notifications.POST("/:id/send", controllers.SendNotification)
 		notifications.DELETE("/:id", controllers.DeleteNotification)
-		
+
 		// Notification Templates
 		notifications.GET("/templates", controllers.GetNotificationTemplates)
 		notifications.POST("/templates", controllers.CreateNotificationTemplate)
 		notifications.PUT("/templates/:id", controllers.UpdateNotificationTemplate)
 		notifications.DELETE("/templates/:id", controllers.DeleteNotificationTemplate)
-		
+
 		// Notification Preferences
 		notifications.GET("/preferences", controllers.GetNotificationPreferences)
 		notifications.PUT("/preferences/:type", controllers.UpdateNotificationPreference)
-		
+
 		// Automation Endpoints
 		notifications.POST("/send-invoice-due-reminders", controllers.SendInvoiceDueReminders)
 		notifications.POST("/send-payment-reminders", controllers.SendPaymentReminders)
@@ -490,24 +511,24 @@ func SetupRoutes(r *gin.Engine) {
 		// Audit Logs
 		compliance.GET("/audit-logs", controllers.GetComplianceAuditLogs)
 		compliance.GET("/audit-logs/stats", controllers.GetAuditLogStats)
-		
+
 		// Role & Permission Management
 		compliance.GET("/roles", controllers.GetRoles)
 		compliance.POST("/roles", controllers.CreateRole)
 		compliance.PUT("/roles/:id", controllers.UpdateRole)
 		compliance.DELETE("/roles/:id", controllers.DeleteRole)
 		compliance.GET("/permissions", controllers.GetPermissions)
-		
+
 		// IP Restrictions
 		compliance.GET("/ip-restrictions", controllers.GetIPRestrictions)
 		compliance.POST("/ip-restrictions", controllers.CreateIPRestriction)
 		compliance.DELETE("/ip-restrictions/:id", controllers.DeleteIPRestriction)
-		
+
 		// Backup & Restore
 		compliance.POST("/backups", controllers.CreateBackup)
 		compliance.GET("/backups", controllers.GetBackups)
 		compliance.POST("/backups/:id/restore", controllers.RestoreBackup)
-		
+
 		// GDPR Compliance
 		compliance.POST("/gdpr-requests", controllers.CreateGDPRRequest)
 		compliance.GET("/gdpr-requests", controllers.GetGDPRRequests)
@@ -535,6 +556,9 @@ func SetupRoutes(r *gin.Engine) {
 		parties.GET("", controllers.GetParties)
 		parties.GET("/stats", controllers.GetPartyStats)
 		parties.POST("", controllers.CreateParty)
+		parties.GET("/:id/ledger", controllers.GetPartyLedger)
+		parties.GET("/:id/ledger/excel", controllers.ExportPartyLedgerExcel)
+		parties.GET("/:id/ledger/pdf", controllers.GetPartyLedgerPDF)
 		parties.GET("/:id", controllers.GetParty)
 		parties.PUT("/:id", controllers.UpdateParty)
 		parties.DELETE("/:id", controllers.DeleteParty)
@@ -626,6 +650,28 @@ func SetupRoutes(r *gin.Engine) {
 		cashBank.DELETE("/transactions/:id", middleware.SuperAdminRequired(), controllers.DeleteCashTransaction)
 	}
 
+	// Partner routes (profit sharing)
+	partners := r.Group("/api/v1/partners")
+	partners.Use(middleware.AuthRequired())
+	{
+		partners.GET("", controllers.GetPartners)
+		partners.POST("", controllers.CreatePartner)
+		partners.GET("/:id", controllers.GetPartner)
+		partners.PUT("/:id", controllers.UpdatePartner)
+		partners.DELETE("/:id", controllers.DeletePartner)
+	}
+
+	// Profit Distribution routes
+	profitDistributions := r.Group("/api/v1/profit-distributions")
+	profitDistributions.Use(middleware.AuthRequired())
+	{
+		profitDistributions.GET("", controllers.GetProfitDistributions)
+		profitDistributions.POST("", controllers.CreateProfitDistribution)
+		profitDistributions.GET("/next-number", controllers.GetNextDistributionNumber)
+		profitDistributions.GET("/:id", controllers.GetProfitDistribution)
+		profitDistributions.DELETE("/:id", controllers.DeleteProfitDistribution)
+	}
+
 	// Staff routes
 	staff := r.Group("/api/v1/staff")
 	staff.Use(middleware.AuthRequired())
@@ -637,6 +683,8 @@ func SetupRoutes(r *gin.Engine) {
 		staff.GET("/:id", controllers.GetStaff)
 		staff.PUT("/:id", controllers.UpdateStaff)
 		staff.DELETE("/:id", controllers.DeleteStaff)
+		staff.GET("/:id/balance", controllers.GetStaffBalance)
+		staff.GET("/balances", controllers.GetStaffBalances)
 
 		// Staff Deductions routes
 		staff.GET("/deductions", controllers.GetStaffDeductions)
@@ -678,12 +726,16 @@ func SetupRoutes(r *gin.Engine) {
 		payroll.GET("", controllers.GetPayrolls)
 		payroll.GET("/stats", controllers.GetPayrollStats)
 		payroll.GET("/next-number", controllers.GetNextPaymentNumber)
+		payroll.GET("/calculate", controllers.CalculatePayroll)
 		payroll.POST("", controllers.CreatePayroll)
 		payroll.POST("/bulk/delete", controllers.BulkDeletePayrolls)
 		payroll.POST("/bulk/update-status", controllers.BulkUpdatePayrollStatus)
 		payroll.GET("/:id", controllers.GetPayroll)
 		payroll.PUT("/:id", controllers.UpdatePayroll)
 		payroll.DELETE("/:id", controllers.DeletePayroll)
+		payroll.GET("/:id/payments", controllers.GetPayrollPayments)
+		payroll.POST("/:id/payments", controllers.CreatePayrollPayment)
+		payroll.DELETE("/:id/payments/:paymentId", controllers.DeletePayrollPayment)
 	}
 
 	// Settings routes
@@ -701,7 +753,7 @@ func SetupRoutes(r *gin.Engine) {
 		settings.POST("/invoice-custom-fields", controllers.CreateInvoiceCustomFieldDefinition)
 		settings.PUT("/invoice-custom-fields/:id", controllers.UpdateInvoiceCustomFieldDefinition)
 		settings.DELETE("/invoice-custom-fields/:id", controllers.DeleteInvoiceCustomFieldDefinition)
-		
+
 		// Print Settings
 		settings.GET("/print", controllers.GetPrintSettings)
 		settings.PUT("/print", controllers.UpdatePrintSettings)
@@ -709,19 +761,19 @@ func SetupRoutes(r *gin.Engine) {
 		// Weighing scale settings
 		settings.GET("/weighing-scale", controllers.GetWeighingScaleSettings)
 		settings.PUT("/weighing-scale", controllers.UpdateWeighingScaleSettings)
-		
+
 		// Reminders
 		settings.GET("/reminders", controllers.GetReminders)
 		settings.POST("/reminders", controllers.CreateReminder)
 		settings.PUT("/reminders/:id", controllers.UpdateReminder)
 		settings.DELETE("/reminders/:id", controllers.DeleteReminder)
-		
+
 		// CA Report Sharing
 		settings.GET("/ca-sharing", controllers.GetCAReportSharing)
 		settings.POST("/ca-sharing", controllers.CreateCAReportSharing)
 		settings.PUT("/ca-sharing/:id", controllers.UpdateCAReportSharing)
 		settings.DELETE("/ca-sharing/:id", controllers.DeleteCAReportSharing)
-		
+
 		// Account Settings
 		settings.POST("/change-password", controllers.ChangePassword)
 		settings.POST("/users/:id/reset-password", controllers.ResetUserPassword)
@@ -754,6 +806,7 @@ func SetupRoutes(r *gin.Engine) {
 		products.GET("/next-plu", controllers.NextProductPLU)
 		products.GET("/check-item-code", controllers.CheckProductItemCode)
 		products.GET("/check-plu", controllers.CheckProductPLU)
+		products.GET("/units", controllers.GetProductUnits)
 		products.GET("/:id", controllers.GetProduct)
 		products.PUT("/:id", controllers.UpdateProduct)
 		products.DELETE("/:id", controllers.DeleteProduct)
@@ -763,6 +816,7 @@ func SetupRoutes(r *gin.Engine) {
 		products.POST("/import/excel", controllers.ImportProductsExcel)
 		products.GET("/:id/print-label", controllers.PrintProductLabel)
 		products.POST("/:id/print-label", controllers.PrintProductLabel)
+		products.POST("/print-labels", controllers.PrintProductLabels)
 		products.GET("/:id/images", controllers.GetProductImages)
 		products.POST("/:id/images", controllers.CreateProductImage)
 		products.GET("/:id/variants", controllers.GetProductVariants)
@@ -861,6 +915,19 @@ func SetupRoutes(r *gin.Engine) {
 		developerSettings.POST("/test-email", controllers.TestEmailConnection)
 		developerSettings.POST("/test-whatsapp", controllers.TestWhatsAppConnection)
 		developerSettings.POST("/test-sms", controllers.TestSMSConnection)
+
+		// Nightly database maintenance (dead-tuple / bloat cleanup, IST schedule)
+		developerSettings.GET("/db-maintenance", controllers.GetDBMaintenanceSettingsHandler)
+		developerSettings.PUT("/db-maintenance", controllers.UpdateDBMaintenanceSettingsHandler)
+		developerSettings.POST("/db-maintenance/run-now", controllers.RunDBMaintenanceNowHandler)
+
+		// Database backups (scheduled dumps + optional cloud upload)
+		developerSettings.GET("/db-backup", controllers.GetDBBackupSettingsHandler)
+		developerSettings.PUT("/db-backup", controllers.UpdateDBBackupSettingsHandler)
+		developerSettings.POST("/db-backup/run-now", controllers.RunDBBackupNowHandler)
+		developerSettings.POST("/db-backup/test-destination", controllers.TestDBBackupDestinationHandler)
+		developerSettings.GET("/db-backup/records/:id/download", controllers.DownloadDBBackupRecordHandler)
+		developerSettings.DELETE("/db-backup/records/:id", controllers.DeleteDBBackupRecordHandler)
 	}
 
 	// Page / menu feature flags (read: any auth user; write: super admin)
@@ -935,5 +1002,32 @@ func SetupRoutes(r *gin.Engine) {
 	migration.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
 	{
 		migration.POST("/mybillbook", controllers.MigrateMyBillBookZIP)
+
+		// Per-entity CSV importers (generic, header-first CSV).
+		migration.POST("/categories/import/csv", controllers.ImportCategoriesCSV)
+		migration.POST("/expense-categories/import/csv", controllers.ImportExpenseCategoriesCSV)
+		migration.POST("/inventory/import/csv", controllers.ImportInventoryCSV)
+		migration.POST("/bank-accounts/import/csv", controllers.ImportBankAccountsCSV)
+		migration.POST("/cash-transactions/import/csv", controllers.ImportCashTransactionsCSV)
+		migration.POST("/users/import/csv", controllers.ImportUsersCSV)
+		migration.POST("/staff/import/csv", controllers.ImportStaffCSV)
+		migration.POST("/stock-summary/import/csv", controllers.ImportStockSummaryCSV)
+		migration.POST("/batched-items/import/csv", controllers.ImportBatchedItemsCSV)
+		migration.POST("/purchase-payments/import/csv", controllers.ImportPurchasePaymentStatusCSV)
+		migration.POST("/purchase-items/import/csv", controllers.ImportPurchaseItemsCSV)
+		migration.POST("/sales-items/import/csv", controllers.ImportSalesItemsCSV)
+		migration.POST("/sales-links/import/csv", controllers.ImportSalesInvoiceLinksCSV)
+		migration.POST("/sales/import/csv", controllers.ImportSalesCSV)
+		migration.POST("/purchase-returns/import/csv", controllers.ImportPurchaseReturnsCSV)
+		migration.POST("/sales-returns/import/csv", controllers.ImportSalesReturnsCSV)
+		migration.POST("/cash-bank-statement/import/csv", controllers.ImportCashBankStatementCSV)
+		migration.POST("/daybook/import/csv", controllers.ImportDaybookCSV)
+
+		// Asynchronous migration jobs — enqueue, poll, list. These accept
+		// any of the per-entity CSV importers above (and the myBillBook ZIP)
+		// via the "kind" form field and report per-row progress.
+		migration.POST("/jobs", controllers.EnqueueMigrationJobHandler)
+		migration.GET("/jobs/:id", controllers.GetMigrationJobHandler)
+		migration.GET("/jobs", controllers.ListMigrationJobsHandler)
 	}
 }

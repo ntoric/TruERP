@@ -1,10 +1,11 @@
 package controllers
 
 import (
+	"net/http"
+	"strings"
+	"time"
 	"truerp/models"
 	"truerp/utils"
-	"net/http"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -111,7 +112,8 @@ func GetLoyaltyCustomers(c *gin.Context) {
 
 	query := utils.DB.Where("user_id = ? AND party_type = ?", userID, "customer")
 	if search != "" {
-		query = query.Where("name LIKE ? OR phone LIKE ?", "%"+search+"%", "%"+search+"%")
+		like := "%" + strings.ToLower(search) + "%"
+		query = query.Where("LOWER(name) LIKE ? OR LOWER(phone) LIKE ?", like, like)
 	}
 
 	var parties []models.Party
@@ -222,8 +224,8 @@ func CalculateLoyaltyRedemption(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"discount":       discount,
-		"points":         input.Points,
+		"discount":         discount,
+		"points":           input.Points,
 		"available_points": party.LoyaltyPoints,
 	})
 }

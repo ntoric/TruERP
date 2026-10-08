@@ -19,15 +19,18 @@ import {
   type NavItem,
 } from './nav-config'
 
-function flattenNavLinks(items: NavItem[]): { name: string; href: string; icon: NavItem['icon'] }[] {
-  const links: { name: string; href: string; icon: NavItem['icon'] }[] = []
+function flattenNavLinks(
+  items: NavItem[]
+): { name: string; href: string; icon: NavItem['icon']; accent?: string }[] {
+  const links: { name: string; href: string; icon: NavItem['icon']; accent?: string }[] = []
   for (const item of items) {
     if (item.children) {
       for (const child of item.children) {
-        if (child.href) links.push({ name: child.name, href: child.href, icon: child.icon })
+        if (child.href)
+          links.push({ name: child.name, href: child.href, icon: child.icon, accent: item.accent })
       }
     } else if (item.href) {
-      links.push({ name: item.name, href: item.href, icon: item.icon })
+      links.push({ name: item.name, href: item.href, icon: item.icon, accent: item.accent })
     }
   }
   return links
@@ -341,7 +344,7 @@ export default function BottomMenubar() {
                       active ? 'bg-blue-50 text-blue-700' : 'text-slate-700 hover:bg-slate-50'
                     )}
                   >
-                    <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-blue-600' : 'text-slate-500')} />
+                    <Icon size={16} weight="duotone" color={active ? 'currentColor' : '#64748b'} className="shrink-0" />
                     <span className="truncate">{link.name}</span>
                   </Link>
                 )
@@ -367,10 +370,10 @@ export default function BottomMenubar() {
                     onClick={() => setMoreOpen(false)}
                     className={cn(
                       'flex w-11 shrink-0 items-center justify-center',
-                      active ? 'text-blue-700' : 'text-slate-500'
+                      active ? 'text-blue-600' : 'text-slate-500'
                     )}
                   >
-                    <Icon className={cn('h-5 w-5', active ? 'text-blue-600' : 'text-slate-500')} />
+                    <Icon size={20} weight="duotone" color={active ? 'currentColor' : '#64748b'} />
                   </Link>
                 </MenubarItemTooltip>
               )
