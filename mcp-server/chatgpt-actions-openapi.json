@@ -1,0 +1,515 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "TruERP Billing & ERP Assistant",
+    "description": "Complete ERP integration for invoicing, products, parties, inventory, payments, and financial reports.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://operation-common-joseph-univ.trycloudflare.com"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "oauth2": {
+        "type": "oauth2",
+        "description": "TruERP OAuth 2.0 Authorization Code flow",
+        "flows": {
+          "authorizationCode": {
+            "authorizationUrl": "https://operation-common-joseph-univ.trycloudflare.com/oauth/authorize",
+            "tokenUrl": "https://operation-common-joseph-univ.trycloudflare.com/oauth/token",
+            "scopes": {
+              "read": "Read access to business data",
+              "write": "Write and modify business records",
+              "admin": "Full ERP administrative access"
+            }
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "oauth2": [
+        "read",
+        "write",
+        "admin"
+      ]
+    }
+  ],
+  "paths": {
+    "/api/v1/dashboard/stats": {
+      "get": {
+        "operationId": "getDashboardStats",
+        "summary": "Get business dashboard overview",
+        "description": "Retrieve summary revenue, outstanding balances, sales counts, and financial stats.",
+        "responses": {
+          "200": {
+            "description": "Dashboard overview statistics"
+          }
+        }
+      }
+    },
+    "/api/v1/invoices": {
+      "get": {
+        "operationId": "listInvoices",
+        "summary": "List sales invoices",
+        "description": "Search and filter sales invoices with pagination, party name, and date filters.",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Search invoice number or customer name"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by status: paid, unpaid, overdue, draft"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of invoices"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createInvoice",
+        "summary": "Create sales invoice",
+        "description": "Generate a new tax or retail sales invoice for a customer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "party_id",
+                  "items"
+                ],
+                "properties": {
+                  "party_id": {
+                    "type": "string",
+                    "description": "UUID of the customer party"
+                  },
+                  "invoice_number": {
+                    "type": "string",
+                    "description": "Optional custom invoice number"
+                  },
+                  "invoice_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "due_date": {
+                    "type": "string",
+                    "format": "date",
+                    "description": "YYYY-MM-DD"
+                  },
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "product_id",
+                        "quantity",
+                        "price"
+                      ],
+                      "properties": {
+                        "product_id": {
+                          "type": "string"
+                        },
+                        "quantity": {
+                          "type": "number"
+                        },
+                        "price": {
+                          "type": "number"
+                        },
+                        "discount_percent": {
+                          "type": "number"
+                        },
+                        "tax_rate": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Invoice created successfully"
+          }
+        }
+      }
+    },
+    "/api/v1/invoices/{id}": {
+      "get": {
+        "operationId": "getInvoice",
+        "summary": "Get invoice by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Invoice details with line items and balance"
+          }
+        }
+      }
+    },
+    "/api/v1/parties": {
+      "get": {
+        "operationId": "listParties",
+        "summary": "List customers and vendors",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "customer or vendor"
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Name, phone, or GSTIN"
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of parties"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createParty",
+        "summary": "Create customer or vendor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "type"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "vendor"
+                    ]
+                  },
+                  "phone": {
+                    "type": "string"
+                  },
+                  "email": {
+                    "type": "string"
+                  },
+                  "gstin": {
+                    "type": "string"
+                  },
+                  "billing_address": {
+                    "type": "string"
+                  },
+                  "city": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string"
+                  },
+                  "opening_balance": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Party created successfully"
+          }
+        }
+      }
+    },
+    "/api/v1/parties/{id}": {
+      "get": {
+        "operationId": "getParty",
+        "summary": "Get party by ID",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Party details with ledger summary"
+          }
+        }
+      }
+    },
+    "/api/v1/products": {
+      "get": {
+        "operationId": "listProducts",
+        "summary": "List inventory products",
+        "parameters": [
+          {
+            "name": "search",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "category_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of products with stock balances"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProduct",
+        "summary": "Create product item",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "sale_price"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "sale_price": {
+                    "type": "number"
+                  },
+                  "purchase_price": {
+                    "type": "number"
+                  },
+                  "opening_stock": {
+                    "type": "number"
+                  },
+                  "hsn_code": {
+                    "type": "string"
+                  },
+                  "tax_rate": {
+                    "type": "number"
+                  },
+                  "unit": {
+                    "type": "string",
+                    "default": "PCS"
+                  },
+                  "min_stock_alert": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Product created successfully"
+          }
+        }
+      }
+    },
+    "/api/v1/inventory/low-stock": {
+      "get": {
+        "operationId": "getLowStockAlerts",
+        "summary": "Get low stock alerts",
+        "description": "List all products that have fallen below their minimum stock threshold.",
+        "responses": {
+          "200": {
+            "description": "Low stock products list"
+          }
+        }
+      }
+    },
+    "/api/v1/payments": {
+      "get": {
+        "operationId": "listPayments",
+        "summary": "List payments received (Payment-In)",
+        "responses": {
+          "200": {
+            "description": "List of payments"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createPayment",
+        "summary": "Record received payment (Payment-In)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "party_id",
+                  "amount",
+                  "payment_mode"
+                ],
+                "properties": {
+                  "party_id": {
+                    "type": "string"
+                  },
+                  "amount": {
+                    "type": "number"
+                  },
+                  "payment_mode": {
+                    "type": "string",
+                    "enum": [
+                      "cash",
+                      "bank",
+                      "upi",
+                      "cheque"
+                    ]
+                  },
+                  "payment_date": {
+                    "type": "string",
+                    "format": "date"
+                  },
+                  "reference_number": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment recorded successfully"
+          }
+        }
+      }
+    },
+    "/api/v1/reports/pl": {
+      "get": {
+        "operationId": "getProfitAndLossReport",
+        "summary": "Get Profit & Loss Report",
+        "parameters": [
+          {
+            "name": "from_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to_date",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profit & Loss financial report"
+          }
+        }
+      }
+    }
+  }
+}

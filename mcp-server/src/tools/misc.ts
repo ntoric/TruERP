@@ -101,16 +101,4 @@ export function registerMiscTools(server: McpServer, ctx: Ctx) {
   // ---------- Offline sync status ----------
   endpoint(server, ctx, "get_sync_status", "Offline sync queue status.", "GET", "/api/v1/sync/status");
   endpoint(server, ctx, "list_pending_syncs", "List pending offline sync operations.", "GET", "/api/v1/sync/pending");
-
-  // ---------- Support requests ----------
-  endpoint(server, ctx, "list_my_support_requests", "List support tickets raised by this account.", "GET", "/api/v1/support-requests");
-  endpoint(
-    server,
-    ctx,
-    "create_support_request",
-    "Raise a support request to the platform admin.",
-    "POST",
-    "/api/v1/support-requests",
-    { subject: z.string(), message: z.string(), category: z.string().optional(), priority: z.string().optional() },
-  );
 }

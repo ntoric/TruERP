@@ -1,8 +1,8 @@
 /**
- * Minimal REST client for the TruERP backend.
+ * REST client for the TruERP backend supporting both standard JWT
+ * and OAuth 2.0 authentication flows (Client Credentials, Refresh Token,
+ * Resource Owner Password, and pre-issued Bearer tokens).
  *
- * Auth: JWT obtained via POST /api/v1/auth/login (or a pre-issued token via
- * TRUERP_TOKEN). Tokens are re-fetched automatically on 401 responses.
  * Store scoping for super-admin users is done through the X-Store-ID header.
  */
 
@@ -13,6 +13,14 @@ export interface ClientConfig {
   totpCode?: string;
   token?: string;
   storeId?: string;
+
+  // OAuth 2.0 configuration
+  oauthToken?: string;
+  oauthClientId?: string;
+  oauthClientSecret?: string;
+  oauthRefreshToken?: string;
+  oauthTokenUrl?: string;
+  oauthScopes?: string;
 }
 
 export class ApiError extends Error {
@@ -34,54 +42,165 @@ function summarize(body: unknown): string {
 }
 
 export function loadConfigFromEnv(): ClientConfig {
+  const baseUrl = (process.env.TRUERP_API_URL || "http://localhost:8088").replace(/\/+$/, "");
   return {
-    baseUrl: (process.env.TRUERP_API_URL || "http://localhost:8088").replace(/\/+$/, ""),
+    baseUrl,
     email: process.env.TRUERP_EMAIL,
     password: process.env.TRUERP_PASSWORD,
     totpCode: process.env.TRUERP_TOTP_CODE,
-    token: process.env.TRUERP_TOKEN,
+    token: process.env.TRUERP_TOKEN || process.env.TRUERP_OAUTH_TOKEN,
     storeId: process.env.TRUERP_STORE_ID,
+    oauthToken: process.env.TRUERP_OAUTH_TOKEN,
+    oauthClientId: process.env.TRUERP_OAUTH_CLIENT_ID || process.env.TRUERP_CLIENT_ID,
+    oauthClientSecret: process.env.TRUERP_OAUTH_CLIENT_SECRET || process.env.TRUERP_CLIENT_SECRET,
+    oauthRefreshToken: process.env.TRUERP_OAUTH_REFRESH_TOKEN,
+    oauthTokenUrl: process.env.TRUERP_OAUTH_TOKEN_URL || `${baseUrl}/api/v1/oauth/token`,
+    oauthScopes: process.env.TRUERP_OAUTH_SCOPES || "read write admin erp",
   };
 }
 
 export class TrueRPClient {
   private token?: string;
+  private refreshToken?: string;
   private loginPromise?: Promise<string>;
 
   constructor(private cfg: ClientConfig) {
-    this.token = cfg.token;
+    this.token = cfg.oauthToken || cfg.token;
+    this.refreshToken = cfg.oauthRefreshToken;
   }
 
   get baseUrl(): string {
     return this.cfg.baseUrl;
   }
 
-  private async login(): Promise<string> {
-    if (!this.cfg.email || !this.cfg.password) {
-      throw new Error(
-        "Not authenticated. Set TRUERP_TOKEN, or TRUERP_EMAIL + TRUERP_PASSWORD environment variables.",
-      );
+  get currentToken(): string | undefined {
+    return this.token;
+  }
+
+  setToken(token: string, refreshToken?: string) {
+    this.token = token;
+    if (refreshToken) {
+      this.refreshToken = refreshToken;
     }
-    // De-dupe concurrent logins.
+  }
+
+  /**
+   * Authenticate via OAuth 2.0 or legacy /api/v1/auth/login.
+   */
+  private async authenticate(): Promise<string> {
     if (!this.loginPromise) {
       this.loginPromise = (async () => {
-        const res = await fetch(`${this.cfg.baseUrl}/api/v1/auth/login`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            email: this.cfg.email,
-            password: this.cfg.password,
-            totp_code: this.cfg.totpCode || undefined,
-          }),
-        });
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new ApiError(res.status, res.statusText, data, "/api/v1/auth/login");
+        // 1. Try OAuth Refresh Token grant if available
+        if (this.refreshToken) {
+          try {
+            const tokenUrl = this.cfg.oauthTokenUrl || `${this.cfg.baseUrl}/api/v1/oauth/token`;
+            const body = new URLSearchParams({
+              grant_type: "refresh_token",
+              refresh_token: this.refreshToken,
+            });
+            if (this.cfg.oauthClientId) body.set("client_id", this.cfg.oauthClientId);
+            if (this.cfg.oauthClientSecret) body.set("client_secret", this.cfg.oauthClientSecret);
+
+            const res = await fetch(tokenUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: body.toString(),
+            });
+            if (res.ok) {
+              const data = (await res.json()) as { access_token?: string; refresh_token?: string };
+              if (data.access_token) {
+                this.token = data.access_token;
+                if (data.refresh_token) this.refreshToken = data.refresh_token;
+                return data.access_token;
+              }
+            }
+          } catch {
+            // Fall through to other auth methods
+          }
         }
-        const token = (data as { token?: string }).token;
-        if (!token) throw new Error("Login succeeded but no token was returned");
-        this.token = token;
-        return token;
+
+        // 2. Try OAuth Client Credentials grant if client credentials are provided
+        if (this.cfg.oauthClientId && this.cfg.oauthClientSecret) {
+          try {
+            const tokenUrl = this.cfg.oauthTokenUrl || `${this.cfg.baseUrl}/api/v1/oauth/token`;
+            const body = new URLSearchParams({
+              grant_type: "client_credentials",
+              client_id: this.cfg.oauthClientId,
+              client_secret: this.cfg.oauthClientSecret,
+              scope: this.cfg.oauthScopes || "read write admin erp",
+            });
+
+            const res = await fetch(tokenUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: body.toString(),
+            });
+            if (res.ok) {
+              const data = (await res.json()) as { access_token?: string; refresh_token?: string };
+              if (data.access_token) {
+                this.token = data.access_token;
+                if (data.refresh_token) this.refreshToken = data.refresh_token;
+                return data.access_token;
+              }
+            }
+          } catch {
+            // Fall through to password auth
+          }
+        }
+
+        // 3. Try OAuth Password Grant if email and password are provided
+        if (this.cfg.email && this.cfg.password) {
+          try {
+            const tokenUrl = this.cfg.oauthTokenUrl || `${this.cfg.baseUrl}/api/v1/oauth/token`;
+            const body = new URLSearchParams({
+              grant_type: "password",
+              username: this.cfg.email,
+              password: this.cfg.password,
+              client_id: this.cfg.oauthClientId || "truerp-mcp-client",
+              client_secret: this.cfg.oauthClientSecret || "truerp-mcp-secret",
+            });
+            if (this.cfg.totpCode) body.set("totp_code", this.cfg.totpCode);
+
+            const res = await fetch(tokenUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/x-www-form-urlencoded" },
+              body: body.toString(),
+            });
+            if (res.ok) {
+              const data = (await res.json()) as { access_token?: string; refresh_token?: string };
+              if (data.access_token) {
+                this.token = data.access_token;
+                if (data.refresh_token) this.refreshToken = data.refresh_token;
+                return data.access_token;
+              }
+            }
+          } catch {
+            // Fall through to standard login
+          }
+
+          // 4. Fallback to /api/v1/auth/login
+          const res = await fetch(`${this.cfg.baseUrl}/api/v1/auth/login`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              email: this.cfg.email,
+              password: this.cfg.password,
+              totp_code: this.cfg.totpCode || undefined,
+            }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new ApiError(res.status, res.statusText, data, "/api/v1/auth/login");
+          }
+          const token = (data as { token?: string }).token;
+          if (!token) throw new Error("Login succeeded but no token was returned");
+          this.token = token;
+          return token;
+        }
+
+        throw new Error(
+          "Not authenticated. Configure TRUERP_OAUTH_TOKEN, TRUERP_TOKEN, or OAuth client credentials (TRUERP_OAUTH_CLIENT_ID + TRUERP_OAUTH_CLIENT_SECRET), or login credentials (TRUERP_EMAIL + TRUERP_PASSWORD).",
+        );
       })().finally(() => {
         this.loginPromise = undefined;
       });
@@ -91,7 +210,7 @@ export class TrueRPClient {
 
   private async authToken(): Promise<string> {
     if (this.token) return this.token;
-    return this.login();
+    return this.authenticate();
   }
 
   private headers(token: string): Record<string, string> {
@@ -104,8 +223,7 @@ export class TrueRPClient {
   }
 
   /**
-   * Perform an API request. On 401, drops the token, re-logs in once and
-   * retries. Returns the parsed JSON body (or text when non-JSON).
+   * Perform an API request. On 401, drops token, re-authenticates once and retries.
    */
   async request(
     method: string,
@@ -137,8 +255,7 @@ export class TrueRPClient {
 
     const res = await fetch(url, init);
 
-    if (res.status === 401 && retry && !this.cfg.token) {
-      // Token may have expired — re-login once.
+    if (res.status === 401 && retry) {
       this.token = undefined;
       return this.request(method, path, opts, false);
     }

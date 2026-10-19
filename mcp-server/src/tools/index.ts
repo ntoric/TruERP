@@ -12,6 +12,15 @@ import { registerReportTools } from "./reports.js";
 import { registerHRTools } from "./hr.js";
 import { registerAccountingTools } from "./accounting.js";
 import { registerMiscTools } from "./misc.js";
+import { registerMarketingTools } from "./marketing.js";
+import { registerDeveloperTools } from "./developer.js";
+import { registerAuditTools } from "./audit.js";
+import { registerAdminNotificationTools } from "./admin_notifications.js";
+import { registerSupportPortalTools } from "./support_portal.js";
+import { registerPrinterDocsTools } from "./printer_docs.js";
+import { registerMigrationTools } from "./migration.js";
+import { registerUserMgmtTools } from "./user_mgmt.js";
+import { registerOAuthTools } from "./oauth_tools.js";
 
 export function registerAllTools(server: McpServer, ctx: Ctx) {
   registerCoreTools(server, ctx);
@@ -26,4 +35,13 @@ export function registerAllTools(server: McpServer, ctx: Ctx) {
   registerHRTools(server, ctx);
   registerAccountingTools(server, ctx);
   registerMiscTools(server, ctx);
+  registerMarketingTools(server, ctx);
+  registerDeveloperTools(server, ctx);
+  registerAuditTools(server, ctx);
+  registerAdminNotificationTools(server, ctx);
+  registerSupportPortalTools(server, ctx);
+  registerPrinterDocsTools(server, ctx);
+  registerMigrationTools(server, ctx);
+  registerUserMgmtTools(server, ctx);
+  registerOAuthTools(server, ctx);
 }
