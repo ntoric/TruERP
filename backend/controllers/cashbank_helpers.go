@@ -210,11 +210,15 @@ func createLinkedSalePaymentInWithModeInternal(tx *gorm.DB, userID uuid.UUID, in
 		return err
 	}
 
-	if isInitialInvestmentPayment(mode) {
+	switch {
+	case isInitialInvestmentPayment(mode):
 		if err := postStandalonePaymentInAccounting(tx, userID, &payment, amount); err != nil {
 			return err
 		}
-	} else {
+	case isCreditSettlementPayment(mode):
+		// Credit-note settlements move no money: the payment row exists only
+		// to document the credit applied to the invoice.
+	default:
 		desc := salePaymentDescription(invoice)
 		if err := recordSalePaymentIn(tx, userID, accountID, amount, date, invoice.InvoiceNumber, desc); err != nil {
 			return err
@@ -424,6 +428,34 @@ func adjustBankAccountBalance(tx *gorm.DB, userID uuid.UUID, accountID *uuid.UUI
 	return tx.Save(&account).Error
 }
 
+// refundSettlesInMoney reports whether a return's refund mode moves cash/bank
+// immediately instead of staying as a credit on the party balance. Empty and
+// unknown modes stay on the credit path, matching pre-refund-mode records.
+func refundSettlesInMoney(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "cash", "bank", "upi", "card", "cheque", "bank_transfer", "original_payment":
+		return true
+	}
+	return false
+}
+
+// resolveRefundBankAccount picks the account a money-settled refund moves
+// through. original_payment follows the linked document's settlement
+// account/mode; other money modes use the payment-method mapping (or the
+// primary bank). Nil means cash in hand.
+func resolveRefundBankAccount(userID uuid.UUID, refundMode, linkedPaymentMode string, linkedAccountID *uuid.UUID) *uuid.UUID {
+	mode := normalizePaymentMethod(refundMode)
+	if mode == "original_payment" {
+		id, err := resolveBankAccountForPaymentMode(userID, linkedPaymentMode, linkedAccountID)
+		if err == nil {
+			return id
+		}
+		mode = "bank_transfer"
+	}
+	id, _ := resolveBankAccountForPaymentMode(userID, mode, nil)
+	return id
+}
+
 func adjustPartyBalance(tx *gorm.DB, userID, partyID uuid.UUID, delta float64) error {
 	if delta == 0 {
 		return nil
@@ -525,9 +557,21 @@ func createInvoicePaymentRecord(tx *gorm.DB, userID uuid.UUID, invoice *models.I
 	return tx.Create(&payment).Error
 }
 
+// isCreditSettlementPayment reports whether a payment mode represents a
+// credit-note application rather than money received. Such payments have
+// no cash/bank ledger row and never post a journal.
+func isCreditSettlementPayment(mode string) bool {
+	return normalizePaymentMethod(mode) == "credit_note"
+}
+
 func invoicePaymentsTotal(payments []models.Payment) float64 {
 	var total float64
 	for _, payment := range payments {
+		// Credit-note settlements never reduced the party balance — the
+		// return did that — so they must not be added back on reversal.
+		if isCreditSettlementPayment(payment.Mode) {
+			continue
+		}
 		total += payment.AmountReceived - payment.PaymentInDiscount
 	}
 	return total
@@ -710,18 +754,43 @@ func createLinkedPurchasePaymentOutMigration(tx *gorm.DB, userID uuid.UUID, bill
 	return createLinkedPurchasePaymentOutInternal(tx, userID, bill, amount, date, notes, false)
 }
 
+// createLinkedPurchasePaymentOutInternal resolves the bill's payment splits
+// and writes one PaymentOut (plus cash/bank + AP movement) per split, mirroring
+// createLinkedSalePaymentInInternal on the sales side.
 func createLinkedPurchasePaymentOutInternal(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill, amount float64, date time.Time, notes string, adjustPartyBalance bool) error {
 	if amount <= 0 || bill == nil {
 		return nil
 	}
 
-	var count int64
-	if err := tx.Model(&models.PaymentOut{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+	var resolved []resolvedPaymentSplit
+	var err error
+	if len(mergePaymentSplits(bill.PaymentSplits)) == 0 {
+		resolved, err = resolveInvoicePaymentSplits(userID, nil, bill.PaymentMode, amount, bill.BankAccountID)
+	} else {
+		// adjustPaymentSplitsToAmount guarantees the splits sum to the paid
+		// amount, topping up the last tender when the bill was short-paid.
+		resolved, err = resolveInvoicePaymentSplits(userID, adjustPaymentSplitsToAmount(bill.PaymentSplits, amount), bill.PaymentMode, amount, bill.BankAccountID)
+	}
+	if err != nil {
 		return err
 	}
-	number := fmt.Sprintf("POUT-%04d", count+1)
 
-	mode := normalizePaymentMethod(bill.PaymentMode)
+	for _, split := range resolved {
+		if err := createLinkedPurchasePaymentOutWithModeInternal(tx, userID, bill, split.Amount, split.Mode, split.BankAccountID, date, notes, adjustPartyBalance); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func createLinkedPurchasePaymentOutWithModeInternal(tx *gorm.DB, userID uuid.UUID, bill *models.PurchaseBill, amount float64, mode string, accountID *uuid.UUID, date time.Time, notes string, adjustPartyBalance bool) error {
+	if amount <= 0 || bill == nil {
+		return nil
+	}
+
+	number := allocateUniquePaymentOutNumber(tx, userID, "")
+
+	mode = normalizePaymentMethod(mode)
 
 	billID := bill.ID
 	paymentOut := models.PaymentOut{
@@ -746,7 +815,7 @@ func createLinkedPurchasePaymentOutInternal(tx *gorm.DB, userID uuid.UUID, bill 
 		}
 	} else {
 		desc := fmt.Sprintf("Payment out %s for purchase %s", number, bill.BillNumber)
-		if err := recordPurchasePaymentOut(tx, userID, bill.BankAccountID, amount, date, bill.BillNumber, desc); err != nil {
+		if err := recordPurchasePaymentOut(tx, userID, accountID, amount, date, bill.BillNumber, desc); err != nil {
 			return err
 		}
 	}
@@ -949,6 +1018,84 @@ func reversePayrollCashOut(tx *gorm.DB, userID uuid.UUID, reference string) erro
 	return nil
 }
 
+// refundPayrollCashOut keeps the original payroll outflow rows but writes a
+// compensating money-in ("add") transaction for each, so Cash & Banks shows
+// the refund explicitly. Used when a payroll is cancelled.
+func refundPayrollCashOut(tx *gorm.DB, userID uuid.UUID, reference, staffName string) error {
+	if reference == "" {
+		return nil
+	}
+	// Skip when a compensating refund already exists for this reference so a
+	// repeated refund cannot credit the account twice.
+	var refunded int64
+	if err := tx.Model(&models.CashTransaction{}).Where(
+		"user_id = ? AND reference = ? AND is_linked = ? AND transaction_type = ?",
+		userID, reference, true, "add",
+	).Count(&refunded).Error; err != nil {
+		return err
+	}
+	if refunded > 0 {
+		return nil
+	}
+	var transactions []models.CashTransaction
+	if err := tx.Where(
+		"user_id = ? AND reference = ? AND is_linked = ? AND transaction_type IN ?",
+		userID, reference, true, []string{"payroll", "reduce"},
+	).Find(&transactions).Error; err != nil {
+		return err
+	}
+	for _, txn := range transactions {
+		if err := adjustBankAccountBalance(tx, userID, txn.AccountID, txn.Amount, false); err != nil {
+			return err
+		}
+		reversal := models.CashTransaction{
+			ID:              uuid.New(),
+			UserID:          userID,
+			AccountID:       txn.AccountID,
+			TransactionType: "add",
+			Amount:          txn.Amount,
+			Date:            time.Now(),
+			Description:     fmt.Sprintf("Payroll reversal %s — %s", reference, staffName),
+			Reference:       reference,
+			IsLinked:        true,
+		}
+		if err := tx.Create(&reversal).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// purgeRefundedPayrollCashOut removes the original payroll outflow rows and
+// their cancellation reversals when a cancelled payroll is deleted outright.
+// Each removed row's signed movement is undone on the stored balance so any
+// subset that still exists stays consistent with the ledger-derived balance.
+func purgeRefundedPayrollCashOut(tx *gorm.DB, userID uuid.UUID, reference string) error {
+	if reference == "" {
+		return nil
+	}
+	var transactions []models.CashTransaction
+	if err := tx.Where(
+		"user_id = ? AND reference = ? AND is_linked = ? AND transaction_type IN ?",
+		userID, reference, true, []string{"payroll", "reduce", "add"},
+	).Find(&transactions).Error; err != nil {
+		return err
+	}
+	for _, txn := range transactions {
+		movement := -txn.Amount
+		if txn.TransactionType == "add" || txn.TransactionType == "transfer_in" {
+			movement = txn.Amount
+		}
+		if err := adjustBankAccountBalance(tx, userID, txn.AccountID, -movement, false); err != nil {
+			return err
+		}
+		if err := tx.Delete(&txn).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validateUserBankAccount(userID uuid.UUID, accountID *uuid.UUID) error {
 	if accountID == nil {
 		return nil
@@ -1016,4 +1163,44 @@ func allocateUniquePaymentInNumber(db *gorm.DB, userID uuid.UUID, preferred stri
 		}
 	}
 	return fmt.Sprintf("%s-%d", paymentInNumberPrefix, time.Now().Unix())
+}
+
+const paymentOutNumberPrefix = "POUT"
+
+func paymentOutNumberInUse(db *gorm.DB, userID uuid.UUID, number string) bool {
+	var n int64
+	db.Model(&models.PaymentOut{}).Where("user_id = ? AND payment_out_number = ?", userID, number).Count(&n)
+	return n > 0
+}
+
+func maxPaymentOutSequence(db *gorm.DB, userID uuid.UUID) int64 {
+	var numbers []string
+	db.Model(&models.PaymentOut{}).
+		Where("user_id = ? AND payment_out_number LIKE ?", userID, paymentOutNumberPrefix+"-%").
+		Pluck("payment_out_number", &numbers)
+	var max int64
+	for _, number := range numbers {
+		if seq := parsePaymentNumberSequence(number, paymentOutNumberPrefix); seq > max {
+			max = seq
+		}
+	}
+	return max
+}
+
+func allocateUniquePaymentOutNumber(db *gorm.DB, userID uuid.UUID, preferred string) string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" && !paymentOutNumberInUse(db, userID, preferred) {
+		return preferred
+	}
+	start := maxPaymentOutSequence(db, userID) + 1
+	if start < 1 {
+		start = 1
+	}
+	for i := start; i < start+10000; i++ {
+		candidate := fmt.Sprintf("%s-%04d", paymentOutNumberPrefix, i)
+		if !paymentOutNumberInUse(db, userID, candidate) {
+			return candidate
+		}
+	}
+	return fmt.Sprintf("%s-%d", paymentOutNumberPrefix, time.Now().Unix())
 }

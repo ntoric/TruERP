@@ -1,0 +1,28 @@
+{
+  "name": "truerp-mcp-server",
+  "version": "1.0.0",
+  "description": "MCP server exposing the TruERP billing/ERP REST API as tools (parties, products, inventory, sales, purchase, payments, notes, expenses, cash & bank, profit distribution, reports, HR & payroll, accounting, GST).",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "truerp-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}

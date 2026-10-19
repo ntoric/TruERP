@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import { Button } from '@/components/ui/button'
+import { StatusBadge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   DropdownMenu,
@@ -26,6 +27,7 @@ interface SalesReturn {
   invoice?: { invoice_number: string }
   date: string
   amount: number
+  refund_amount: number
   status: string
 }
 
@@ -76,14 +78,7 @@ export default function SalesReturnsPage() {
     setSelectedReturns(new Set())
   }, [search, filter, dateFrom, dateTo])
 
-  const getStatusBadge = (status: string) => {
-    const variants: Record<string, string> = {
-      draft: 'bg-gray-100 text-gray-700',
-      processed: 'bg-green-100 text-green-700',
-      cancelled: 'bg-red-100 text-red-700',
-    }
-    return <span className={`rounded-full px-2.5 py-0.5 text-xs font-medium ${variants[status] || variants.draft}`}>{status}</span>
-  }
+  const getStatusBadge = (status: string) => <StatusBadge status={status} />
 
   const handleProcessReturn = async (id: string) => {
     try {
@@ -264,7 +259,7 @@ export default function SalesReturnsPage() {
                         </td>
                         <td className="py-3 text-gray-600">{ret.party?.name || 'N/A'}</td>
                         <td className="py-3 text-gray-500">{ret.invoice?.invoice_number || '-'}</td>
-                        <td className="py-3 font-medium text-gray-900">{formatCurrency(ret.amount)}</td>
+                        <td className="py-3 font-medium text-gray-900">{formatCurrency(ret.refund_amount)}</td>
                         <td className="py-3">{getStatusBadge(ret.status)}</td>
                         <td className="py-3">
                           <DropdownMenu>

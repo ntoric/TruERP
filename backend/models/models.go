@@ -203,11 +203,17 @@ type Business struct {
 	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
-// PaymentSplit is one tender on a sales invoice (cash, UPI, card, …).
-// It is not stored as its own table; linked Payment rows are the source of truth.
+// PaymentSplit is one tender on an invoice or purchase bill (cash, UPI,
+// card, …). On sales invoices it is not stored as its own table; linked
+// Payment rows are the source of truth. Purchase bills persist it as JSON
+// so draft split configurations survive reloads; linked PaymentOut rows
+// remain the source of truth once payments exist.
+// BankAccountID pins the split to a specific bank account (purchase bills);
+// when nil the account is resolved from the payment-method mapping.
 type PaymentSplit struct {
-	Mode   string  `json:"mode"`
-	Amount float64 `json:"amount"`
+	Mode          string     `json:"mode"`
+	Amount        float64    `json:"amount"`
+	BankAccountID *uuid.UUID `json:"bank_account_id,omitempty"`
 }
 
 type Invoice struct {
@@ -313,10 +319,27 @@ type Payment struct {
 }
 
 type PaymentOut struct {
-	ID                 uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID             uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index;index:idx_payment_outs_user_date,priority:1"`
-	PurchaseBillID     *uuid.UUID     `json:"purchase_bill_id,omitempty" gorm:"type:uuid;index"`
-	PurchaseBill       *PurchaseBill  `json:"purchase_bill,omitempty" gorm:"foreignKey:PurchaseBillID"`
+	ID             uuid.UUID     `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID         uuid.UUID     `json:"user_id" gorm:"type:uuid;not null;index;index:idx_payment_outs_user_date,priority:1"`
+	PurchaseBillID *uuid.UUID    `json:"purchase_bill_id,omitempty" gorm:"type:uuid;index"`
+	PurchaseBill   *PurchaseBill `json:"purchase_bill,omitempty" gorm:"foreignKey:PurchaseBillID"`
+	// SalesReturnID links a payment-out to the sales return it refunds in
+	// money — created automatically when a processed return's refund
+	// settles in money, or manually from the payment-out form. Such
+	// payments never moved the party balance.
+	SalesReturnID *uuid.UUID   `json:"sales_return_id,omitempty" gorm:"type:uuid;index"`
+	SalesReturn   *SalesReturn `json:"sales_return,omitempty" gorm:"foreignKey:SalesReturnID"`
+	// CreditNoteID links a payment-out to the credit note it refunds in
+	// money. Unlike sales-return refunds these payments do move the party
+	// balance — the issued note's credit is being paid off.
+	CreditNoteID *uuid.UUID  `json:"credit_note_id,omitempty" gorm:"type:uuid;index"`
+	CreditNote   *CreditNote `json:"credit_note,omitempty" gorm:"foreignKey:CreditNoteID"`
+	// InvoiceID links a payment-out to the sales invoice it refunds in
+	// money — the fallback for refunds when no sales return document
+	// exists. Like money-settled return refunds these payments never move
+	// the party balance and leave the invoice untouched.
+	InvoiceID          *uuid.UUID     `json:"invoice_id,omitempty" gorm:"type:uuid;index"`
+	Invoice            *Invoice       `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
 	PartyID            uuid.UUID      `json:"party_id" gorm:"type:uuid;not null;index"`
 	Party              Party          `json:"party,omitempty" gorm:"foreignKey:PartyID"`
 	AmountPaid         float64        `json:"amount_paid" gorm:"default:0"`
@@ -978,8 +1001,13 @@ type PurchaseBill struct {
 	BalanceDue            float64            `json:"balance_due" gorm:"default:0"`
 	PaymentMode           string             `json:"payment_mode"`
 	BankAccountID         *uuid.UUID         `json:"bank_account_id,omitempty" gorm:"type:uuid;index"`
-	Notes                 string             `json:"notes"`
-	Signature             string             `json:"signature"`
+	// PaymentSplits is the tender breakdown behind PaidAmount (e.g. part
+	// cash, part bank). Persisted as JSON so draft bills keep their split
+	// configuration; for saved bills the linked PaymentOut rows are the
+	// source of truth (see attachPurchaseBillPaymentSplits).
+	PaymentSplits []PaymentSplit `json:"payment_splits,omitempty" gorm:"type:text;serializer:json"`
+	Notes         string         `json:"notes"`
+	Signature     string         `json:"signature"`
 	// SourceURL is the original external bill link (e.g. myBillBook
 	// https://mybillbook.in/cpp/<id>). Populated during migration import so
 	// the source document can be re-opened or re-downloaded later.
@@ -1104,12 +1132,17 @@ type BankReconciliation struct {
 }
 
 type CreditNote struct {
-	ID               uuid.UUID        `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID           uuid.UUID        `json:"user_id" gorm:"type:uuid;not null;index"`
-	InvoiceID        uuid.UUID        `json:"invoice_id" gorm:"type:uuid"`
-	Invoice          *Invoice         `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
-	PartyID          uuid.UUID        `json:"party_id" gorm:"type:uuid;not null"`
-	Party            Party            `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	ID        uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID    uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
+	InvoiceID uuid.UUID `json:"invoice_id" gorm:"type:uuid"`
+	Invoice   *Invoice  `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
+	PartyID   uuid.UUID `json:"party_id" gorm:"type:uuid;not null"`
+	Party     Party     `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	// SalesReturnID marks credit notes issued automatically by a processed
+	// sales return. Reports that sum sales returns must exclude these to
+	// avoid counting the same return twice.
+	SalesReturnID    *uuid.UUID       `json:"sales_return_id,omitempty" gorm:"type:uuid;index"`
+	SalesReturn      *SalesReturn     `json:"sales_return,omitempty" gorm:"foreignKey:SalesReturnID"`
 	CreditNoteNumber string           `json:"credit_note_number" gorm:"not null;index"`
 	Reason           string           `json:"reason"`
 	TotalAmount      float64          `json:"total_amount" gorm:"default:0"`
@@ -1137,22 +1170,25 @@ type CreditNoteItem struct {
 }
 
 type DebitNote struct {
-	ID              uuid.UUID       `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID          uuid.UUID       `json:"user_id" gorm:"type:uuid;not null;index"`
-	PurchaseBillID  uuid.UUID       `json:"purchase_bill_id" gorm:"type:uuid"`
-	PurchaseBill    *PurchaseBill   `json:"purchase_bill,omitempty" gorm:"foreignKey:PurchaseBillID"`
-	PartyID         uuid.UUID       `json:"party_id" gorm:"type:uuid;not null"`
-	Party           Party           `json:"party,omitempty" gorm:"foreignKey:PartyID"`
-	DebitNoteNumber string          `json:"debit_note_number" gorm:"not null;index"`
-	Reason          string          `json:"reason"`
-	TotalAmount     float64         `json:"total_amount" gorm:"default:0"`
-	RefundMode      string          `json:"refund_mode"`                   // cash, original_payment, debit_note
-	Status          string          `json:"status" gorm:"default:'draft'"` // draft, issued
-	Date            time.Time       `json:"date" gorm:"not null"`
-	Items           []DebitNoteItem `json:"items" gorm:"foreignKey:DebitNoteID;constraint:OnDelete:CASCADE;"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
-	DeletedAt       gorm.DeletedAt  `json:"deleted_at,omitempty" gorm:"index"`
+	ID             uuid.UUID     `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID         uuid.UUID     `json:"user_id" gorm:"type:uuid;not null;index"`
+	PurchaseBillID uuid.UUID     `json:"purchase_bill_id" gorm:"type:uuid"`
+	PurchaseBill   *PurchaseBill `json:"purchase_bill,omitempty" gorm:"foreignKey:PurchaseBillID"`
+	PartyID        uuid.UUID     `json:"party_id" gorm:"type:uuid;not null"`
+	Party          Party         `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	// PurchaseReturnID marks debit notes issued automatically by a
+	// processed purchase return, mirroring CreditNote.SalesReturnID.
+	PurchaseReturnID *uuid.UUID      `json:"purchase_return_id,omitempty" gorm:"type:uuid;index"`
+	DebitNoteNumber  string          `json:"debit_note_number" gorm:"not null;index"`
+	Reason           string          `json:"reason"`
+	TotalAmount      float64         `json:"total_amount" gorm:"default:0"`
+	RefundMode       string          `json:"refund_mode"`                   // cash, original_payment, debit_note
+	Status           string          `json:"status" gorm:"default:'draft'"` // draft, issued
+	Date             time.Time       `json:"date" gorm:"not null"`
+	Items            []DebitNoteItem `json:"items" gorm:"foreignKey:DebitNoteID;constraint:OnDelete:CASCADE;"`
+	CreatedAt        time.Time       `json:"created_at"`
+	UpdatedAt        time.Time       `json:"updated_at"`
+	DeletedAt        gorm.DeletedAt  `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type DebitNoteItem struct {
@@ -1240,19 +1276,25 @@ type PartyStats struct {
 }
 
 type SalesReturn struct {
-	ID           uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID       uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
-	PartyID      uuid.UUID `json:"party_id" gorm:"type:uuid;not null"`
-	Party        Party     `json:"party,omitempty" gorm:"foreignKey:PartyID"`
-	InvoiceID    uuid.UUID `json:"invoice_id" gorm:"type:uuid"`
-	Invoice      Invoice   `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
-	ReturnNumber string    `json:"return_number" gorm:"not null;index"`
-	Date         time.Time `json:"date" gorm:"not null"`
-	Amount       float64   `json:"amount" gorm:"default:0"`
-	Status       string    `json:"status" gorm:"default:'draft'"` // draft, processed, cancelled
-	Reason       string    `json:"reason"`
-	RefundMode   string    `json:"refund_mode"` // cash, original_payment, credit_note
-	Notes        string    `json:"notes"`
+	ID        uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID    uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
+	PartyID   uuid.UUID `json:"party_id" gorm:"type:uuid;not null"`
+	Party     Party     `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	InvoiceID uuid.UUID `json:"invoice_id" gorm:"type:uuid"`
+	Invoice   Invoice   `json:"invoice,omitempty" gorm:"foreignKey:InvoiceID"`
+	// SettleInvoiceID is the invoice a credit-settled refund is applied
+	// against. When unset, the credit settles InvoiceID. It exists so an
+	// exchange (return of invoice A's item + purchase on invoice B) can
+	// credit invoice B while the credit note still references invoice A.
+	SettleInvoiceID *uuid.UUID `json:"settle_invoice_id,omitempty" gorm:"type:uuid"`
+	SettleInvoice   *Invoice   `json:"settle_invoice,omitempty" gorm:"foreignKey:SettleInvoiceID"`
+	ReturnNumber    string     `json:"return_number" gorm:"not null;index"`
+	Date            time.Time  `json:"date" gorm:"not null"`
+	Amount          float64    `json:"amount" gorm:"default:0"`
+	Status          string     `json:"status" gorm:"default:'draft'"` // draft, processed, cancelled
+	Reason          string     `json:"reason"`
+	RefundMode      string     `json:"refund_mode"` // cash, original_payment, credit_note
+	Notes           string     `json:"notes"`
 	// DeductionItems are labelled amounts (restocking fee, damage charges,
 	// etc.) withheld from the refund; DeductionTotal is their aggregate.
 	DeductionItems []AdditionalCharge `json:"deduction_items,omitempty" gorm:"type:text;serializer:json"`
@@ -1533,6 +1575,40 @@ type StaffAdvancePayment struct {
 	DeletedAt             gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
+// StaffExtraAmount is an extra amount tracked against a staff member beyond
+// their regular salary. Direction "deduct" is an extra payout redeemed by the
+// staff (like an advance draw) that stays due until a payroll deducts it;
+// direction "add" is an extra amount owed to the staff (incentive,
+// reimbursement, etc.) that stays due until a payroll adds it. An entry may
+// also be paid out immediately via the redeem endpoint instead of waiting for
+// payroll — "deduct" entries still stay pending for salary recovery, while
+// "add" entries are settled outright by the payout.
+type StaffExtraAmount struct {
+	ID                 uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID             uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
+	StaffID            uuid.UUID      `json:"staff_id" gorm:"type:uuid;not null;index"`
+	Staff              Staff          `json:"staff,omitempty" gorm:"foreignKey:StaffID"`
+	ExtraNumber        string         `json:"extra_number" gorm:"not null;index"`
+	Direction          string         `json:"direction" gorm:"not null"` // add, deduct
+	Amount             float64        `json:"amount" gorm:"default:0"`
+	Reason             string         `json:"reason"`
+	EntryDate          time.Time      `json:"entry_date" gorm:"not null"`
+	IsRedeemed         bool           `json:"is_redeemed" gorm:"default:false"`
+	RedeemedAt         *time.Time     `json:"redeemed_at,omitempty"`
+	PaymentMode        string         `json:"payment_mode"`                                     // cash, bank_transfer, upi, cheque
+	BankAccountID      *uuid.UUID     `json:"bank_account_id,omitempty" gorm:"type:uuid;index"` // nil = cash in-hand
+	BankAccount        *BankAccount   `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
+	ExpenseID          *uuid.UUID     `json:"expense_id,omitempty" gorm:"type:uuid;index"`
+	Status             string         `json:"status" gorm:"default:'pending'"` // pending, settled, cancelled
+	SettledByPayrollID *uuid.UUID     `json:"settled_by_payroll_id,omitempty" gorm:"type:uuid;index"`
+	SettledAmount      float64        `json:"settled_amount" gorm:"default:0"`
+	Reference          string         `json:"reference"`
+	Notes              string         `json:"notes"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
 type InvoiceSettings struct {
 	ID              uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
 	UserID          uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
@@ -1558,6 +1634,7 @@ type AppearanceSettings struct {
 	UserID     uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
 	ColorTheme string         `json:"color_theme" gorm:"default:'runerail'"`
 	CustomHex  string         `json:"custom_hex"`
+	ThemeMode  string         `json:"theme_mode" gorm:"default:'light'"`
 	CreatedAt  time.Time      `json:"created_at"`
 	UpdatedAt  time.Time      `json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
@@ -1698,6 +1775,98 @@ type NotificationPreference struct {
 	LeadDays         int       `json:"lead_days" gorm:"default:0"` // Days before due date to send
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
+}
+
+// NotificationEvent is a platform-level event definition managed by the super
+// admin from the backoffice. When the event is triggered (via the admin API or
+// application code calling utils.DispatchNotificationEvent), a notification is
+// rendered from the templates below and fanned out to every channel enabled
+// both here and in NotificationChannelConfig.
+type NotificationEvent struct {
+	ID          uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	Key         string    `json:"key" gorm:"uniqueIndex;not null"` // slug e.g. invoice.created
+	Name        string    `json:"name" gorm:"not null"`
+	Description string    `json:"description"`
+	Category    string    `json:"category" gorm:"default:'custom'"` // sales, payments, inventory, system, custom
+	IsActive    bool      `json:"is_active" gorm:"default:true"`
+
+	// Per-event channel switches — the matching channel must also be enabled
+	// in NotificationChannelConfig for a delivery to be attempted.
+	EmailEnabled    bool `json:"email_enabled" gorm:"default:true"`
+	SMSEnabled      bool `json:"sms_enabled" gorm:"default:false"`
+	WhatsAppEnabled bool `json:"whatsapp_enabled" gorm:"default:false"`
+	TelegramEnabled bool `json:"telegram_enabled" gorm:"default:false"`
+	PushEnabled     bool `json:"push_enabled" gorm:"default:false"`
+	InternalEnabled bool `json:"internal_enabled" gorm:"default:true"`
+
+	// Static recipients (comma or newline separated). Dynamic recipients can
+	// also be passed in the trigger payload (email, phone, telegram_chat_id,
+	// device_tokens keys).
+	RecipientEmails        string `json:"recipient_emails" gorm:"type:text"`
+	RecipientPhones        string `json:"recipient_phones" gorm:"type:text"`
+	RecipientTelegramChats string `json:"recipient_telegram_chats" gorm:"type:text"`
+	PushDeviceTokens       string `json:"push_device_tokens" gorm:"type:text"`
+	NotifyStoreOwner       bool   `json:"notify_store_owner" gorm:"default:false"` // also email/SMS the store owner in trigger data.user_id
+
+	// Templates support {{variable}} placeholders substituted from trigger data.
+	SubjectTemplate string `json:"subject_template"`
+	BodyTemplate    string `json:"body_template" gorm:"type:text"`
+	Variables       string `json:"variables" gorm:"type:text"` // comma-separated placeholder names, documentation only
+
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// NotificationChannelConfig holds the platform-wide configuration for one
+// external notification channel (smtp, telegram, whatsapp, sms, push). Secrets
+// are stored AES-encrypted in the secrets column as a JSON object and are never
+// returned by the API.
+type NotificationChannelConfig struct {
+	ID        uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	Channel   string    `json:"channel" gorm:"uniqueIndex;not null"` // smtp, telegram, whatsapp, sms, push
+	IsEnabled bool      `json:"is_enabled" gorm:"default:false"`
+	Config    string    `json:"config" gorm:"type:text"` // JSON object of non-secret settings
+	Secrets   string    `json:"-" gorm:"type:text"`      // encrypted JSON object of secret settings
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// NotificationDelivery is an audit row written for each channel send attempt
+// performed by the notification dispatcher.
+type NotificationDelivery struct {
+	ID           uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	EventID      *uuid.UUID `json:"event_id,omitempty" gorm:"type:uuid;index"`
+	EventKey     string     `json:"event_key" gorm:"index"`
+	Channel      string     `json:"channel" gorm:"index"` // email, sms, whatsapp, telegram, push, internal
+	Recipient    string     `json:"recipient"`
+	Subject      string     `json:"subject"`
+	Message      string     `json:"message" gorm:"type:text"`
+	Status       string     `json:"status" gorm:"index"` // sent, failed
+	ErrorMessage string     `json:"error_message"`
+	CreatedAt    time.Time  `json:"created_at"`
+}
+
+// Announcement is a platform-wide message (announcement, reminder, release
+// note, etc.) published by the super admin from the backoffice. Active
+// announcements surface to every signed-in user as a tall toast card on the
+// dashboard; the card styling is driven by Type and its height by the
+// content (body length + optional image).
+type Announcement struct {
+	ID          uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	Title       string         `json:"title" gorm:"not null"`
+	Body        string         `json:"body" gorm:"type:text"`
+	Type        string         `json:"type" gorm:"not null;default:'announcement'"` // announcement, reminder, release_note, maintenance, urgent, note
+	ImageURL    string         `json:"image_url"`
+	LinkURL     string         `json:"link_url"`
+	LinkLabel   string         `json:"link_label"`
+	IsActive    bool           `json:"is_active" gorm:"default:true"`
+	StartsAt    *time.Time     `json:"starts_at,omitempty"`
+	EndsAt      *time.Time     `json:"ends_at,omitempty"`
+	CreatedByID uuid.UUID      `json:"created_by_id" gorm:"type:uuid;index"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
+	DeletedAt   gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type CAReportSharing struct {
@@ -2575,6 +2744,51 @@ type SupportTicket struct {
 	CreatedAt    time.Time      `json:"created_at"`
 	UpdatedAt    time.Time      `json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// SupportRequest is an in-app help request from a user to the platform
+// super admin. Distinct from SupportTicket, which belongs to the customer
+// portal (parties raising tickets to a business).
+type SupportRequest struct {
+	ID            uuid.UUID             `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	RequestNumber string                `json:"request_number" gorm:"not null;index"`
+	OwnerUserID   uuid.UUID             `json:"owner_user_id" gorm:"type:uuid;not null;index"` // store-owner scope of the requester
+	RequesterID   uuid.UUID             `json:"requester_id" gorm:"type:uuid;not null;index"`
+	Requester     *User                 `json:"requester,omitempty" gorm:"foreignKey:RequesterID"`
+	StoreID       *uuid.UUID            `json:"store_id,omitempty" gorm:"type:uuid;index"`
+	Store         *Store                `json:"store,omitempty" gorm:"foreignKey:StoreID"`
+	Subject       string                `json:"subject" gorm:"not null"`
+	Category      string                `json:"category" gorm:"default:'general'"` // general, billing, bug, feature_request, account
+	Message       string                `json:"message" gorm:"type:text;not null"`
+	Status        string                `json:"status" gorm:"default:'open'"` // open, in_progress, resolved, closed
+	AdminNotes    string                `json:"admin_notes" gorm:"type:text"`
+	Replies       []SupportRequestReply `json:"replies,omitempty" gorm:"foreignKey:SupportRequestID"`
+	LastReplyAt   *time.Time            `json:"last_reply_at,omitempty"`
+	ResolvedAt    *time.Time            `json:"resolved_at,omitempty"`
+	CreatedAt     time.Time             `json:"created_at"`
+	UpdatedAt     time.Time             `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt        `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+type SupportRequestReply struct {
+	ID               uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	SupportRequestID uuid.UUID `json:"support_request_id" gorm:"type:uuid;not null;index"`
+	AuthorID         uuid.UUID `json:"author_id" gorm:"type:uuid;not null"`
+	Author           *User     `json:"author,omitempty" gorm:"foreignKey:AuthorID"`
+	IsAdmin          bool      `json:"is_admin" gorm:"default:false"`
+	Message          string    `json:"message" gorm:"type:text;not null"`
+	CreatedAt        time.Time `json:"created_at"`
+}
+
+// SupportContactSettings is a singleton row holding the public support
+// contact channels shown on the in-app Support page. Editable by super admin.
+type SupportContactSettings struct {
+	ID             uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	SupportEmail   string         `json:"support_email"`
+	WhatsAppNumber string         `json:"whatsapp_number"` // digits incl. country code, used for wa.me links
+	CreatedAt      time.Time      `json:"created_at"`
+	UpdatedAt      time.Time      `json:"updated_at"`
+	DeletedAt      gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 // SavedInvoiceTemplate stores reusable invoice line-item / terms presets.

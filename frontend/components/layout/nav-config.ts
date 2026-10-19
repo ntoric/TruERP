@@ -1,6 +1,5 @@
 import type { Icon } from '@phosphor-icons/react'
 import {
-  Gauge,
   UsersThree,
   Tag,
   Package,
@@ -42,9 +41,13 @@ import {
   Storefront,
   Scroll,
   Bell,
+  BellRinging,
   GlobeHemisphereWest,
   GearSix,
   BracketsCurly,
+  Headset,
+  Ticket,
+  FlagBanner,
 } from '@phosphor-icons/react'
 import { canManageUsers, isSuperAdmin } from '@/lib/roles'
 
@@ -97,7 +100,7 @@ export function filterNavForPageFeatures(
 }
 
 export const navItems: NavItem[] = [
-  { name: 'Dashboard', href: '/dashboard', icon: Gauge, accent: '#4f46e5' },
+  { name: 'Dashboard', href: '/dashboard', icon: SquaresFour, accent: '#4f46e5' },
   { name: 'Parties', href: '/parties', icon: UsersThree, accent: '#7c3aed' },
   { name: 'Product Categories', href: '/categories', icon: Tag, accent: '#b45309' },
   { name: 'Products', href: '/products', icon: Package, accent: '#059669' },
@@ -196,6 +199,10 @@ export const navItems: NavItem[] = [
   },
   { name: 'Notifications', href: '/notifications', icon: Bell, accent: '#d97706' },
   { name: 'Customer Portal', href: '/customer-portal', icon: GlobeHemisphereWest, accent: '#0e7490', superAdminOnly: true },
+  { name: 'Support Requests', href: '/support-requests', icon: Ticket, accent: '#be123c', superAdminOnly: true },
+  { name: 'Notification Center', href: '/notification-center', icon: BellRinging, accent: '#ea580c', superAdminOnly: true },
+  { name: 'Announcements', href: '/announcements', icon: FlagBanner, accent: '#7c3aed', superAdminOnly: true },
+  { name: 'Support', href: '/support', icon: Headset, accent: '#0f766e' },
   { name: 'Settings', href: '/settings', icon: GearSix, accent: '#475569' },
   { name: 'Developer Settings', href: '/developer-settings', icon: BracketsCurly, accent: '#334155', superAdminOnly: true },
 ]
@@ -208,7 +215,7 @@ export const bottomNavPrimary: {
   accent: string
   match: (p: string) => boolean
 }[] = [
-  { name: 'Home', href: '/dashboard', icon: Gauge, accent: '#4f46e5', match: (p) => p === '/dashboard' || p.startsWith('/dashboard/') },
+  { name: 'Home', href: '/dashboard', icon: SquaresFour, accent: '#4f46e5', match: (p) => p === '/dashboard' || p.startsWith('/dashboard/') },
   { name: 'Parties', href: '/parties', icon: UsersThree, accent: '#7c3aed', match: (p) => p.startsWith('/parties') },
   { name: 'Products', href: '/products', icon: Package, accent: '#059669', match: (p) => p.startsWith('/products') || p.startsWith('/categories') || p.startsWith('/inventory') },
   { name: 'Sales', href: '/invoices', icon: Invoice, accent: '#2563eb', match: (p) => p.startsWith('/invoices') || p.startsWith('/sales-returns') || p.startsWith('/credit-notes') || p.startsWith('/delivery-challans') || p.startsWith('/payments') },

@@ -6,6 +6,7 @@ import DashboardLayout from '@/components/layout/DashboardLayout'
 import SummaryStat from '@/components/widgets/SummaryStat'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { StatusBadge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -110,6 +111,9 @@ interface PayrollCalc {
   period_deductions: number
   advance_recovery: number
   advance_count: number
+  extra_add: number
+  extra_deduct: number
+  extra_count: number
   estimated_net: number
 }
 
@@ -127,6 +131,8 @@ interface StaffBalance {
   salary_paid: number
   advances_pending: number
   deductions_pending: number
+  extras_add_pending?: number
+  extras_deduct_pending?: number
 }
 
 const PAYMENT_MODES = [
@@ -140,17 +146,9 @@ const STATUS_OPTIONS = [
   { value: 'paid', label: 'Paid' },
   { value: 'partial', label: 'Partial' },
   { value: 'pending', label: 'Pending' },
+  { value: 'cancelled', label: 'Cancelled' },
 ] as const
 
-const PAYROLL_STATUS_BADGES: Record<string, string> = {
-  paid: 'bg-green-100 text-green-700',
-  partial: 'bg-blue-100 text-blue-700',
-  pending: 'bg-yellow-100 text-yellow-700',
-}
-
-function payrollStatusBadge(status: string) {
-  return PAYROLL_STATUS_BADGES[status] || 'bg-gray-100 text-gray-700'
-}
 
 function formatPaymentMode(mode: string) {
   return PAYMENT_MODES.find((item) => item.value === mode)?.label || mode.replace('_', ' ')
@@ -513,6 +511,25 @@ export default function PayrollPage() {
     } catch (err) { console.error(err) }
   }
 
+  const handleCancelPayroll = async () => {
+    if (!historyPayroll) return
+    if (!(await confirm({
+      title: 'Cancel payroll?',
+      description: 'This will cancel the payroll, refund every payment into Cash & Banks as a revert entry, and restore the staff balance. The record stays for history but cannot be edited or paid again.',
+    }))) return
+    try {
+      const res = await apiFetch(`/payroll/${historyPayroll.id}/cancel`, { method: 'POST' })
+      if (res.ok) {
+        const updated: Payroll = await res.json()
+        setHistoryPayroll(updated)
+        refreshData()
+      } else {
+        const data = await res.json().catch(() => ({}))
+        notifyError((data as { error?: string }).error || 'Failed to cancel payroll')
+      }
+    } catch (err) { console.error(err) }
+  }
+
   const handleEdit = (payroll: Payroll) => {
     setEditingPayroll(payroll)
     setEditFormData({
@@ -634,7 +651,9 @@ export default function PayrollPage() {
     ? payrollCalc.payable_days * calcDailyRate
     : formData.basic_salary
   const periodDeductions = payrollCalc?.period_deductions || 0
-  const estimatedNet = Math.max(0, calculatedPayable - formData.deductions - periodDeductions - advanceRecovery + formData.bonus)
+  const extraAdd = payrollCalc?.extra_add || 0
+  const extraDeduct = payrollCalc?.extra_deduct || 0
+  const estimatedNet = Math.max(0, calculatedPayable - formData.deductions - periodDeductions - advanceRecovery - extraDeduct + formData.bonus + extraAdd)
 
   const handleExport = async () => {
     const exportList =
@@ -869,9 +888,7 @@ export default function PayrollPage() {
                       <TableCell className="whitespace-nowrap text-sm text-gray-700">
                         {formatDate(p.start_date)} – {formatDate(p.end_date)}
                         {p.is_settlement && (
-                          <span className="ml-1 inline-flex items-center rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-                            All dues
-                          </span>
+                          <StatusBadge tone="warning" className="ml-1">All dues</StatusBadge>
                         )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(p.payment_date)}</TableCell>
@@ -902,9 +919,7 @@ export default function PayrollPage() {
                       <TableCell className="whitespace-nowrap">{formatPaymentMode(p.payment_mode)}</TableCell>
                       <TableCell className="whitespace-nowrap text-sm text-gray-700">{formatPaidFrom(p)}</TableCell>
                       <TableCell className="whitespace-nowrap">
-                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${payrollStatusBadge(p.status)}`}>
-                          {p.status.toUpperCase()}
-                        </span>
+                        <StatusBadge status={p.status} />
                       </TableCell>
                       <TableCell className="text-right">
                         <DropdownMenu>
@@ -914,7 +929,7 @@ export default function PayrollPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            {payrollRemaining(p) > 0 && (
+                            {p.status !== 'cancelled' && payrollRemaining(p) > 0 && (
                               <DropdownMenuItem onClick={() => openPayDialog(p)}>
                                 <Wallet className="mr-2 h-4 w-4" />
                                 Record Payment
@@ -924,10 +939,12 @@ export default function PayrollPage() {
                               <History className="mr-2 h-4 w-4" />
                               Payment History
                             </DropdownMenuItem>
-                            <DropdownMenuItem onClick={() => handleEdit(p)}>
-                              <Pencil className="mr-2 h-4 w-4" />
-                              Edit
-                            </DropdownMenuItem>
+                            {p.status !== 'cancelled' && (
+                              <DropdownMenuItem onClick={() => handleEdit(p)}>
+                                <Pencil className="mr-2 h-4 w-4" />
+                                Edit
+                              </DropdownMenuItem>
+                            )}
                             <DropdownMenuItem onClick={() => handleDelete(p.id)} className="text-red-600">
                               <Trash2 className="mr-2 h-4 w-4" />
                               Delete
@@ -987,7 +1004,7 @@ export default function PayrollPage() {
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2"><Label>Payment Date *</Label><Input type="date" value={formData.payment_date} onChange={(e) => setFormData({...formData, payment_date: e.target.value})} /></div>
                 <div className="space-y-2"><Label>Payment Mode</Label>
                   <Select
@@ -1032,11 +1049,11 @@ export default function PayrollPage() {
               </div>
               {formData.payment_type !== 'all_due' && (
                 <>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2"><Label>Start Date *</Label><Input type="date" value={formData.start_date} onChange={(e) => setFormData({...formData, start_date: e.target.value})} /></div>
                 <div className="space-y-2"><Label>End Date *</Label><Input type="date" value={formData.end_date} onChange={(e) => setFormData({...formData, end_date: e.target.value})} /></div>
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2"><Label>Basic Salary</Label><Input type="number" value={formData.basic_salary} readOnly disabled className="bg-gray-50" /></div>
                 <div className="space-y-2"><Label>Deductions</Label><Input type="number" value={formData.deductions} onChange={(e) => setFormData({...formData, deductions: parseFloat(e.target.value) || 0})} /></div>
                 <div className="space-y-2"><Label>Bonus</Label><Input type="number" value={formData.bonus} onChange={(e) => setFormData({...formData, bonus: parseFloat(e.target.value) || 0})} /></div>
@@ -1079,6 +1096,13 @@ export default function PayrollPage() {
                   {periodDeductions > 0 && (
                     <p className="text-xs text-blue-800">Period deductions auto-applied: {formatCurrency(periodDeductions)}</p>
                   )}
+                  {(extraAdd > 0 || extraDeduct > 0) && (
+                    <p className="text-xs text-blue-800">
+                      Extra amounts auto-applied: {extraAdd > 0 && `+${formatCurrency(extraAdd)} payable`}
+                      {extraAdd > 0 && extraDeduct > 0 && ' · '}
+                      {extraDeduct > 0 && `−${formatCurrency(extraDeduct)} recoverable`}
+                    </p>
+                  )}
                 </div>
               )}
               <div className="rounded-md border bg-gray-50 px-3 py-2 text-sm">
@@ -1112,6 +1136,10 @@ export default function PayrollPage() {
                           ` · Advances −${formatCurrency(dueInfo.advances_pending)}`}
                         {dueInfo.deductions_pending > 0 &&
                           ` · Deductions −${formatCurrency(dueInfo.deductions_pending)}`}
+                        {(dueInfo.extras_add_pending || 0) > 0 &&
+                          ` · Extras +${formatCurrency(dueInfo.extras_add_pending || 0)}`}
+                        {(dueInfo.extras_deduct_pending || 0) > 0 &&
+                          ` · Extras −${formatCurrency(dueInfo.extras_deduct_pending || 0)}`}
                       </p>
                       <p className="text-xs text-amber-800">
                         Unpaid payrolls are settled first, then a settlement payroll covers the rest.
@@ -1122,7 +1150,7 @@ export default function PayrollPage() {
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Payment</Label>
                   <Select
@@ -1206,7 +1234,7 @@ export default function PayrollPage() {
                   onChange={(e) => setEditFormData({ ...editFormData, payment_date: e.target.value })}
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Deductions</Label>
                   <Input
@@ -1240,7 +1268,7 @@ export default function PayrollPage() {
                   )}
                 </div>
               )}
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                 <div className="space-y-2">
                   <Label>Payment Mode</Label>
                   <Select
@@ -1333,7 +1361,7 @@ export default function PayrollPage() {
                     {(payingPayroll.paid_amount || 0) > 0 && ` (paid ${formatCurrency(payingPayroll.paid_amount)})`}
                   </span>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Amount *</Label>
                     <Input
@@ -1353,7 +1381,7 @@ export default function PayrollPage() {
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-2">
                   <div className="space-y-2">
                     <Label>Payment Mode</Label>
                     <Select
@@ -1420,7 +1448,12 @@ export default function PayrollPage() {
         <Dialog open={isHistoryOpen} onOpenChange={setIsHistoryOpen}>
           <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Payment History - {historyPayroll?.payment_number}</DialogTitle>
+              <DialogTitle>
+                Payment History - {historyPayroll?.payment_number}
+                {historyPayroll?.status === 'cancelled' && (
+                  <StatusBadge status="cancelled" className="ml-2" />
+                )}
+              </DialogTitle>
             </DialogHeader>
             {historyPayroll && (
               <div className="py-2 space-y-3">
@@ -1430,8 +1463,11 @@ export default function PayrollPage() {
                     Paid {formatCurrency(historyPayroll.paid_amount || 0)}
                   </span>
                   <span className="text-gray-500"> of {formatCurrency(historyPayroll.net_salary)} net</span>
-                  {payrollRemaining(historyPayroll) > 0 && (
+                  {historyPayroll.status !== 'cancelled' && payrollRemaining(historyPayroll) > 0 && (
                     <span className="text-blue-700"> · Due {formatCurrency(payrollRemaining(historyPayroll))}</span>
+                  )}
+                  {historyPayroll.status === 'cancelled' && (
+                    <span className="text-red-600"> · Cancelled — payments refunded to Cash & Banks</span>
                   )}
                 </div>
                 {paymentsLoading ? (
@@ -1463,14 +1499,16 @@ export default function PayrollPage() {
                           </TableCell>
                           <TableCell className="whitespace-nowrap text-sm text-gray-700">{payment.reference || '—'}</TableCell>
                           <TableCell className="text-right">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-8 w-8 p-0 text-red-600"
-                              onClick={() => handleDeletePayment(payment.id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
+                            {historyPayroll.status !== 'cancelled' && (
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 text-red-600"
+                                onClick={() => handleDeletePayment(payment.id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
@@ -1481,7 +1519,12 @@ export default function PayrollPage() {
             )}
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsHistoryOpen(false)}>Close</Button>
-              {historyPayroll && payrollRemaining(historyPayroll) > 0 && (
+              {historyPayroll && historyPayroll.status !== 'cancelled' && (
+                <Button variant="destructive" onClick={handleCancelPayroll}>
+                  Cancel Payroll
+                </Button>
+              )}
+              {historyPayroll && historyPayroll.status !== 'cancelled' && payrollRemaining(historyPayroll) > 0 && (
                 <Button onClick={() => { setIsHistoryOpen(false); openPayDialog(historyPayroll) }}>
                   Record Payment
                 </Button>

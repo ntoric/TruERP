@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TruERP Chat</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <span class="brand-name">TruERP Chat</span>
+          <span id="mcp-status" class="status-dot" title="MCP status">●</span>
+        </div>
+
+        <label class="field">
+          <span>Provider</span>
+          <select id="provider"></select>
+        </label>
+
+        <label class="field" id="apikey-field">
+          <span>API key <em id="apikey-env" class="env-hint"></em></span>
+          <input id="apikey" type="password" placeholder="sk-…" autocomplete="off" />
+        </label>
+
+        <label class="field">
+          <span>Model</span>
+          <select id="model"></select>
+          <input id="model-custom" class="hidden" placeholder="custom model id" />
+        </label>
+
+        <label class="field hidden" id="baseurl-field">
+          <span>Ollama base URL</span>
+          <input id="baseurl" placeholder="http://localhost:11434" />
+        </label>
+
+        <button id="tools-btn" class="ghost-btn">Tools: <span id="tools-count">…</span></button>
+
+        <details class="field">
+          <summary>System prompt</summary>
+          <textarea id="system" rows="6" placeholder="Leave empty for the default ERP assistant prompt"></textarea>
+        </details>
+
+        <div class="sidebar-footer">
+          <button id="new-chat" class="ghost-btn">+ New chat</button>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div id="transcript" class="transcript"></div>
+        <form id="composer" class="composer">
+          <textarea
+            id="input"
+            rows="2"
+            placeholder="Ask about invoices, stock, customers, GST… (Enter to send, Shift+Enter for newline)"
+          ></textarea>
+          <button id="send" type="submit">Send</button>
+          <button id="stop" type="button" class="hidden">Stop</button>
+        </form>
+      </main>
+    </div>
+
+    <div id="tools-panel" class="tools-panel hidden">
+      <div class="tools-head">
+        <input id="tools-search" placeholder="Search tools…" />
+        <button id="tools-all" class="ghost-btn">All</button>
+        <button id="tools-none" class="ghost-btn">None</button>
+        <button id="tools-close" class="ghost-btn">Done</button>
+      </div>
+      <div id="tools-list" class="tools-list"></div>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+</html>

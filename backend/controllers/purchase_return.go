@@ -62,12 +62,13 @@ func CreatePurchaseReturn(c *gin.Context) {
 		RefundMode     string    `json:"refund_mode"`
 		Notes          string    `json:"notes"`
 		Items          []struct {
-			PurchaseBillItemID uuid.UUID `json:"purchase_bill_item_id"`
-			Description        string    `json:"description" binding:"required"`
-			Quantity           float64   `json:"quantity" binding:"required,gt=0"`
-			UnitPrice          float64   `json:"unit_price" binding:"required"`
-			TaxRate            float64   `json:"tax_rate"`
-			Reason             string    `json:"reason"`
+			PurchaseBillItemID uuid.UUID  `json:"purchase_bill_item_id"`
+			ProductID          *uuid.UUID `json:"product_id"`
+			Description        string     `json:"description"`
+			Quantity           float64    `json:"quantity" binding:"required,gt=0"`
+			UnitPrice          float64    `json:"unit_price" binding:"gte=0"`
+			TaxRate            float64    `json:"tax_rate"`
+			Reason             string     `json:"reason"`
 		} `json:"items" binding:"required,min=1"`
 	}
 
@@ -80,6 +81,20 @@ func CreatePurchaseReturn(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid date format, expected YYYY-MM-DD"})
 		return
+	}
+
+	// A linked bill must exist and belong to the same party — a mismatch would
+	// settle the wrong vendor's balance when the return is processed.
+	if input.PurchaseBillID != uuid.Nil {
+		var bill models.PurchaseBill
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, input.PurchaseBillID).First(&bill).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid purchase bill"})
+			return
+		}
+		if bill.PartyID != input.PartyID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Purchase bill does not belong to the selected vendor"})
+			return
+		}
 	}
 
 	var count int64
@@ -100,6 +115,30 @@ func CreatePurchaseReturn(c *gin.Context) {
 
 	var totalAmount float64
 	for _, item := range input.Items {
+		description := item.Description
+		if item.ProductID != nil && *item.ProductID != uuid.Nil {
+			var product models.Product
+			if err := utils.DB.Where("user_id = ? AND id = ?", userID, *item.ProductID).First(&product).Error; err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid product in return items"})
+				return
+			}
+			if description == "" {
+				description = product.Name
+			}
+		} else if item.PurchaseBillItemID != uuid.Nil {
+			var billItem models.PurchaseBillItem
+			if err := utils.DB.Where("id = ?", item.PurchaseBillItemID).First(&billItem).Error; err == nil {
+				if description == "" {
+					description = billItem.Description
+				}
+			}
+		}
+
+		if description == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Item description or product_id is required"})
+			return
+		}
+
 		taxAmount := item.UnitPrice * item.Quantity * (item.TaxRate / 100)
 		total := item.UnitPrice*item.Quantity + taxAmount
 
@@ -107,7 +146,7 @@ func CreatePurchaseReturn(c *gin.Context) {
 			ID:                 uuid.New(),
 			ReturnID:           purchaseReturn.ID,
 			PurchaseBillItemID: item.PurchaseBillItemID,
-			Description:        item.Description,
+			Description:        description,
 			Quantity:           item.Quantity,
 			UnitPrice:          item.UnitPrice,
 			TaxRate:            item.TaxRate,
@@ -120,7 +159,14 @@ func CreatePurchaseReturn(c *gin.Context) {
 
 	purchaseReturn.Amount = totalAmount
 
-	if err := utils.DB.Create(&purchaseReturn).Error; err != nil {
+	// Omit PurchaseBillID when the return is not linked to a bill so NULL is
+	// written — a zero UUID would violate the purchase_returns purchase_bill FK.
+	if purchaseReturn.PurchaseBillID == uuid.Nil {
+		err = utils.DB.Omit("PurchaseBillID", "PurchaseBill").Create(&purchaseReturn).Error
+	} else {
+		err = utils.DB.Create(&purchaseReturn).Error
+	}
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create purchase return"})
 		return
 	}
@@ -211,13 +257,122 @@ func ProcessPurchaseReturn(c *gin.Context) {
 	purchaseReturn.Status = "processed"
 	utils.DB.Save(&purchaseReturn)
 
-	// Returning stock to the vendor reduces what we owe them (vendor balances
-	// are negative while payable).
+	// Returning stock to the vendor settles one of two ways: money-settled
+	// refunds (cash, original payment) record the incoming cash/bank row,
+	// while a credit note reduces what we owe them (vendor balances are
+	// negative while payable) and is applied to the linked bill's
+	// outstanding amount.
 	if purchaseReturn.Amount > 0 {
-		adjustPartyBalance(utils.DB, userID, purchaseReturn.PartyID, purchaseReturn.Amount)
+		var linkedBill *models.PurchaseBill
+		if purchaseReturn.PurchaseBillID != uuid.Nil {
+			var bill models.PurchaseBill
+			if err := utils.DB.Where("user_id = ? AND id = ?", userID, purchaseReturn.PurchaseBillID).First(&bill).Error; err == nil {
+				linkedBill = &bill
+			}
+		}
+		if refundSettlesInMoney(purchaseReturn.RefundMode) {
+			var linkedMode string
+			var linkedAccountID *uuid.UUID
+			if linkedBill != nil {
+				linkedMode = linkedBill.PaymentMode
+				linkedAccountID = linkedBill.BankAccountID
+			}
+			accountID := resolveRefundBankAccount(userID, purchaseReturn.RefundMode, linkedMode, linkedAccountID)
+			desc := fmt.Sprintf("Purchase return %s refund", purchaseReturn.ReturnNumber)
+			if err := recordPaymentCashTxn(utils.DB, userID, accountID, "in", purchaseReturn.Amount, purchaseReturn.Date, purchaseReturn.ReturnNumber, desc); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record refund"})
+				return
+			}
+		} else {
+			adjustPartyBalance(utils.DB, userID, purchaseReturn.PartyID, purchaseReturn.Amount)
+			settlePurchaseBillWithReturn(linkedBill, purchaseReturn.Amount)
+			if err := issueDebitNoteForReturn(userID, &purchaseReturn); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create debit note"})
+				return
+			}
+		}
 	}
 
 	c.JSON(http.StatusOK, purchaseReturn)
+}
+
+// issueDebitNoteForReturn writes the DebitNote document for a
+// credit-settled purchase return so it appears on the debit notes list.
+// The note is created already issued because the balance and bill effects
+// are applied by the caller.
+func issueDebitNoteForReturn(userID uuid.UUID, purchaseReturn *models.PurchaseReturn) error {
+	var count int64
+	if err := utils.DB.Model(&models.DebitNote{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return err
+	}
+
+	reason := fmt.Sprintf("Purchase return %s", purchaseReturn.ReturnNumber)
+	if purchaseReturn.Reason != "" {
+		reason += " - " + purchaseReturn.Reason
+	}
+
+	debitNote := models.DebitNote{
+		ID:               uuid.New(),
+		UserID:           userID,
+		PurchaseBillID:   purchaseReturn.PurchaseBillID,
+		PartyID:          purchaseReturn.PartyID,
+		PurchaseReturnID: &purchaseReturn.ID,
+		DebitNoteNumber:  fmt.Sprintf("DN-%04d", count+1),
+		Date:             purchaseReturn.Date,
+		Status:           "issued",
+		Reason:           reason,
+		RefundMode:       "debit_note",
+		TotalAmount:      purchaseReturn.Amount,
+	}
+	for _, item := range purchaseReturn.Items {
+		debitNote.Items = append(debitNote.Items, models.DebitNoteItem{
+			ID:                 uuid.New(),
+			DebitNoteID:        debitNote.ID,
+			PurchaseBillItemID: item.PurchaseBillItemID,
+			Description:        item.Description,
+			Quantity:           item.Quantity,
+			UnitPrice:          item.UnitPrice,
+			TaxRate:            item.TaxRate,
+			Total:              item.Total,
+			Reason:             item.Reason,
+		})
+	}
+
+	// Omit PurchaseBillID when the return is not linked to a bill so NULL is
+	// written — a zero UUID would violate the debit_notes purchase_bill FK.
+	if purchaseReturn.PurchaseBillID == uuid.Nil {
+		return utils.DB.Omit("PurchaseBillID", "PurchaseBill").Create(&debitNote).Error
+	}
+	return utils.DB.Create(&debitNote).Error
+}
+
+// settlePurchaseBillWithReturn applies a credit-settled return against the
+// linked bill's outstanding amount. The covered share lands on paid_amount
+// because balance_due is always derived as total - paid across the codebase.
+func settlePurchaseBillWithReturn(bill *models.PurchaseBill, amount float64) {
+	if bill == nil || amount <= 0 || bill.BalanceDue <= 0 {
+		return
+	}
+	covered := amount
+	if covered > bill.BalanceDue {
+		covered = bill.BalanceDue
+	}
+	newPaid := bill.PaidAmount + covered
+	status := "unpaid"
+	if bill.TotalAmount > 0 && newPaid+0.01 >= bill.TotalAmount {
+		status = "paid"
+	} else if newPaid > 0 {
+		status = "partial"
+	}
+	balanceDue := bill.TotalAmount - newPaid
+	if balanceDue < 0 {
+		balanceDue = 0
+	}
+	utils.DB.Model(bill).Updates(map[string]interface{}{
+		"paid_amount": newPaid,
+		"balance_due": balanceDue,
+		"status":      status,
+	})
 }
 
 func DeletePurchaseReturn(c *gin.Context) {

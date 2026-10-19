@@ -423,6 +423,48 @@ func postStandalonePaymentOutAccounting(tx *gorm.DB, userID uuid.UUID, payment *
 	})
 }
 
+// postSalesReturnRefundAccounting posts the GL entry for a money-settled
+// sales return refund: revenue is reduced while cash/bank goes out. It
+// shares the payment_out_record ref type with standalone payment-outs so
+// deleting the refund's PaymentOut reverses this journal via
+// reverseAccountingByRef.
+func postSalesReturnRefundAccounting(tx *gorm.DB, userID uuid.UUID, payment *models.PaymentOut, amount float64) error {
+	if amount <= 0 {
+		return nil
+	}
+	desc := fmt.Sprintf("Payment out %s for sales return %s", payment.PaymentOutNumber, payment.Reference)
+	assetCode := settlementAccountCodeForMode(tx, userID, payment.Mode)
+	return postAutoJournal(tx, userID, payment.Date, desc, "payment_out_record", payment.ID, payment.PaymentOutNumber, []glLine{
+		{AccountCode: acCodeSales, Debit: amount, Description: desc},
+		{AccountCode: assetCode, Credit: amount, Description: desc},
+	})
+}
+
+// postInvoiceRefundAccounting posts the GL entry for a payment-out that
+// refunds a sales invoice in money: revenue is reduced while cash/bank goes
+// out, mirroring postSalesReturnRefundAccounting for a refund that has no
+// return document. It shares the payment_out_record ref type so deleting
+// the PaymentOut reverses this journal via reverseAccountingByRef.
+func postInvoiceRefundAccounting(tx *gorm.DB, userID uuid.UUID, payment *models.PaymentOut, invoice *models.Invoice, amount float64) error {
+	if amount <= 0 {
+		return nil
+	}
+	invoiceNumber := ""
+	if invoice != nil {
+		invoiceNumber = invoice.InvoiceNumber
+	}
+	desc := fmt.Sprintf("Payment out %s for sales invoice %s", payment.PaymentOutNumber, invoiceNumber)
+	assetCode := settlementAccountCodeForMode(tx, userID, payment.Mode)
+	refNumber := payment.PaymentOutNumber
+	if refNumber == "" {
+		refNumber = payment.ID.String()
+	}
+	return postAutoJournal(tx, userID, payment.Date, desc, "payment_out_record", payment.ID, refNumber, []glLine{
+		{AccountCode: acCodeSales, Debit: amount, Description: desc},
+		{AccountCode: assetCode, Credit: amount, Description: desc},
+	})
+}
+
 func postManualCashAddAccounting(tx *gorm.DB, userID uuid.UUID, txn *models.CashTransaction) error {
 	if txn.Amount <= 0 {
 		return nil

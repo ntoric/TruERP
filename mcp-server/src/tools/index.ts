@@ -1,0 +1,29 @@
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Ctx } from "./helpers.js";
+import { registerCoreTools } from "./core.js";
+import { registerPartyTools } from "./parties.js";
+import { registerProductTools } from "./products.js";
+import { registerInventoryTools } from "./inventory.js";
+import { registerPurchaseTools } from "./purchase.js";
+import { registerSalesTools } from "./sales.js";
+import { registerMoneyTools } from "./money.js";
+import { registerCashBankTools } from "./cashbank.js";
+import { registerReportTools } from "./reports.js";
+import { registerHRTools } from "./hr.js";
+import { registerAccountingTools } from "./accounting.js";
+import { registerMiscTools } from "./misc.js";
+
+export function registerAllTools(server: McpServer, ctx: Ctx) {
+  registerCoreTools(server, ctx);
+  registerPartyTools(server, ctx);
+  registerProductTools(server, ctx);
+  registerInventoryTools(server, ctx);
+  registerPurchaseTools(server, ctx);
+  registerSalesTools(server, ctx);
+  registerMoneyTools(server, ctx);
+  registerCashBankTools(server, ctx);
+  registerReportTools(server, ctx);
+  registerHRTools(server, ctx);
+  registerAccountingTools(server, ctx);
+  registerMiscTools(server, ctx);
+}

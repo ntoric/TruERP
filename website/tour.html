@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Product Tour — TruERP Cloud</title>
+  <meta name="description" content="Walk through every TruERP workspace — dashboard, GST invoicing, POS counter, reports, inventory, parties, multi-store HQ and theming — with real product screenshots." />
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- ===================== NAV ===================== -->
+  <header class="nav" id="nav">
+    <div class="container nav-inner">
+      <a href="index.html" class="brand">
+        <img src="assets/logo.svg" alt="TruERP" class="brand-logo" />
+        <span class="brand-name">TruERP</span>
+        <span class="brand-tag">Cloud</span>
+      </a>
+
+      <nav class="nav-links" id="navLinks">
+        <a href="tour.html" class="nav-active">Product Tour</a>
+        <a href="index.html#insights">Analytics</a>
+        <a href="index.html#showcase">Workflows</a>
+        <a href="index.html#service">Managed Service</a>
+        <a href="index.html#pricing">Pricing</a>
+        <a href="index.html#faq">FAQ</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a href="index.html#signup" class="btn btn-ghost">Sign in</a>
+        <a href="index.html#signup" class="btn btn-primary">Start 14-day trial</a>
+        <button class="nav-toggle" id="navToggle" aria-label="Menu">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- ===================== TOUR HERO ===================== -->
+  <section class="tour-hero">
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="container">
+      <a href="index.html" class="pill">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M15 18l-6-6 6-6"/></svg>
+        Back to home
+      </a>
+      <h1 class="hero-title">
+        The full product tour.<br />
+        <span class="grad">Every screen, explained.</span>
+      </h1>
+      <p class="hero-sub">
+        Twelve workspaces your team and your CA will live in every day —
+        shown exactly as they run on your subscription, with real data.
+        Click any screenshot to inspect it full-size.
+      </p>
+
+      <nav class="jump-nav" aria-label="Jump to section">
+        <a href="#dashboard">Dashboard</a>
+        <a href="#analytics">Analytics</a>
+        <a href="#collections">Collections</a>
+        <a href="#invoices">GST Invoices</a>
+        <a href="#invoice-builder">Invoice Builder</a>
+        <a href="#pos">POS Counter</a>
+        <a href="#reports">Reports</a>
+        <a href="#inventory">Inventory</a>
+        <a href="#parties">Parties</a>
+        <a href="#stores">Multi-Store</a>
+        <a href="#appearance">Theming</a>
+        <a href="#dark">Dark Mode</a>
+      </nav>
+    </div>
+  </section>
+
+  <main class="tour-body container">
+
+    <!-- 01 Dashboard -->
+    <section class="spot tour-block" id="dashboard">
+      <div class="spot-copy">
+        <span class="tour-idx">01 · Command Center</span>
+        <span class="spot-tag">Dashboard</span>
+        <h3>Your whole day on one screen</h3>
+        <p>The dashboard opens with today's sales, one-tap actions and live receivables — so a cashier sees what to do next and the owner sees whether the day is healthy.</p>
+        <ul class="check-list">
+          <li>Today's billed total with invoice, customer and product counters</li>
+          <li>One-tap shortcuts: new invoice, open POS, add party / product</li>
+          <li>Receivables card — pending amount, overdue count and 5-bucket aging</li>
+          <li>"Needs attention" flag when collections start slipping</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/dashboard.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/dashboard</div>
+            <span class="frame-live"><i class="live-dot"></i> Live</span>
+          </div>
+          <img src="assets/screens/dashboard.png" alt="TruERP dashboard — today's sales hero, quick actions, receivables aging and KPI sparklines" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 02 Analytics wall -->
+    <section class="spot tour-block reverse" id="analytics">
+      <div class="spot-copy">
+        <span class="tour-idx">02 · Analytics Wall</span>
+        <span class="spot-tag">Charts &amp; Trends</span>
+        <h3>Spot a slow week before it hurts</h3>
+        <p>Four KPI sparklines sit above a 30-day sales trend and an invoice-status donut — refreshed the moment a bill is punched at any counter.</p>
+        <ul class="check-list">
+          <li>Today invoices, average bill value, net cash flow, receivables vs payables</li>
+          <li>30-day sales area chart with daily invoice-count overlay</li>
+          <li>Invoice-status donut — paid / overdue / sent / draft by invoiced value</li>
+          <li>Period switcher: today, this week, month or custom range</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/dashboard-charts.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/dashboard</div>
+          </div>
+          <img src="assets/screens/dashboard-charts.png" alt="Dashboard analytics — KPI sparkline cards, sales trend chart and invoice status donut" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 03 Collections & leaders -->
+    <section class="spot tour-block" id="collections">
+      <div class="spot-copy">
+        <span class="tour-idx">03 · Collections &amp; Leaders</span>
+        <span class="spot-tag">Money In / Money Out</span>
+        <h3>Know exactly where the money is</h3>
+        <p>Daily cash-in vs cash-out bars, the UPI / bank / card / cash mix, and ranked lists of debtors, best sellers and top customers — the owner's morning read.</p>
+        <ul class="check-list">
+          <li>Cash-flow bars catch a squeeze weeks before it lands</li>
+          <li>Payment-mode donut shows how collections actually arrive</li>
+          <li>Top debtors with days-overdue chips and a one-tap Collect action</li>
+          <li>Top products &amp; customers by units, revenue and dues</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/dashboard-leaders.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/dashboard</div>
+          </div>
+          <img src="assets/screens/dashboard-leaders.png" alt="Dashboard bottom widgets — cash flow bars, payment modes donut, outstanding dues, top products and top customers" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 04 GST Invoices -->
+    <section class="spot tour-block reverse" id="invoices">
+      <div class="spot-copy">
+        <span class="tour-idx">04 · GST Invoicing</span>
+        <span class="spot-tag">Invoice Register</span>
+        <h3>Every bill, searchable and exportable</h3>
+        <p>The invoice register keeps every sale organised — filter by status, date or party, collect pending payments in one tap, and hand your CA a clean export.</p>
+        <ul class="check-list">
+          <li>Paid / sent / partial / overdue status chips on every invoice</li>
+          <li>Filter by date range, customer or amount — search invoice numbers</li>
+          <li>Bulk export to CSV / ZIP for GSTR filing and CA handover</li>
+          <li>Record payments against invoices without leaving the list</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/invoices.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/invoices</div>
+          </div>
+          <img src="assets/screens/invoices.png" alt="GST invoice register — searchable list with status chips and payment collection" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 05 Invoice Builder -->
+    <section class="spot tour-block" id="invoice-builder">
+      <div class="spot-copy">
+        <span class="tour-idx">05 · Invoice Builder</span>
+        <span class="spot-tag">Tax-Correct Billing</span>
+        <h3>A GST-perfect invoice in under a minute</h3>
+        <p>Pick a party, add line items, and the builder handles CGST / SGST / IGST splits by place of supply, freight and discounts — ready to print, share or e-invoice.</p>
+        <ul class="check-list">
+          <li>Auto CGST / SGST / IGST split from party GSTIN &amp; state</li>
+          <li>HSN codes, line-level discounts, transport &amp; other charges</li>
+          <li>Split tender — part cash, part UPI, part credit on one bill</li>
+          <li>Branded A4 PDF, WhatsApp share and e-invoice (IRN + QR)</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/invoice-create.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/invoices/create</div>
+          </div>
+          <img src="assets/screens/invoice-create.png" alt="Sales invoice builder — party details, line items, GST split and totals" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 06 POS Counter -->
+    <section class="spot tour-block reverse" id="pos">
+      <div class="spot-copy">
+        <span class="tour-idx">06 · POS Counter</span>
+        <span class="spot-tag">Instant Checkout</span>
+        <h3>Built for rush hour</h3>
+        <p>A dense, searchable product grid tuned for barcode scanners and weighing scales — bill a walk-in in about 4 seconds, print on thermal, done.</p>
+        <ul class="check-list">
+          <li>Hundreds of SKUs on one grid — scan, search or tap to add</li>
+          <li>Barcode &amp; weighing-scale input with PLU support</li>
+          <li>Held bills, drafts and multiple open orders per counter</li>
+          <li>UPI / cash / card / split tender with live balance &amp; thermal print</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/pos.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/pos</div>
+            <span class="frame-live"><i class="live-dot"></i> 290+ SKUs</span>
+          </div>
+          <img src="assets/screens/pos.png" alt="POS counter — dense product grid, cart with items, UPI tender and checkout" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 07 Reports -->
+    <section class="spot tour-block" id="reports">
+      <div class="spot-copy">
+        <span class="tour-idx">07 · Reports &amp; P&amp;L</span>
+        <span class="spot-tag">CA-Ready Books</span>
+        <h3>Eleven financial views, always current</h3>
+        <p>Sales, revenue, P&amp;L, outstanding, customers, products, tax, payments and inventory — every report reads live data, so month-end needs no catch-up.</p>
+        <ul class="check-list">
+          <li>11 tabs: Sales, Revenue, P&amp;L, Outstanding, Customers, Products, Tax…</li>
+          <li>Bill-wise profit, GSTR-1 / GSTR-2 / GSTR-3B and HSN summaries</li>
+          <li>Receivables aging and payables position at a glance</li>
+          <li>One-click CSV / ZIP export for your accountant</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/reports.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/reports</div>
+          </div>
+          <img src="assets/screens/reports.png" alt="Reports and analytics — revenue summary, sales trend and receivables aging" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 08 Inventory -->
+    <section class="spot tour-block reverse" id="inventory">
+      <div class="spot-copy">
+        <span class="tour-idx">08 · Inventory Control</span>
+        <span class="spot-tag">Stock &amp; Batches</span>
+        <h3>Stock that reconciles itself</h3>
+        <p>Batch-wise quantities, reserved vs available, and consolidated stock value across every outlet and godown — with low-stock alerts before you run dry.</p>
+        <ul class="check-list">
+          <li>Opening, purchase, sale, adjustment and transfer entries</li>
+          <li>Reserved vs available quantities per batch / warehouse</li>
+          <li>Inter-store transfers with approval trail</li>
+          <li>Low-stock thresholds feed straight into dashboard alerts</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/inventory.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/inventory</div>
+          </div>
+          <img src="assets/screens/inventory.png" alt="Inventory management — stock balance, batches and stock value by warehouse" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 09 Parties -->
+    <section class="spot tour-block" id="parties">
+      <div class="spot-copy">
+        <span class="tour-idx">09 · Parties &amp; Ledgers</span>
+        <span class="spot-tag">Customers &amp; Suppliers</span>
+        <h3>Every rupee owed, tracked to the party</h3>
+        <p>Customers and vendors in one directory — balances, credit limits, GSTINs and full statements, with WhatsApp payment reminders built in.</p>
+        <ul class="check-list">
+          <li>Running balance and credit limit per party</li>
+          <li>Bill-wise ledger statements — open, collect, reconcile</li>
+          <li>WhatsApp / SMS / email payment reminders</li>
+          <li>Customer self-portal for statements &amp; downloads</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/parties.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/parties</div>
+          </div>
+          <img src="assets/screens/parties.png" alt="Parties and ledgers — customer and supplier directory with balances" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 Multi-Store -->
+    <section class="spot tour-block reverse" id="stores">
+      <div class="spot-copy">
+        <span class="tour-idx">10 · Multi-Store HQ</span>
+        <span class="spot-tag">Outlets &amp; Permissions</span>
+        <h3>Run every branch from one login</h3>
+        <p>Add outlets as you grow — each with its own staff, invoice series and reports — and hop between branches from the top bar without logging out.</p>
+        <ul class="check-list">
+          <li>Unlimited outlets on Growth &amp; Scale plans</li>
+          <li>Per-store staff roles and invoice numbering series</li>
+          <li>Consolidated group view + per-branch reports</li>
+          <li>Inter-store stock transfers and unified party ledgers</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/stores.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/stores</div>
+          </div>
+          <img src="assets/screens/stores.png" alt="Multi-store management — outlets, store profiles and staff assignment" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 11 Appearance -->
+    <section class="spot tour-block" id="appearance">
+      <div class="spot-copy">
+        <span class="tour-idx">11 · Theming &amp; Branding</span>
+        <span class="spot-tag">Make It Yours</span>
+        <h3>Looks like your brand, not ours</h3>
+        <p>Eleven curated colour themes plus a custom hex picker — and your logo, layout and accent carry through to invoices and the customer portal.</p>
+        <ul class="check-list">
+          <li>11 preset themes + custom brand colour from any hex</li>
+          <li>Logo upload with aspect-ratio control</li>
+          <li>Theme flows into PDF invoices and the customer portal</li>
+          <li>Per-user preference — counters can keep their own look</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/appearance.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/settings/appearance</div>
+          </div>
+          <img src="assets/screens/appearance.png" alt="Appearance settings — 11 colour themes and custom hex picker" />
+        </div>
+      </div>
+    </section>
+
+    <!-- 12 Dark Mode -->
+    <section class="spot tour-block reverse" id="dark">
+      <div class="spot-copy">
+        <span class="tour-idx">12 · Dark Mode</span>
+        <span class="spot-tag">Night-Owl Friendly</span>
+        <h3>Easy on the eyes after closing time</h3>
+        <p>A true dark theme across every module — charts, grids and tooltips re-tuned so the 10 PM number-check stays crisp without the glare.</p>
+        <ul class="check-list">
+          <li>OLED-friendly true-black surfaces across all modules</li>
+          <li>Chart grids, axes and tooltips re-tuned per theme</li>
+          <li>One tap to switch — or auto-follow macOS / Windows</li>
+          <li>Invoice &amp; print previews always stay light for accuracy</li>
+        </ul>
+      </div>
+      <div class="spot-visual">
+        <div class="frame" data-zoom="assets/screens/dashboard-dark.png">
+          <div class="frame-bar">
+            <span class="bdot"></span><span class="bdot"></span><span class="bdot"></span>
+            <div class="frame-url">app.truerp.in/dashboard · dark</div>
+          </div>
+          <img src="assets/screens/dashboard-dark.png" alt="TruERP dashboard in dark mode — KPI sparklines, sales trend and invoice donut" />
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ===================== FINAL CTA ===================== -->
+  <section class="final-cta" id="signup">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <img src="assets/logo.svg" alt="" class="cta-logo" />
+      <h2 class="h2">Seen enough? Try it on your own books.</h2>
+      <p class="lead">Start a 14-day free trial — we'll migrate your existing Tally, Vyapar or Excel data for free so you can test every screen with real numbers.</p>
+      <div class="hero-cta">
+        <a href="index.html#signup" class="btn btn-primary btn-lg">Create free workspace
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a href="index.html#pricing" class="btn btn-outline btn-lg">See pricing</a>
+      </div>
+      <p class="cta-note">14-day free trial · No credit card required · Free Tally / Excel migration</p>
+    </div>
+  </section>
+
+  <!-- ===================== FOOTER ===================== -->
+  <footer class="footer">
+    <div class="container">
+      <div class="foot-grid">
+        <div class="foot-brand">
+          <a href="index.html" class="brand"><img src="assets/logo.svg" alt="TruERP" class="brand-logo" /><span class="brand-name">TruERP</span><span class="brand-tag">Cloud</span></a>
+          <p>Managed GST billing, POS, inventory and accounting service for Indian businesses.</p>
+        </div>
+        <div class="foot-col">
+          <h4>Service</h4>
+          <a href="tour.html">Product tour</a>
+          <a href="index.html#insights">Live analytics</a>
+          <a href="index.html#showcase">Workflows</a>
+          <a href="index.html#pricing">Pricing</a>
+        </div>
+        <div class="foot-col">
+          <h4>Onboarding</h4>
+          <a href="index.html#how">How it works</a>
+          <a href="index.html#service">Tally / Vyapar migration</a>
+          <a href="index.html#service">Counter desktop app</a>
+          <a href="index.html#signup">Book a walkthrough</a>
+        </div>
+        <div class="foot-col">
+          <h4>Compliance</h4>
+          <a href="index.html#showcase">GST &amp; GSTR reports</a>
+          <a href="index.html#showcase">E-Invoicing &amp; IRN</a>
+          <a href="index.html#showcase">Double-entry books</a>
+          <a href="index.html#faq">Data &amp; backups</a>
+        </div>
+        <div class="foot-col">
+          <h4>Company</h4>
+          <a href="index.html#signup">Contact support</a>
+          <a href="#">Privacy policy</a>
+          <a href="#">Terms of service</a>
+          <a href="#">Refund policy</a>
+        </div>
+      </div>
+      <div class="foot-bottom">
+        <span>© 2026 TruERP Cloud. All rights reserved.</span>
+        <span>Built for Indian businesses</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- Lightbox for full-screen screenshot inspection -->
+  <div class="lightbox" id="lightbox" aria-hidden="true">
+    <button class="lightbox-close" id="lightboxClose" aria-label="Close">×</button>
+    <img id="lightboxImg" src="" alt="Screenshot preview" />
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

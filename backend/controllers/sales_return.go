@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"gorm.io/gorm"
 )
 
 // normalizeDeductionItems trims labels, defaults blank labels, drops
@@ -75,7 +76,7 @@ func GetSalesReturn(c *gin.Context) {
 	id := c.Param("id")
 
 	var salesReturn models.SalesReturn
-	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).Preload("Party").Preload("Invoice").Preload("Items").First(&salesReturn).Error; err != nil {
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).Preload("Party").Preload("Invoice").Preload("SettleInvoice").Preload("Items").First(&salesReturn).Error; err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Sales return not found"})
 		return
 	}
@@ -88,14 +89,15 @@ func CreateSalesReturn(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
 
 	var input struct {
-		PartyID        uuid.UUID                 `json:"party_id" binding:"required"`
-		InvoiceID      uuid.UUID                 `json:"invoice_id"`
-		Date           time.Time                 `json:"date" binding:"required"`
-		Reason         string                    `json:"reason"`
-		RefundMode     string                    `json:"refund_mode"`
-		Notes          string                    `json:"notes"`
-		DeductionItems []models.AdditionalCharge `json:"deduction_items"`
-		Items          []struct {
+		PartyID         uuid.UUID                 `json:"party_id" binding:"required"`
+		InvoiceID       uuid.UUID                 `json:"invoice_id"`
+		SettleInvoiceID *uuid.UUID                `json:"settle_invoice_id"`
+		Date            time.Time                 `json:"date" binding:"required"`
+		Reason          string                    `json:"reason"`
+		RefundMode      string                    `json:"refund_mode"`
+		Notes           string                    `json:"notes"`
+		DeductionItems  []models.AdditionalCharge `json:"deduction_items"`
+		Items           []struct {
 			InvoiceItemID uuid.UUID  `json:"invoice_item_id"`
 			ProductID     *uuid.UUID `json:"product_id"`
 			Description   string     `json:"description"`
@@ -114,17 +116,33 @@ func CreateSalesReturn(c *gin.Context) {
 	var count int64
 	utils.DB.Model(&models.SalesReturn{}).Where("user_id = ?", userID).Count(&count)
 
+	// The settle invoice must exist and belong to the same party — the
+	// credit path reduces this party's balance while settling that
+	// invoice's outstanding, so a cross-party link would corrupt both.
+	if input.SettleInvoiceID != nil && *input.SettleInvoiceID != uuid.Nil {
+		var settleInvoice models.Invoice
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *input.SettleInvoiceID).First(&settleInvoice).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid settle invoice"})
+			return
+		}
+		if settleInvoice.PartyID != input.PartyID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Settle invoice does not belong to the selected party"})
+			return
+		}
+	}
+
 	salesReturn := models.SalesReturn{
-		ID:           uuid.New(),
-		UserID:       userID,
-		PartyID:      input.PartyID,
-		InvoiceID:    input.InvoiceID,
-		ReturnNumber: fmt.Sprintf("SR-%04d", count+1),
-		Date:         input.Date,
-		Status:       "draft",
-		Reason:       input.Reason,
-		RefundMode:   input.RefundMode,
-		Notes:        input.Notes,
+		ID:              uuid.New(),
+		UserID:          userID,
+		PartyID:         input.PartyID,
+		InvoiceID:       input.InvoiceID,
+		SettleInvoiceID: input.SettleInvoiceID,
+		ReturnNumber:    fmt.Sprintf("SR-%04d", count+1),
+		Date:            input.Date,
+		Status:          "draft",
+		Reason:          input.Reason,
+		RefundMode:      input.RefundMode,
+		Notes:           input.Notes,
 	}
 
 	var totalAmount float64
@@ -217,16 +235,31 @@ func UpdateSalesReturn(c *gin.Context) {
 	}
 
 	var input struct {
-		Date           time.Time                 `json:"date"`
-		Reason         string                    `json:"reason"`
-		RefundMode     string                    `json:"refund_mode"`
-		Notes          string                    `json:"notes"`
-		DeductionItems []models.AdditionalCharge `json:"deduction_items"`
+		Date            time.Time                 `json:"date"`
+		Reason          string                    `json:"reason"`
+		RefundMode      string                    `json:"refund_mode"`
+		Notes           string                    `json:"notes"`
+		DeductionItems  []models.AdditionalCharge `json:"deduction_items"`
+		SettleInvoiceID *uuid.UUID                `json:"settle_invoice_id"`
 	}
 
 	if err := c.ShouldBindJSON(&input); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+
+	if input.SettleInvoiceID != nil && *input.SettleInvoiceID != uuid.Nil {
+		var settleInvoice models.Invoice
+		if err := utils.DB.Where("user_id = ? AND id = ?", userID, *input.SettleInvoiceID).First(&settleInvoice).Error; err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid settle invoice"})
+			return
+		}
+		if settleInvoice.PartyID != salesReturn.PartyID {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Settle invoice does not belong to the selected party"})
+			return
+		}
+	} else {
+		input.SettleInvoiceID = nil
 	}
 
 	deductionItems, err := normalizeDeductionItems(input.DeductionItems)
@@ -244,11 +277,12 @@ func UpdateSalesReturn(c *gin.Context) {
 	salesReturn.Reason = input.Reason
 	salesReturn.RefundMode = input.RefundMode
 	salesReturn.Notes = input.Notes
+	salesReturn.SettleInvoiceID = input.SettleInvoiceID
 	salesReturn.DeductionItems = deductionItems
 	salesReturn.DeductionTotal = deductionTotal
 
 	if err := utils.DB.Model(&salesReturn).
-		Select("date", "reason", "refund_mode", "notes", "deduction_items", "deduction_total").
+		Select("date", "reason", "refund_mode", "notes", "settle_invoice_id", "deduction_items", "deduction_total").
 		Updates(&salesReturn).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update sales return"})
 		return
@@ -335,17 +369,228 @@ func ProcessSalesReturn(c *gin.Context) {
 		}
 	}
 
-	salesReturn.Status = "processed"
-	utils.DB.Save(&salesReturn)
-
-	// The return credits the customer: reduce their outstanding balance by the
-	// net refund (return amount minus deductions).
+	// The return settles one of two ways: money-settled refunds (cash, bank,
+	// UPI, original payment) write a PaymentOut to the customer plus the
+	// outgoing cash/bank row and refund journal, while a credit note reduces
+	// the customer's outstanding balance by the net refund (return amount
+	// minus deductions) and is applied to the linked invoice's outstanding
+	// amount. The status flip and settlement commit together so a failure
+	// can't leave a processed return with no money movement.
 	setSalesReturnRefund(&salesReturn)
-	if salesReturn.RefundAmount > 0 {
-		adjustPartyBalance(utils.DB, userID, salesReturn.PartyID, -salesReturn.RefundAmount)
+	salesReturn.Status = "processed"
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(&salesReturn).Error; err != nil {
+			return err
+		}
+		if salesReturn.RefundAmount <= 0 {
+			return nil
+		}
+		var linkedInvoice *models.Invoice
+		if salesReturn.InvoiceID != uuid.Nil {
+			var invoice models.Invoice
+			if err := tx.Where("user_id = ? AND id = ?", userID, salesReturn.InvoiceID).First(&invoice).Error; err == nil {
+				linkedInvoice = &invoice
+			}
+		}
+		// The credit applies to SettleInvoiceID when set (e.g. an exchange
+		// where the returned item's value pays toward a new invoice),
+		// otherwise to the source invoice as before.
+		settleInvoice := linkedInvoice
+		if salesReturn.SettleInvoiceID != nil && *salesReturn.SettleInvoiceID != uuid.Nil {
+			settleInvoice = nil
+			var invoice models.Invoice
+			if err := tx.Where("user_id = ? AND id = ?", userID, *salesReturn.SettleInvoiceID).First(&invoice).Error; err == nil {
+				settleInvoice = &invoice
+			}
+		}
+		if refundSettlesInMoney(salesReturn.RefundMode) {
+			// A payment out may already exist for this return when the refund
+			// was recorded manually while the return was still a draft —
+			// creating another would double-pay the customer.
+			var existing int64
+			tx.Model(&models.PaymentOut{}).
+				Where("user_id = ? AND sales_return_id = ?", userID, salesReturn.ID).
+				Count(&existing)
+			if existing > 0 {
+				return nil
+			}
+			var linkedMode string
+			var linkedAccountID *uuid.UUID
+			if linkedInvoice != nil {
+				linkedMode = linkedInvoice.PaymentMode
+				linkedAccountID = linkedInvoice.BankAccountID
+			}
+			accountID := resolveRefundBankAccount(userID, salesReturn.RefundMode, linkedMode, linkedAccountID)
+			return recordSalesReturnRefundPayment(tx, userID, &salesReturn, linkedMode, accountID)
+		}
+		if err := adjustPartyBalance(tx, userID, salesReturn.PartyID, -salesReturn.RefundAmount); err != nil {
+			return err
+		}
+		creditNote, err := issueCreditNoteForReturn(tx, userID, &salesReturn)
+		if err != nil {
+			return err
+		}
+		covered := settleInvoiceWithReturn(tx, settleInvoice, salesReturn.RefundAmount)
+		recordCreditSettlePayment(tx, userID, &salesReturn, settleInvoice, creditNote, covered)
+		return nil
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process sales return"})
+		return
 	}
 
 	c.JSON(http.StatusOK, salesReturn)
+}
+
+// recordSalesReturnRefundPayment writes the PaymentOut that documents a
+// money-settled sales return refund to the customer, its linked cash/bank
+// reduce row, and the refund journal. The party balance is intentionally
+// untouched: the refund settles in money, not credit.
+func recordSalesReturnRefundPayment(tx *gorm.DB, userID uuid.UUID, salesReturn *models.SalesReturn, linkedPaymentMode string, accountID *uuid.UUID) error {
+	mode := normalizePaymentMethod(salesReturn.RefundMode)
+	if mode == "original_payment" {
+		mode = normalizePaymentMethod(linkedPaymentMode)
+	}
+	paymentOut := models.PaymentOut{
+		ID:               uuid.New(),
+		UserID:           userID,
+		PartyID:          salesReturn.PartyID,
+		SalesReturnID:    &salesReturn.ID,
+		AmountPaid:       salesReturn.RefundAmount,
+		PaymentOutNumber: allocateUniquePaymentOutNumber(tx, userID, ""),
+		Mode:             mode,
+		Date:             salesReturn.Date,
+		Reference:        salesReturn.ReturnNumber,
+		Notes:            fmt.Sprintf("Refund for sales return %s", salesReturn.ReturnNumber),
+	}
+	if err := tx.Create(&paymentOut).Error; err != nil {
+		return err
+	}
+	ref := paymentOutCashRef(&paymentOut)
+	desc := fmt.Sprintf("Payment out %s for sales return %s", ref, salesReturn.ReturnNumber)
+	if err := recordPaymentCashTxn(tx, userID, accountID, "out", salesReturn.RefundAmount, salesReturn.Date, salesReturn.ReturnNumber, desc); err != nil {
+		return err
+	}
+	return postSalesReturnRefundAccounting(tx, userID, &paymentOut, salesReturn.RefundAmount)
+}
+
+// issueCreditNoteForReturn writes the CreditNote document for a
+// credit-settled sales return so it appears on the credit notes list. The
+// note is created already issued because the balance and invoice effects
+// are applied by the caller; each withheld deduction is added as a
+// negative line so the items reconcile with the net credited amount.
+// Returns the created note so callers can reference its number.
+func issueCreditNoteForReturn(tx *gorm.DB, userID uuid.UUID, salesReturn *models.SalesReturn) (*models.CreditNote, error) {
+	var count int64
+	if err := tx.Model(&models.CreditNote{}).Where("user_id = ?", userID).Count(&count).Error; err != nil {
+		return nil, err
+	}
+
+	reason := fmt.Sprintf("Sales return %s", salesReturn.ReturnNumber)
+	if salesReturn.Reason != "" {
+		reason += " - " + salesReturn.Reason
+	}
+
+	creditNote := models.CreditNote{
+		ID:               uuid.New(),
+		UserID:           userID,
+		InvoiceID:        salesReturn.InvoiceID,
+		PartyID:          salesReturn.PartyID,
+		SalesReturnID:    &salesReturn.ID,
+		CreditNoteNumber: fmt.Sprintf("CN-%04d", count+1),
+		Date:             salesReturn.Date,
+		Status:           "issued",
+		Reason:           reason,
+		RefundMode:       "credit_note",
+		TotalAmount:      salesReturn.RefundAmount,
+	}
+	for _, item := range salesReturn.Items {
+		creditNote.Items = append(creditNote.Items, models.CreditNoteItem{
+			ID:            uuid.New(),
+			CreditNoteID:  creditNote.ID,
+			InvoiceItemID: item.InvoiceItemID,
+			Description:   item.Description,
+			Quantity:      item.Quantity,
+			UnitPrice:     item.UnitPrice,
+			TaxRate:       item.TaxRate,
+			Total:         item.Total,
+			Reason:        item.Reason,
+		})
+	}
+	for _, deduction := range salesReturn.DeductionItems {
+		creditNote.Items = append(creditNote.Items, models.CreditNoteItem{
+			ID:           uuid.New(),
+			CreditNoteID: creditNote.ID,
+			Description:  deduction.Label,
+			Quantity:     1,
+			UnitPrice:    -deduction.Amount,
+			Total:        -deduction.Amount,
+			Reason:       "Deduction",
+		})
+	}
+
+	// Omit InvoiceID when the return is not linked to an invoice so NULL is
+	// written — a zero UUID would violate the credit_notes invoice FK.
+	if salesReturn.InvoiceID == uuid.Nil {
+		return &creditNote, tx.Omit("InvoiceID", "Invoice").Create(&creditNote).Error
+	}
+	return &creditNote, tx.Create(&creditNote).Error
+}
+
+// recordCreditSettlePayment writes a non-cash payment-in (mode
+// "credit_note") for the portion of a return's credit that settled a
+// sales invoice. It records no cash/bank movement and no journal — the
+// credit was already applied to the party balance — it exists so the
+// invoice's payment trail and derived payment splits show the credit leg
+// ("Cash + Credit Note") instead of silently absorbing it into
+// amount_paid, which payment resyncs would otherwise convert to real
+// cash/bank transactions.
+func recordCreditSettlePayment(tx *gorm.DB, userID uuid.UUID, salesReturn *models.SalesReturn, settleInvoice *models.Invoice, creditNote *models.CreditNote, covered float64) {
+	if covered <= 0 || settleInvoice == nil {
+		return
+	}
+	notes := fmt.Sprintf("Credit note applied from sales return %s", salesReturn.ReturnNumber)
+	if creditNote != nil && creditNote.CreditNoteNumber != "" {
+		notes = fmt.Sprintf("Credit note %s applied from sales return %s", creditNote.CreditNoteNumber, salesReturn.ReturnNumber)
+	}
+	payment := models.Payment{
+		ID:              uuid.New(),
+		UserID:          userID,
+		InvoiceID:       &settleInvoice.ID,
+		PartyID:         salesReturn.PartyID,
+		AmountReceived:  covered,
+		PaymentInNumber: allocateUniquePaymentInNumber(tx, userID, ""),
+		Mode:            "credit_note",
+		Date:            salesReturn.Date,
+		Reference:       settleInvoice.InvoiceNumber,
+		Notes:           notes,
+	}
+	if err := tx.Create(&payment).Error; err != nil {
+		fmt.Printf("[DEBUG] recordCreditSettlePayment - create payment error: %v\n", err)
+	}
+}
+
+// settleInvoiceWithReturn applies a credit-settled return against the linked
+// invoice's outstanding amount. The covered share lands on amount_paid since
+// outstanding is derived as total - amount_paid everywhere else. Returns the
+// amount actually covered.
+func settleInvoiceWithReturn(tx *gorm.DB, invoice *models.Invoice, amount float64) float64 {
+	if invoice == nil || amount <= 0 {
+		return 0
+	}
+	outstanding := invoice.TotalAmount - invoice.AmountPaid
+	if outstanding <= 0 {
+		return 0
+	}
+	covered := amount
+	if covered > outstanding {
+		covered = outstanding
+	}
+	newPaid := invoice.AmountPaid + covered
+	tx.Model(invoice).Updates(map[string]interface{}{
+		"amount_paid": newPaid,
+		"status":      invoiceStatusForPaidAmount(*invoice, newPaid),
+	})
+	return covered
 }
 
 func DeleteSalesReturn(c *gin.Context) {

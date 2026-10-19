@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
+import Link from 'next/link'
 import { apiFetch } from '@/hooks/useAuth'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import PageSkeleton from '@/components/layout/PageSkeleton'
 import { Button } from '@/components/ui/button'
+import { StatusBadge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { formatCurrency } from '@/lib/utils'
@@ -126,13 +128,7 @@ export default function DebitNoteDetailPage() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    const colors: Record<string, string> = {
-      draft: 'bg-gray-100 text-gray-700',
-      issued: 'bg-green-100 text-green-700',
-    }
-    return <span className={`px-2 py-1 rounded text-xs ${colors[status] || 'bg-gray-100'}`}>{status}</span>
-  }
+  const getStatusBadge = (status: string) => <StatusBadge status={status} />
 
   if (loading) {
     return (
@@ -182,81 +178,88 @@ export default function DebitNoteDetailPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-2">
-            <CardHeader>
-              <CardTitle>Debit Note Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-sm text-gray-500">Status</p>
-                  <p className="font-medium">{getStatusBadge(debitNote.status)}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Date</p>
-                  <p className="font-medium">{new Date(debitNote.date).toLocaleDateString()}</p>
-                </div>
-                <div>
-                  <p className="text-sm text-gray-500">Refund Mode</p>
-                  <p className="font-medium capitalize">{debitNote.refund_mode}</p>
-                </div>
-              </div>
-              {debitNote.reason && (
-                <div>
-                  <p className="text-sm text-gray-500">Reason</p>
-                  <p className="font-medium">{debitNote.reason}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Vendor Details</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Debit Note Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
               <div>
-                <p className="text-sm text-gray-500">Name</p>
-                <p className="font-medium">{debitNote.party?.name}</p>
+                <p className="text-sm text-gray-500">Status</p>
+                <p className="font-medium">{getStatusBadge(debitNote.status)}</p>
               </div>
-              {debitNote.party?.phone && (
-                <div>
-                  <p className="text-sm text-gray-500">Phone</p>
-                  <p className="font-medium">{debitNote.party.phone}</p>
-                </div>
-              )}
-              {debitNote.party?.email && (
-                <div>
-                  <p className="text-sm text-gray-500">Email</p>
-                  <p className="font-medium">{debitNote.party.email}</p>
-                </div>
-              )}
-              {debitNote.party?.gstin && (
-                <div>
-                  <p className="text-sm text-gray-500">GSTIN</p>
-                  <p className="font-medium">{debitNote.party.gstin}</p>
-                </div>
-              )}
-              {debitNote.party?.address && (
-                <div>
-                  <p className="text-sm text-gray-500">Address</p>
-                  <p className="font-medium">{debitNote.party.address}, {debitNote.party.city}, {debitNote.party.state}</p>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+              <div>
+                <p className="text-sm text-gray-500">Date</p>
+                <p className="font-medium">{new Date(debitNote.date).toLocaleDateString()}</p>
+              </div>
+              <div>
+                <p className="text-sm text-gray-500">Refund Mode</p>
+                <p className="font-medium capitalize">{debitNote.refund_mode}</p>
+              </div>
+            </div>
+            {debitNote.reason && (
+              <div>
+                <p className="text-sm text-gray-500">Reason</p>
+                <p className="font-medium">{debitNote.reason}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Vendor Details</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div>
+              <p className="text-sm text-gray-500">Name</p>
+              <p className="font-medium">{debitNote.party?.name}</p>
+            </div>
+            {debitNote.party?.phone && (
+              <div>
+                <p className="text-sm text-gray-500">Phone</p>
+                <p className="font-medium">{debitNote.party.phone}</p>
+              </div>
+            )}
+            {debitNote.party?.email && (
+              <div>
+                <p className="text-sm text-gray-500">Email</p>
+                <p className="font-medium">{debitNote.party.email}</p>
+              </div>
+            )}
+            {debitNote.party?.gstin && (
+              <div>
+                <p className="text-sm text-gray-500">GSTIN</p>
+                <p className="font-medium">{debitNote.party.gstin}</p>
+              </div>
+            )}
+            {debitNote.party?.address && (
+              <div>
+                <p className="text-sm text-gray-500">Address</p>
+                <p className="font-medium">{debitNote.party.address}, {debitNote.party.city}, {debitNote.party.state}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <Card>
           <CardHeader>
             <CardTitle>Linked Purchase Bill</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-4 min-[420px]:grid-cols-3">
               <div>
                 <p className="text-sm text-gray-500">Bill Number</p>
-                <p className="font-medium">{debitNote.purchase_bill?.bill_number}</p>
+                {debitNote.purchase_bill ? (
+                  <Link
+                    href={`/purchase-invoices/view?id=${debitNote.purchase_bill.id}`}
+                    className="font-medium text-blue-600 hover:underline"
+                  >
+                    {debitNote.purchase_bill.bill_number}
+                  </Link>
+                ) : (
+                  <p className="font-medium">-</p>
+                )}
               </div>
               <div>
                 <p className="text-sm text-gray-500">Bill Date</p>

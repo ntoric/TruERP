@@ -126,6 +126,7 @@ func allApplicationModels() []interface{} {
 		&models.PayrollPayment{},
 		&models.StaffDeduction{},
 		&models.StaffAdvancePayment{},
+		&models.StaffExtraAmount{},
 		&models.Partner{},
 		&models.ProfitDistribution{},
 		&models.InvoiceSettings{},
@@ -136,6 +137,10 @@ func allApplicationModels() []interface{} {
 		&models.Notification{},
 		&models.NotificationTemplate{},
 		&models.NotificationPreference{},
+		&models.NotificationEvent{},
+		&models.NotificationChannelConfig{},
+		&models.NotificationDelivery{},
+		&models.Announcement{},
 		&models.CAReportSharing{},
 		&models.Product{},
 		&models.ProductImage{},
@@ -172,6 +177,9 @@ func allApplicationModels() []interface{} {
 		&models.CustomerPortalSettings{},
 		&models.CustomerPortalAccess{},
 		&models.SupportTicket{},
+		&models.SupportRequest{},
+		&models.SupportRequestReply{},
+		&models.SupportContactSettings{},
 		&models.SavedInvoiceTemplate{},
 		&models.InvoiceCustomFieldDefinition{},
 		&models.InvoiceStatusHistory{},
@@ -210,6 +218,7 @@ func InitDatabase() *gorm.DB {
 
 	DB = db
 	SeedPermissions(db)
+	SeedDefaultNotificationEvents(db)
 	return db
 }
 
