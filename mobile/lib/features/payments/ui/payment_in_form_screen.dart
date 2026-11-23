@@ -25,7 +25,8 @@ class PaymentInFormScreen extends ConsumerStatefulWidget {
   final String? invoiceId;
 
   @override
-  ConsumerState<PaymentInFormScreen> createState() => _PaymentInFormScreenState();
+  ConsumerState<PaymentInFormScreen> createState() =>
+      _PaymentInFormScreenState();
 }
 
 class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
@@ -65,8 +66,10 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
       final payments = ref.read(paymentsRepositoryProvider);
       final results = await Future.wait<Object?>([
         payments.nextNumber().catchError((_) => ''),
-        if (widget.partyId != null) ref.read(partiesRepositoryProvider).get(widget.partyId!),
-        if (widget.invoiceId != null) ref.read(invoicesRepositoryProvider).get(widget.invoiceId!),
+        if (widget.partyId != null)
+          ref.read(partiesRepositoryProvider).get(widget.partyId!),
+        if (widget.invoiceId != null)
+          ref.read(invoicesRepositoryProvider).get(widget.invoiceId!),
       ]);
       if (!mounted) return;
       setState(() {
@@ -98,21 +101,28 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
     if (!_form.currentState!.validate() || _party == null) return;
     setState(() => _busy = true);
     try {
-      await ref.read(paymentsRepositoryProvider).create(PaymentInDraft(
-            partyId: _party!.id,
-            invoiceId: _invoice?.id,
-            amount: NumberField.parse(_amount),
-            discount: NumberField.parse(_discount),
-            date: _date,
-            mode: _mode,
-            bankAccountId: _bankId,
-            number: _number.text,
-            reference: _reference.text,
-            notes: _notes.text,
-          ));
+      await ref
+          .read(paymentsRepositoryProvider)
+          .create(
+            PaymentInDraft(
+              partyId: _party!.id,
+              invoiceId: _invoice?.id,
+              amount: NumberField.parse(_amount),
+              discount: NumberField.parse(_discount),
+              date: _date,
+              mode: _mode,
+              bankAccountId: _bankId,
+              number: _number.text,
+              reference: _reference.text,
+              notes: _notes.text,
+            ),
+          );
       ref.read(dataRevisionProvider.notifier).bump();
       if (!mounted) return;
-      showSnack(context, '${money(NumberField.parse(_amount))} received from ${_party!.name}');
+      showSnack(
+        context,
+        '${money(NumberField.parse(_amount))} received from ${_party!.name}',
+      );
       context.pop(true);
     } catch (e) {
       setState(() => _error = errorMessage(e));
@@ -123,14 +133,19 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final banks = ref.watch(bankAccountsProvider).asData?.value ?? const <BankAccount>[];
+    final banks =
+        ref.watch(bankAccountsProvider).asData?.value ?? const <BankAccount>[];
     if (_bankId == null && banks.isNotEmpty) {
       _bankId = (banks.where((b) => b.isPrimary).firstOrNull ?? banks.first).id;
     }
 
     return Scaffold(
       appBar: AppBar(title: const Text('Receive payment')),
-      bottomNavigationBar: SaveBar(label: 'Save payment', busy: _busy || _loading, onPressed: _save),
+      bottomNavigationBar: SaveBar(
+        label: 'Save payment',
+        busy: _busy || _loading,
+        onPressed: _save,
+      ),
       body: Form(
         key: _form,
         child: ListView(
@@ -142,104 +157,161 @@ class _PaymentInFormScreenState extends ConsumerState<PaymentInFormScreen> {
                 children: [
                   if (_loading) const LinearProgressIndicator(),
                   if (_error != null) ErrorBanner(_error!),
-                  FormSection(title: 'From', children: [
-                    PickerField(
-                      label: 'Customer',
-                      icon: Icons.person_search_rounded,
-                      value: _party?.name,
-                      subtitle: _party == null
-                          ? null
-                          : _party!.toCollect
-                              ? 'Owes ${money(_party!.balance)}'
-                              : 'No outstanding balance',
-                      errorText: _partyError,
-                      onTap: _invoice != null
-                          ? () {}
-                          : () async {
-                              final p = await pickParty(context, type: 'customer');
-                              if (p != null) {
-                                setState(() {
-                                  _party = p;
-                                  _partyError = null;
-                                  if (p.toCollect) _amount.text = NumberField.text(p.balance);
-                                });
-                              }
-                            },
-                    ),
-                    if (_invoice != null)
-                      Container(
-                        padding: const EdgeInsets.all(Spacing.md),
-                        decoration: BoxDecoration(
-                          color: context.colors.primaryContainer.withValues(alpha: 0.5),
-                          borderRadius: BorderRadius.circular(Radii.control),
+                  FormSection(
+                    title: 'From',
+                    children: [
+                      PickerField(
+                        label: 'Customer',
+                        icon: Icons.person_search_rounded,
+                        value: _party?.name,
+                        subtitle: _party == null
+                            ? null
+                            : _party!.toCollect
+                            ? 'Owes ${money(_party!.balance)}'
+                            : 'No outstanding balance',
+                        errorText: _partyError,
+                        onTap: _invoice != null
+                            ? () {}
+                            : () async {
+                                final p = await pickParty(
+                                  context,
+                                  type: 'customer',
+                                );
+                                if (p != null) {
+                                  setState(() {
+                                    _party = p;
+                                    _partyError = null;
+                                    if (p.toCollect) {
+                                      _amount.text = NumberField.text(
+                                        p.balance,
+                                      );
+                                    }
+                                  });
+                                }
+                              },
+                      ),
+                      if (_invoice != null)
+                        Container(
+                          padding: const EdgeInsets.all(Spacing.md),
+                          decoration: BoxDecoration(
+                            color: context.colors.primaryContainer.withValues(
+                              alpha: 0.5,
+                            ),
+                            borderRadius: BorderRadius.circular(Radii.control),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.receipt_long_rounded),
+                              const SizedBox(width: Spacing.sm),
+                              Expanded(
+                                child: Text(
+                                  'Against ${_invoice!.number} · due ${money(_invoice!.balanceDue)}',
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
-                        child: Row(children: [
-                          const Icon(Icons.receipt_long_rounded),
-                          const SizedBox(width: Spacing.sm),
-                          Expanded(
-                            child: Text('Against ${_invoice!.number} · due ${money(_invoice!.balanceDue)}'),
-                          ),
-                        ]),
-                      ),
-                  ]),
-                  FormSection(title: 'Amount', children: [
-                    NumberField(
-                      controller: _amount,
-                      label: 'Amount received *',
-                      autofocus: widget.partyId != null,
-                      validator: (v) {
-                        final e = Validators.number(v, required: true, allowZero: false, field: 'Amount');
-                        if (e != null) return e;
-                        if (_invoice != null && (double.tryParse(v!) ?? 0) > _invoice!.balanceDue + 0.01) {
-                          return 'More than the ${money(_invoice!.balanceDue)} due on this invoice';
-                        }
-                        return null;
-                      },
-                    ),
-                    FieldRow(children: [
-                      DateField(label: 'Date', value: _date, onChanged: (d) => setState(() => _date = d ?? _date)),
+                    ],
+                  ),
+                  FormSection(
+                    title: 'Amount',
+                    children: [
                       NumberField(
-                        controller: _discount,
-                        label: 'Discount allowed',
-                        validator: (v) => Validators.number(v, field: 'Discount'),
+                        controller: _amount,
+                        label: 'Amount received *',
+                        autofocus: widget.partyId != null,
+                        validator: (v) {
+                          final e = Validators.number(
+                            v,
+                            required: true,
+                            allowZero: false,
+                            field: 'Amount',
+                          );
+                          if (e != null) return e;
+                          if (_invoice != null &&
+                              (double.tryParse(v!) ?? 0) >
+                                  _invoice!.balanceDue + 0.01) {
+                            return 'More than the ${money(_invoice!.balanceDue)} due on this invoice';
+                          }
+                          return null;
+                        },
                       ),
-                    ]),
-                    Wrap(
-                      spacing: Spacing.sm,
-                      runSpacing: Spacing.sm,
-                      children: [
-                        for (final m in PaymentMode.receipt)
-                          ChoiceChip(
-                            label: Text(m.label),
-                            selected: _mode == m.value,
-                            onSelected: (_) => setState(() => _mode = m.value),
+                      FieldRow(
+                        children: [
+                          DateField(
+                            label: 'Date',
+                            value: _date,
+                            onChanged: (d) =>
+                                setState(() => _date = d ?? _date),
                           ),
-                      ],
-                    ),
-                    if (_mode != 'cash' && banks.isNotEmpty)
-                      DropdownButtonFormField<String>(
-                        initialValue: _bankId,
-                        isExpanded: true,
-                        decoration: const InputDecoration(labelText: 'Deposit to', prefixIcon: Icon(Icons.account_balance_outlined)),
-                        items: [for (final b in banks) DropdownMenuItem(value: b.id, child: Text(b.label))],
-                        onChanged: (v) => setState(() => _bankId = v),
+                          NumberField(
+                            controller: _discount,
+                            label: 'Discount allowed',
+                            validator: (v) =>
+                                Validators.number(v, field: 'Discount'),
+                          ),
+                        ],
                       ),
-                  ]),
-                  FormSection(title: 'More', children: [
-                    FieldRow(children: [
-                      TextFormField(controller: _number, decoration: const InputDecoration(labelText: 'Receipt number')),
+                      Wrap(
+                        spacing: Spacing.sm,
+                        runSpacing: Spacing.sm,
+                        children: [
+                          for (final m in PaymentMode.receipt)
+                            ChoiceChip(
+                              label: Text(m.label),
+                              selected: _mode == m.value,
+                              onSelected: (_) =>
+                                  setState(() => _mode = m.value),
+                            ),
+                        ],
+                      ),
+                      if (_mode != 'cash' && banks.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          initialValue: _bankId,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Deposit to',
+                            prefixIcon: Icon(Icons.account_balance_outlined),
+                          ),
+                          items: [
+                            for (final b in banks)
+                              DropdownMenuItem(
+                                value: b.id,
+                                child: Text(b.label),
+                              ),
+                          ],
+                          onChanged: (v) => setState(() => _bankId = v),
+                        ),
+                    ],
+                  ),
+                  FormSection(
+                    title: 'More',
+                    children: [
+                      FieldRow(
+                        children: [
+                          TextFormField(
+                            controller: _number,
+                            decoration: const InputDecoration(
+                              labelText: 'Receipt number',
+                            ),
+                          ),
+                          TextFormField(
+                            controller: _reference,
+                            decoration: const InputDecoration(
+                              labelText: 'Reference',
+                              hintText: 'UTR / cheque no.',
+                            ),
+                          ),
+                        ],
+                      ),
                       TextFormField(
-                        controller: _reference,
-                        decoration: const InputDecoration(labelText: 'Reference', hintText: 'UTR / cheque no.'),
+                        controller: _notes,
+                        maxLines: 2,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(labelText: 'Notes'),
                       ),
-                    ]),
-                    TextFormField(
-                      controller: _notes,
-                      maxLines: 2,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: const InputDecoration(labelText: 'Notes'),
-                    ),
-                  ]),
+                    ],
+                  ),
                 ],
               ),
             ),

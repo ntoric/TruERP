@@ -44,7 +44,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       _error = null;
     });
     try {
-      await ref.read(sessionProvider.notifier).login(
+      await ref
+          .read(sessionProvider.notifier)
+          .login(
             _email.text,
             _password.text,
             totpCode: _needs2fa ? _totp.text.trim() : null,
@@ -82,7 +84,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   autofillHints: const [AutofillHints.email],
                   textInputAction: TextInputAction.next,
                   autocorrect: false,
-                  decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline_rounded)),
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.mail_outline_rounded),
+                  ),
                   validator: Validators.email,
                 ),
                 const SizedBox(height: Spacing.md),
@@ -97,7 +102,11 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     prefixIcon: const Icon(Icons.lock_outline_rounded),
                     suffixIcon: IconButton(
                       tooltip: _obscure ? 'Show password' : 'Hide password',
-                      icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                      icon: Icon(
+                        _obscure
+                            ? Icons.visibility_outlined
+                            : Icons.visibility_off_outlined,
+                      ),
                       onPressed: () => setState(() => _obscure = !_obscure),
                     ),
                   ),
@@ -116,12 +125,17 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   autofocus: true,
                   keyboardType: TextInputType.number,
                   autofillHints: const [AutofillHints.oneTimeCode],
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(6)],
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                    LengthLimitingTextInputFormatter(6),
+                  ],
                   textAlign: TextAlign.center,
                   style: context.text.headlineSmall?.copyWith(letterSpacing: 8),
                   onFieldSubmitted: (_) => _submit(),
                   decoration: const InputDecoration(hintText: '000000'),
-                  validator: (v) => (v ?? '').trim().length == 6 ? null : 'Enter the 6-digit code',
+                  validator: (v) => (v ?? '').trim().length == 6
+                      ? null
+                      : 'Enter the 6-digit code',
                 ),
                 const SizedBox(height: Spacing.md),
               ],
@@ -130,7 +144,13 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               FilledButton(
                 onPressed: _busy ? null : _submit,
                 child: _busy
-                    ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                    ? const SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: Colors.white,
+                        ),
+                      )
                     : Text(_needs2fa ? 'Verify' : 'Sign in'),
               ),
               if (_needs2fa)
@@ -148,7 +168,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text('New to TruERP?', style: context.text.bodyMedium),
-                    TextButton(onPressed: () => context.push('/register'), child: const Text('Create account')),
+                    TextButton(
+                      onPressed: () => context.push('/register'),
+                      child: const Text('Create account'),
+                    ),
                   ],
                 ),
               const SizedBox(height: Spacing.sm),
@@ -157,7 +180,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   onPressed: () => showServerSheet(context, ref),
                   icon: const Icon(Icons.dns_outlined, size: 18),
                   label: const Text('Server settings'),
-                  style: TextButton.styleFrom(foregroundColor: context.colors.onSurfaceVariant),
+                  style: TextButton.styleFrom(
+                    foregroundColor: context.colors.onSurfaceVariant,
+                  ),
                 ),
               ),
             ],

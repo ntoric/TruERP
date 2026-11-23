@@ -1,7 +1,13 @@
 import '../api/json.dart';
 
 class InventoryStats {
-  const InventoryStats({this.totalValue = 0, this.totalQty = 0, this.productCount = 0, this.outletCount = 0, this.lowStockCount = 0});
+  const InventoryStats({
+    this.totalValue = 0,
+    this.totalQty = 0,
+    this.productCount = 0,
+    this.outletCount = 0,
+    this.lowStockCount = 0,
+  });
   final double totalValue;
   final double totalQty;
   final int productCount;
@@ -9,12 +15,12 @@ class InventoryStats {
   final int lowStockCount;
 
   factory InventoryStats.fromJson(JsonMap j) => InventoryStats(
-        totalValue: asDouble(j['total_value']),
-        totalQty: asDouble(j['total_qty']),
-        productCount: asInt(j['product_count']),
-        outletCount: asInt(j['outlet_count']),
-        lowStockCount: asInt(j['low_stock_count']),
-      );
+    totalValue: asDouble(j['total_value']),
+    totalQty: asDouble(j['total_qty']),
+    productCount: asInt(j['product_count']),
+    outletCount: asInt(j['outlet_count']),
+    lowStockCount: asInt(j['low_stock_count']),
+  );
 }
 
 /// One stock position: product × warehouse × batch.
@@ -46,7 +52,8 @@ class StockRow {
   final DateTime? expDate;
 
   double get value => available * averageCost;
-  bool get isExpiringSoon => expDate != null && expDate!.difference(DateTime.now()).inDays <= 30;
+  bool get isExpiringSoon =>
+      expDate != null && expDate!.difference(DateTime.now()).inDays <= 30;
 
   factory StockRow.fromJson(JsonMap j) {
     final p = asMap(j['product']);
@@ -86,13 +93,13 @@ class LowStockRow {
   double get shortBy => (min - current).clamp(0, double.infinity);
 
   factory LowStockRow.fromJson(JsonMap j) => LowStockRow(
-        productId: asString(j['product_id']),
-        productName: asString(j['product_name']),
-        sku: asString(j['sku']),
-        current: asDouble(j['current_stock']),
-        min: asDouble(j['min_stock']),
-        outletName: asString(j['outlet_name']),
-      );
+    productId: asString(j['product_id']),
+    productName: asString(j['product_name']),
+    sku: asString(j['sku']),
+    current: asDouble(j['current_stock']),
+    min: asDouble(j['min_stock']),
+    outletName: asString(j['outlet_name']),
+  );
 }
 
 /// A stock entry awaiting approval (or recently decided).
@@ -124,17 +131,19 @@ class StockEntry {
   final DateTime? date;
 
   factory StockEntry.fromJson(JsonMap j) => StockEntry(
-        id: asString(j['id']),
-        itemName: asStringOrNull(j['item_name']) ?? asString(pick(j, 'product.name'), 'Item'),
-        entryType: asString(j['entry_type']),
-        quantity: asDouble(j['quantity']),
-        status: asString(j['approval_status'], 'approved'),
-        outletName: asString(j['outlet_name']),
-        batchNo: asString(j['batch_no']),
-        referenceType: asString(j['reference_type']),
-        notes: asString(j['notes']),
-        date: asDate(j['entry_date'] ?? j['created_at']),
-      );
+    id: asString(j['id']),
+    itemName:
+        asStringOrNull(j['item_name']) ??
+        asString(pick(j, 'product.name'), 'Item'),
+    entryType: asString(j['entry_type']),
+    quantity: asDouble(j['quantity']),
+    status: asString(j['approval_status'], 'approved'),
+    outletName: asString(j['outlet_name']),
+    batchNo: asString(j['batch_no']),
+    referenceType: asString(j['reference_type']),
+    notes: asString(j['notes']),
+    date: asDate(j['entry_date'] ?? j['created_at']),
+  );
 }
 
 class Movement {
@@ -177,22 +186,22 @@ class Movement {
   bool get isIn => qtyIn > 0;
 
   factory Movement.fromJson(JsonMap j) => Movement(
-        id: asString(j['id']),
-        date: asDate(j['date']),
-        productId: asString(j['product_id']),
-        productName: asString(j['product_name']),
-        type: asString(j['transaction_type']),
-        typeLabel: asString(j['type_label'], asString(j['transaction_type'])),
-        unit: asString(j['unit']),
-        outletName: asString(j['outlet_name']),
-        documentNo: asString(j['document_no']),
-        referenceType: asString(j['reference_type']),
-        referenceId: asString(j['reference_id']),
-        qtyIn: asDouble(j['qty_in']),
-        qtyOut: asDouble(j['qty_out']),
-        stockAfter: asDouble(j['stock']),
-        notes: asString(j['notes']),
-      );
+    id: asString(j['id']),
+    date: asDate(j['date']),
+    productId: asString(j['product_id']),
+    productName: asString(j['product_name']),
+    type: asString(j['transaction_type']),
+    typeLabel: asString(j['type_label'], asString(j['transaction_type'])),
+    unit: asString(j['unit']),
+    outletName: asString(j['outlet_name']),
+    documentNo: asString(j['document_no']),
+    referenceType: asString(j['reference_type']),
+    referenceId: asString(j['reference_id']),
+    qtyIn: asDouble(j['qty_in']),
+    qtyOut: asDouble(j['qty_out']),
+    stockAfter: asDouble(j['stock']),
+    notes: asString(j['notes']),
+  );
 
   static const types = [
     ('purchase', 'Purchase'),
@@ -269,35 +278,35 @@ class Warehouse {
   String get place => [city, state].where((s) => s.isNotEmpty).join(', ');
 
   factory Warehouse.fromJson(JsonMap j) => Warehouse(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        code: asString(j['code']),
-        address: asString(j['address']),
-        city: asString(j['city']),
-        state: asString(j['state']),
-        pincode: asString(j['pincode']),
-        contactPerson: asString(j['contact_person']),
-        contactPhone: asString(j['contact_phone']),
-        contactEmail: asString(j['contact_email']),
-        notes: asString(j['notes']),
-        isActive: asBool(j['is_active'], true),
-        isDefault: asBool(j['is_default']),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    code: asString(j['code']),
+    address: asString(j['address']),
+    city: asString(j['city']),
+    state: asString(j['state']),
+    pincode: asString(j['pincode']),
+    contactPerson: asString(j['contact_person']),
+    contactPhone: asString(j['contact_phone']),
+    contactEmail: asString(j['contact_email']),
+    notes: asString(j['notes']),
+    isActive: asBool(j['is_active'], true),
+    isDefault: asBool(j['is_default']),
+  );
 
   JsonMap toJson() => {
-        'name': name.trim(),
-        'code': code.trim().toUpperCase(),
-        'address': address.trim(),
-        'city': city.trim(),
-        'state': state.trim(),
-        'pincode': pincode.trim(),
-        'contact_person': contactPerson.trim(),
-        'contact_phone': contactPhone.trim(),
-        'contact_email': contactEmail.trim(),
-        'notes': notes.trim(),
-        'is_active': isActive,
-        'is_default': isDefault,
-      };
+    'name': name.trim(),
+    'code': code.trim().toUpperCase(),
+    'address': address.trim(),
+    'city': city.trim(),
+    'state': state.trim(),
+    'pincode': pincode.trim(),
+    'contact_person': contactPerson.trim(),
+    'contact_phone': contactPhone.trim(),
+    'contact_email': contactEmail.trim(),
+    'notes': notes.trim(),
+    'is_active': isActive,
+    'is_default': isDefault,
+  };
 }
 
 class WarehouseStockItem {
@@ -308,15 +317,21 @@ class WarehouseStockItem {
   final double value;
 
   factory WarehouseStockItem.fromJson(JsonMap j) => WarehouseStockItem(
-        asString(j['item_name']),
-        asDouble(j['stock_qty']),
-        asDouble(j['cost_price']),
-        asDouble(j['value']),
-      );
+    asString(j['item_name']),
+    asDouble(j['stock_qty']),
+    asDouble(j['cost_price']),
+    asDouble(j['value']),
+  );
 }
 
 class ProductCategory {
-  const ProductCategory({required this.id, required this.name, this.description = '', this.parentId, this.isActive = true});
+  const ProductCategory({
+    required this.id,
+    required this.name,
+    this.description = '',
+    this.parentId,
+    this.isActive = true,
+  });
   final String id;
   final String name;
   final String description;
@@ -324,27 +339,32 @@ class ProductCategory {
   final bool isActive;
 
   factory ProductCategory.fromJson(JsonMap j) => ProductCategory(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        description: asString(j['description']),
-        parentId: asStringOrNull(j['parent_id']),
-        isActive: asBool(j['is_active'], true),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    description: asString(j['description']),
+    parentId: asStringOrNull(j['parent_id']),
+    isActive: asBool(j['is_active'], true),
+  );
 }
 
 class TransferItem {
-  const TransferItem({required this.productId, this.quantity = 0, this.sent = 0, this.received = 0});
+  const TransferItem({
+    required this.productId,
+    this.quantity = 0,
+    this.sent = 0,
+    this.received = 0,
+  });
   final String productId;
   final double quantity;
   final double sent;
   final double received;
 
   factory TransferItem.fromJson(JsonMap j) => TransferItem(
-        productId: asString(j['product_id']),
-        quantity: asDouble(j['quantity']),
-        sent: asDouble(j['sent_quantity']),
-        received: asDouble(j['received_quantity']),
-      );
+    productId: asString(j['product_id']),
+    quantity: asDouble(j['quantity']),
+    sent: asDouble(j['sent_quantity']),
+    received: asDouble(j['received_quantity']),
+  );
 }
 
 /// Warehouse-to-warehouse transfer. Status: draft, submitted, received, cancelled.
@@ -376,16 +396,16 @@ class StockTransfer {
   final List<TransferItem> items;
 
   factory StockTransfer.fromJson(JsonMap j) => StockTransfer(
-        id: asString(j['id']),
-        fromId: asString(j['from_outlet_id']),
-        toId: asString(j['to_outlet_id']),
-        status: asString(j['status'], 'draft'),
-        totalItems: asInt(j['total_items']),
-        totalQuantity: asDouble(j['total_quantity']),
-        notes: asString(j['notes']),
-        sentDate: asDate(j['sent_date']),
-        receivedDate: asDate(j['received_date']),
-        createdAt: asDate(j['created_at']),
-        items: asMapList(j['items']).map(TransferItem.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    fromId: asString(j['from_outlet_id']),
+    toId: asString(j['to_outlet_id']),
+    status: asString(j['status'], 'draft'),
+    totalItems: asInt(j['total_items']),
+    totalQuantity: asDouble(j['total_quantity']),
+    notes: asString(j['notes']),
+    sentDate: asDate(j['sent_date']),
+    receivedDate: asDate(j['received_date']),
+    createdAt: asDate(j['created_at']),
+    items: asMapList(j['items']).map(TransferItem.fromJson).toList(),
+  );
 }

@@ -53,51 +53,54 @@ class Party {
   bool get toCollect => balance > 0.005;
   bool get toPay => balance < -0.005;
 
-  String get fullAddress =>
-      [address, city, [state, pincode].where((e) => e.isNotEmpty).join(' ')].where((e) => e.trim().isNotEmpty).join(', ');
+  String get fullAddress => [
+    address,
+    city,
+    [state, pincode].where((e) => e.isNotEmpty).join(' '),
+  ].where((e) => e.trim().isNotEmpty).join(', ');
 
   factory Party.fromJson(JsonMap j) => Party(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        partyType: asString(j['party_type'], 'customer'),
-        phone: asString(j['phone']),
-        email: asString(j['email']),
-        gstin: asString(j['gstin']),
-        pan: asString(j['pan']),
-        tan: asString(j['tan']),
-        address: asString(j['address']),
-        city: asString(j['city']),
-        state: asString(j['state']),
-        stateCode: asString(j['state_code']),
-        pincode: asString(j['pincode']),
-        category: asString(j['category']),
-        openingBalance: asDouble(j['opening_balance']),
-        balance: asDouble(j['balance']),
-        creditLimit: asDouble(j['credit_limit']),
-        notes: asString(j['notes']),
-        isActive: asBool(j['is_active'], true),
-        loyaltyPoints: asInt(j['loyalty_points']),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    partyType: asString(j['party_type'], 'customer'),
+    phone: asString(j['phone']),
+    email: asString(j['email']),
+    gstin: asString(j['gstin']),
+    pan: asString(j['pan']),
+    tan: asString(j['tan']),
+    address: asString(j['address']),
+    city: asString(j['city']),
+    state: asString(j['state']),
+    stateCode: asString(j['state_code']),
+    pincode: asString(j['pincode']),
+    category: asString(j['category']),
+    openingBalance: asDouble(j['opening_balance']),
+    balance: asDouble(j['balance']),
+    creditLimit: asDouble(j['credit_limit']),
+    notes: asString(j['notes']),
+    isActive: asBool(j['is_active'], true),
+    loyaltyPoints: asInt(j['loyalty_points']),
+  );
 
   JsonMap toJson() => {
-        'name': name.trim(),
-        'party_type': partyType,
-        'phone': phone.trim(),
-        'email': email.trim(),
-        'gstin': gstin.trim().toUpperCase(),
-        'pan': pan.trim().toUpperCase(),
-        'tan': tan.trim().toUpperCase(),
-        'address': address.trim(),
-        'city': city.trim(),
-        'state': state.trim(),
-        'state_code': stateCode.trim(),
-        'pincode': pincode.trim(),
-        'category': category.trim(),
-        'opening_balance': openingBalance,
-        'credit_limit': creditLimit,
-        'notes': notes.trim(),
-        'is_active': isActive,
-      };
+    'name': name.trim(),
+    'party_type': partyType,
+    'phone': phone.trim(),
+    'email': email.trim(),
+    'gstin': gstin.trim().toUpperCase(),
+    'pan': pan.trim().toUpperCase(),
+    'tan': tan.trim().toUpperCase(),
+    'address': address.trim(),
+    'city': city.trim(),
+    'state': state.trim(),
+    'state_code': stateCode.trim(),
+    'pincode': pincode.trim(),
+    'category': category.trim(),
+    'opening_balance': openingBalance,
+    'credit_limit': creditLimit,
+    'notes': notes.trim(),
+    'is_active': isActive,
+  };
 }
 
 class PartyStats {
@@ -107,11 +110,11 @@ class PartyStats {
   final double toPay;
 
   factory PartyStats.fromJson(JsonMap j) => PartyStats(
-        total: asInt(j['total_parties']),
-        toCollect: asDouble(j['to_collect']),
-        // The backend sums negative balances; show the magnitude.
-        toPay: asDouble(j['to_pay']).abs(),
-      );
+    total: asInt(j['total_parties']),
+    toCollect: asDouble(j['to_collect']),
+    // The backend sums negative balances; show the magnitude.
+    toPay: asDouble(j['to_pay']).abs(),
+  );
 }
 
 class LedgerEntry {
@@ -138,16 +141,16 @@ class LedgerEntry {
   final String paymentMode;
 
   factory LedgerEntry.fromJson(JsonMap j) => LedgerEntry(
-        type: asString(j['type']),
-        voucher: asString(j['voucher']),
-        refNumber: asString(j['ref_number']),
-        refId: asStringOrNull(j['ref_id']),
-        date: asDate(j['date']),
-        debit: asDouble(j['debit']),
-        credit: asDouble(j['credit']),
-        balance: asDouble(j['balance']),
-        paymentMode: asString(j['payment_mode']),
-      );
+    type: asString(j['type']),
+    voucher: asString(j['voucher']),
+    refNumber: asString(j['ref_number']),
+    refId: asStringOrNull(j['ref_id']),
+    date: asDate(j['date']),
+    debit: asDouble(j['debit']),
+    credit: asDouble(j['credit']),
+    balance: asDouble(j['balance']),
+    paymentMode: asString(j['payment_mode']),
+  );
 }
 
 class PartyLedger {
@@ -166,10 +169,10 @@ class PartyLedger {
   final double totalCredit;
 
   factory PartyLedger.fromJson(JsonMap j) => PartyLedger(
-        entries: asMapList(j['entries']).map(LedgerEntry.fromJson).toList(),
-        openingBalance: asDouble(j['opening_balance']),
-        closingBalance: asDouble(j['closing_balance']),
-        totalDebit: asDouble(j['total_debit']),
-        totalCredit: asDouble(j['total_credit']),
-      );
+    entries: asMapList(j['entries']).map(LedgerEntry.fromJson).toList(),
+    openingBalance: asDouble(j['opening_balance']),
+    closingBalance: asDouble(j['closing_balance']),
+    totalDebit: asDouble(j['total_debit']),
+    totalCredit: asDouble(j['total_credit']),
+  );
 }

@@ -82,21 +82,26 @@ class CashBankSummary {
   final int unlinkedCount;
   final double unlinkedAmount;
 
-  double get bankTotal => accounts.where((a) => a.isActive).fold(0, (s, a) => s + a.balance);
+  double get bankTotal =>
+      accounts.where((a) => a.isActive).fold(0, (s, a) => s + a.balance);
 
   factory CashBankSummary.fromJson(JsonMap j) => CashBankSummary(
-        totalBalance: asDouble(j['total_balance']),
-        cashInHand: asDouble(j['cash_in_hand']),
-        initialInvestment: asDouble(j['initial_investment']),
-        accounts: asMapList(j['bank_accounts']).map(BankAccount.fromJson).toList(),
-        unlinkedCount: asInt(j['unlinked_count']),
-        unlinkedAmount: asDouble(j['unlinked_amount']),
-      );
+    totalBalance: asDouble(j['total_balance']),
+    cashInHand: asDouble(j['cash_in_hand']),
+    initialInvestment: asDouble(j['initial_investment']),
+    accounts: asMapList(j['bank_accounts']).map(BankAccount.fromJson).toList(),
+    unlinkedCount: asInt(j['unlinked_count']),
+    unlinkedAmount: asDouble(j['unlinked_amount']),
+  );
 }
 
 /// Where money received by one payment mode is deposited.
 class PaymentRouting {
-  const PaymentRouting({required this.method, required this.label, this.bankAccountId});
+  const PaymentRouting({
+    required this.method,
+    required this.label,
+    this.bankAccountId,
+  });
   final String method;
   final String label;
 
@@ -106,10 +111,10 @@ class PaymentRouting {
   bool get isOwnerEquity => method == 'initial_investment';
 
   factory PaymentRouting.fromJson(JsonMap j) => PaymentRouting(
-        method: asString(j['payment_method']),
-        label: asString(j['label'], asString(j['payment_method'])),
-        bankAccountId: asStringOrNull(j['bank_account_id']),
-      );
+    method: asString(j['payment_method']),
+    label: asString(j['label'], asString(j['payment_method'])),
+    bankAccountId: asStringOrNull(j['bank_account_id']),
+  );
 }
 
 // ── Profit distribution ─────────────────────────────────────────────────
@@ -136,25 +141,25 @@ class Partner {
   final bool isActive;
 
   factory Partner.fromJson(JsonMap j) => Partner(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        phone: asString(j['phone']),
-        email: asString(j['email']),
-        address: asString(j['address']),
-        pan: asString(j['pan']),
-        notes: asString(j['notes']),
-        isActive: asBool(j['is_active'], true),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    phone: asString(j['phone']),
+    email: asString(j['email']),
+    address: asString(j['address']),
+    pan: asString(j['pan']),
+    notes: asString(j['notes']),
+    isActive: asBool(j['is_active'], true),
+  );
 
   JsonMap toJson() => {
-        'name': name.trim(),
-        'phone': phone.trim(),
-        'email': email.trim(),
-        'address': address.trim(),
-        'pan': pan.trim().toUpperCase(),
-        'notes': notes.trim(),
-        'is_active': isActive,
-      };
+    'name': name.trim(),
+    'phone': phone.trim(),
+    'email': email.trim(),
+    'address': address.trim(),
+    'pan': pan.trim().toUpperCase(),
+    'notes': notes.trim(),
+    'is_active': isActive,
+  };
 }
 
 class ProfitDistribution {
@@ -225,17 +230,23 @@ class LedgerAccount {
   final bool isActive;
 
   factory LedgerAccount.fromJson(JsonMap j) => LedgerAccount(
-        id: asString(j['id'] ?? j['account_id']),
-        code: asString(j['code'] ?? j['account_code']),
-        name: asString(j['name'] ?? j['account_name']),
-        type: asString(j['account_type']),
-        subType: asString(j['sub_type']),
-        balance: asDouble(j['balance']),
-        isDefault: asBool(j['is_default']),
-        isActive: asBool(j['is_active'], true),
-      );
+    id: asString(j['id'] ?? j['account_id']),
+    code: asString(j['code'] ?? j['account_code']),
+    name: asString(j['name'] ?? j['account_name']),
+    type: asString(j['account_type']),
+    subType: asString(j['sub_type']),
+    balance: asDouble(j['balance']),
+    isDefault: asBool(j['is_default']),
+    isActive: asBool(j['is_active'], true),
+  );
 
-  static const typeOrder = ['asset', 'liability', 'equity', 'income', 'expense'];
+  static const typeOrder = [
+    'asset',
+    'liability',
+    'equity',
+    'income',
+    'expense',
+  ];
   static const typeLabels = {
     'asset': 'Assets',
     'liability': 'Liabilities',
@@ -246,7 +257,12 @@ class LedgerAccount {
 }
 
 class JournalLine {
-  const JournalLine({required this.accountName, required this.debit, required this.credit, this.description = ''});
+  const JournalLine({
+    required this.accountName,
+    required this.debit,
+    required this.credit,
+    this.description = '',
+  });
   final String accountName;
   final double debit;
   final double credit;
@@ -256,7 +272,10 @@ class JournalLine {
     final acc = asMap(j['account']);
     final code = asString(acc['code']);
     return JournalLine(
-      accountName: [if (code.isNotEmpty) code, asString(acc['name'], 'Account')].join(' · '),
+      accountName: [
+        if (code.isNotEmpty) code,
+        asString(acc['name'], 'Account'),
+      ].join(' · '),
       debit: asDouble(j['debit']),
       credit: asDouble(j['credit']),
       description: asString(j['description']),
@@ -286,20 +305,27 @@ class JournalEntry {
   final List<JournalLine> lines;
 
   factory JournalEntry.fromJson(JsonMap j) => JournalEntry(
-        id: asString(j['id']),
-        number: asString(j['entry_number']),
-        date: asDate(j['entry_date']),
-        description: asString(j['description']),
-        totalDebit: asDouble(j['total_debit']),
-        totalCredit: asDouble(j['total_credit']),
-        status: asString(j['status'], 'draft'),
-        lines: asMapList(j['lines']).map(JournalLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['entry_number']),
+    date: asDate(j['entry_date']),
+    description: asString(j['description']),
+    totalDebit: asDouble(j['total_debit']),
+    totalCredit: asDouble(j['total_credit']),
+    status: asString(j['status'], 'draft'),
+    lines: asMapList(j['lines']).map(JournalLine.fromJson).toList(),
+  );
 }
 
 /// One row of a trial balance, P&L or balance sheet.
 class ReportRow {
-  const ReportRow({required this.accountId, required this.code, required this.name, this.debit = 0, this.credit = 0, this.amount = 0});
+  const ReportRow({
+    required this.accountId,
+    required this.code,
+    required this.name,
+    this.debit = 0,
+    this.credit = 0,
+    this.amount = 0,
+  });
   final String accountId;
   final String code;
   final String name;
@@ -308,32 +334,46 @@ class ReportRow {
   final double amount;
 
   factory ReportRow.fromJson(JsonMap j) => ReportRow(
-        accountId: asString(j['account_id']),
-        code: asString(j['account_code']),
-        name: asString(j['account_name']),
-        debit: asDouble(j['debit']),
-        credit: asDouble(j['credit']),
-        amount: asDouble(j['amount']),
-      );
+    accountId: asString(j['account_id']),
+    code: asString(j['account_code']),
+    name: asString(j['account_name']),
+    debit: asDouble(j['debit']),
+    credit: asDouble(j['credit']),
+    amount: asDouble(j['amount']),
+  );
 }
 
 class TrialBalance {
-  const TrialBalance({required this.rows, required this.totalDebit, required this.totalCredit, required this.isBalanced});
+  const TrialBalance({
+    required this.rows,
+    required this.totalDebit,
+    required this.totalCredit,
+    required this.isBalanced,
+  });
   final List<ReportRow> rows;
   final double totalDebit;
   final double totalCredit;
   final bool isBalanced;
 
   factory TrialBalance.fromJson(JsonMap j) => TrialBalance(
-        rows: asMapList(j['items']).map(ReportRow.fromJson).toList(),
-        totalDebit: asDouble(j['total_debit']),
-        totalCredit: asDouble(j['total_credit']),
-        isBalanced: asBool(j['is_balanced'], (asDouble(j['total_debit']) - asDouble(j['total_credit'])).abs() < 0.01),
-      );
+    rows: asMapList(j['items']).map(ReportRow.fromJson).toList(),
+    totalDebit: asDouble(j['total_debit']),
+    totalCredit: asDouble(j['total_credit']),
+    isBalanced: asBool(
+      j['is_balanced'],
+      (asDouble(j['total_debit']) - asDouble(j['total_credit'])).abs() < 0.01,
+    ),
+  );
 }
 
 class ProfitLossStatement {
-  const ProfitLossStatement({required this.income, required this.expenses, required this.totalIncome, required this.totalExpense, required this.netProfit});
+  const ProfitLossStatement({
+    required this.income,
+    required this.expenses,
+    required this.totalIncome,
+    required this.totalExpense,
+    required this.netProfit,
+  });
   final List<ReportRow> income;
   final List<ReportRow> expenses;
   final double totalIncome;
@@ -341,12 +381,12 @@ class ProfitLossStatement {
   final double netProfit;
 
   factory ProfitLossStatement.fromJson(JsonMap j) => ProfitLossStatement(
-        income: asMapList(j['income']).map(ReportRow.fromJson).toList(),
-        expenses: asMapList(j['expenses']).map(ReportRow.fromJson).toList(),
-        totalIncome: asDouble(j['total_income']),
-        totalExpense: asDouble(j['total_expense']),
-        netProfit: asDouble(j['net_profit']),
-      );
+    income: asMapList(j['income']).map(ReportRow.fromJson).toList(),
+    expenses: asMapList(j['expenses']).map(ReportRow.fromJson).toList(),
+    totalIncome: asDouble(j['total_income']),
+    totalExpense: asDouble(j['total_expense']),
+    netProfit: asDouble(j['net_profit']),
+  );
 }
 
 class BalanceSheet {
@@ -369,14 +409,14 @@ class BalanceSheet {
   final bool isBalanced;
 
   factory BalanceSheet.fromJson(JsonMap j) => BalanceSheet(
-        assets: asMapList(j['assets']).map(ReportRow.fromJson).toList(),
-        liabilities: asMapList(j['liabilities']).map(ReportRow.fromJson).toList(),
-        equity: asMapList(j['equity']).map(ReportRow.fromJson).toList(),
-        totalAssets: asDouble(j['total_assets']),
-        totalLiabilities: asDouble(j['total_liabilities']),
-        totalEquity: asDouble(j['total_equity']),
-        isBalanced: asBool(j['is_balanced']),
-      );
+    assets: asMapList(j['assets']).map(ReportRow.fromJson).toList(),
+    liabilities: asMapList(j['liabilities']).map(ReportRow.fromJson).toList(),
+    equity: asMapList(j['equity']).map(ReportRow.fromJson).toList(),
+    totalAssets: asDouble(j['total_assets']),
+    totalLiabilities: asDouble(j['total_liabilities']),
+    totalEquity: asDouble(j['total_equity']),
+    isBalanced: asBool(j['is_balanced']),
+  );
 }
 
 class LedgerLine {
@@ -399,29 +439,34 @@ class LedgerLine {
   final double balance;
 
   factory LedgerLine.fromJson(JsonMap j) => LedgerLine(
-        date: asDate(j['transaction_date']),
-        type: asString(j['transaction_type']),
-        reference: asString(j['reference_number']),
-        description: asString(j['description']),
-        debit: asDouble(j['debit']),
-        credit: asDouble(j['credit']),
-        balance: asDouble(j['balance']),
-      );
+    date: asDate(j['transaction_date']),
+    type: asString(j['transaction_type']),
+    reference: asString(j['reference_number']),
+    description: asString(j['description']),
+    debit: asDouble(j['debit']),
+    credit: asDouble(j['credit']),
+    balance: asDouble(j['balance']),
+  );
 }
 
 class GeneralLedger {
-  const GeneralLedger({required this.account, required this.lines, required this.opening, required this.closing});
+  const GeneralLedger({
+    required this.account,
+    required this.lines,
+    required this.opening,
+    required this.closing,
+  });
   final LedgerAccount account;
   final List<LedgerLine> lines;
   final double opening;
   final double closing;
 
   factory GeneralLedger.fromJson(JsonMap j) => GeneralLedger(
-        account: LedgerAccount.fromJson(asMap(j['account'])),
-        lines: asMapList(j['entries']).map(LedgerLine.fromJson).toList(),
-        opening: asDouble(j['opening_balance']),
-        closing: asDouble(j['closing_balance']),
-      );
+    account: LedgerAccount.fromJson(asMap(j['account'])),
+    lines: asMapList(j['entries']).map(LedgerLine.fromJson).toList(),
+    opening: asDouble(j['opening_balance']),
+    closing: asDouble(j['closing_balance']),
+  );
 }
 
 class AccountingStats {
@@ -442,11 +487,11 @@ class AccountingStats {
   final double netProfit;
 
   factory AccountingStats.fromJson(JsonMap j) => AccountingStats(
-        assets: asDouble(j['total_assets']),
-        liabilities: asDouble(j['total_liabilities']),
-        equity: asDouble(j['total_equity']),
-        income: asDouble(j['total_income']),
-        expense: asDouble(j['total_expense']),
-        netProfit: asDouble(j['net_profit']),
-      );
+    assets: asDouble(j['total_assets']),
+    liabilities: asDouble(j['total_liabilities']),
+    equity: asDouble(j['total_equity']),
+    income: asDouble(j['total_income']),
+    expense: asDouble(j['total_expense']),
+    netProfit: asDouble(j['net_profit']),
+  );
 }

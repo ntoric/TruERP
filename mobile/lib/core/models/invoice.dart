@@ -32,32 +32,41 @@ class InvoiceItem {
   final double total;
 
   factory InvoiceItem.fromJson(JsonMap j) => InvoiceItem(
-        id: asString(j['id']),
-        productId: asStringOrNull(j['product_id']),
-        description: asStringOrNull(j['description']) ?? asString(pick(j, 'product.name')),
-        quantity: asDouble(j['quantity'], 1),
-        unit: asString(j['unit']),
-        unitPrice: asDouble(j['unit_price']),
-        discount: asDouble(j['discount']),
-        taxRate: asDouble(j['tax_rate']),
-        hsnCode: asString(j['hsn_code']),
-        total: asDouble(j['total']),
-      );
+    id: asString(j['id']),
+    productId: asStringOrNull(j['product_id']),
+    description:
+        asStringOrNull(j['description']) ?? asString(pick(j, 'product.name')),
+    quantity: asDouble(j['quantity'], 1),
+    unit: asString(j['unit']),
+    unitPrice: asDouble(j['unit_price']),
+    discount: asDouble(j['discount']),
+    taxRate: asDouble(j['tax_rate']),
+    hsnCode: asString(j['hsn_code']),
+    total: asDouble(j['total']),
+  );
 }
 
 class PaymentSplit {
-  const PaymentSplit({required this.mode, required this.amount, this.bankAccountId});
+  const PaymentSplit({
+    required this.mode,
+    required this.amount,
+    this.bankAccountId,
+  });
   final String mode;
   final double amount;
   final String? bankAccountId;
 
   factory PaymentSplit.fromJson(JsonMap j) => PaymentSplit(
-        mode: asString(j['mode']),
-        amount: asDouble(j['amount']),
-        bankAccountId: asStringOrNull(j['bank_account_id']),
-      );
+    mode: asString(j['mode']),
+    amount: asDouble(j['amount']),
+    bankAccountId: asStringOrNull(j['bank_account_id']),
+  );
 
-  JsonMap toJson() => {'mode': mode, 'amount': amount, 'bank_account_id': bankAccountId};
+  JsonMap toJson() => {
+    'mode': mode,
+    'amount': amount,
+    'bank_account_id': bankAccountId,
+  };
 }
 
 class Invoice {
@@ -113,7 +122,9 @@ class Invoice {
   final bool isPos;
   final DateTime? createdAt;
 
-  double get balanceDue => status == 'cancelled' ? 0 : (totalAmount - amountPaid).clamp(0, double.infinity);
+  double get balanceDue => status == 'cancelled'
+      ? 0
+      : (totalAmount - amountPaid).clamp(0, double.infinity);
   bool get isCancelled => status == 'cancelled';
   bool get isPaid => status == 'paid';
   String get partyName => party?.name ?? 'Walk-in customer';
@@ -139,7 +150,9 @@ class Invoice {
       amountPaid: asDouble(j['amount_paid']),
       loyaltyDiscount: asDouble(j['loyalty_discount']),
       paymentMode: asString(j['payment_mode']),
-      paymentSplits: asMapList(j['payment_splits']).map(PaymentSplit.fromJson).toList(),
+      paymentSplits: asMapList(
+        j['payment_splits'],
+      ).map(PaymentSplit.fromJson).toList(),
       notes: asString(j['notes']),
       terms: asString(j['terms']),
       cancelReason: asString(j['cancel_reason']),
@@ -150,22 +163,33 @@ class Invoice {
 }
 
 class InvoiceStats {
-  const InvoiceStats({this.totalSales = 0, this.paid = 0, this.unpaid = 0, this.cancelled = 0});
+  const InvoiceStats({
+    this.totalSales = 0,
+    this.paid = 0,
+    this.unpaid = 0,
+    this.cancelled = 0,
+  });
   final double totalSales;
   final double paid;
   final double unpaid;
   final double cancelled;
 
   factory InvoiceStats.fromJson(JsonMap j) => InvoiceStats(
-        totalSales: asDouble(j['total_sales']),
-        paid: asDouble(j['paid']),
-        unpaid: asDouble(j['unpaid']),
-        cancelled: asDouble(j['cancelled']),
-      );
+    totalSales: asDouble(j['total_sales']),
+    paid: asDouble(j['paid']),
+    unpaid: asDouble(j['unpaid']),
+    cancelled: asDouble(j['cancelled']),
+  );
 }
 
 class StatusHistoryEntry {
-  const StatusHistoryEntry({required this.from, required this.to, required this.note, required this.by, required this.at});
+  const StatusHistoryEntry({
+    required this.from,
+    required this.to,
+    required this.note,
+    required this.by,
+    required this.at,
+  });
   final String from;
   final String to;
   final String note;
@@ -173,10 +197,10 @@ class StatusHistoryEntry {
   final DateTime? at;
 
   factory StatusHistoryEntry.fromJson(JsonMap j) => StatusHistoryEntry(
-        from: asString(j['from_status']),
-        to: asString(j['to_status']),
-        note: asString(j['note']),
-        by: asString(j['changed_by']),
-        at: asDate(j['created_at']),
-      );
+    from: asString(j['from_status']),
+    to: asString(j['to_status']),
+    note: asString(j['note']),
+    by: asString(j['changed_by']),
+    at: asDate(j['created_at']),
+  );
 }

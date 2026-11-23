@@ -10,7 +10,13 @@ import 'package:truerp_mobile/features/purchases/data/purchases_repository.dart'
 void main() {
   group('PurchaseTotals matches the web purchase form', () {
     final lines = [
-      LineItem(description: 'Rice', quantity: 10, unitPrice: 100, discountPct: 5, taxRate: 5),
+      LineItem(
+        description: 'Rice',
+        quantity: 10,
+        unitPrice: 100,
+        discountPct: 5,
+        taxRate: 5,
+      ),
       LineItem(description: 'Oil', quantity: 2, unitPrice: 149.5, taxRate: 18),
     ];
 
@@ -25,7 +31,12 @@ void main() {
     });
 
     test('bill discount, charges, no rounding', () {
-      final t = PurchaseTotals.compute(lines, billDiscount: 20.32, charges: 70, roundOff: false);
+      final t = PurchaseTotals.compute(
+        lines,
+        billDiscount: 20.32,
+        charges: 70,
+        roundOff: false,
+      );
       expect(t.total, closeTo(1400, 1e-9));
     });
 
@@ -44,11 +55,22 @@ void main() {
   });
 
   group('PurchaseBillDraft payload', () {
-    PurchaseBillDraft draft({double paid = 0, String mode = 'unpaid'}) => PurchaseBillDraft(
+    PurchaseBillDraft draft({double paid = 0, String mode = 'unpaid'}) =>
+        PurchaseBillDraft(
           partyId: 'v1',
           number: ' VB-77 ',
           date: DateTime(2026, 11, 1),
-          lines: [LineItem(productId: 'p', description: 'Rice', quantity: 2, unitPrice: 50, taxRate: 5, mrp: 60, salePrice: 55)],
+          lines: [
+            LineItem(
+              productId: 'p',
+              description: 'Rice',
+              quantity: 2,
+              unitPrice: 50,
+              taxRate: 5,
+              mrp: 60,
+              salePrice: 55,
+            ),
+          ],
           amountPaid: paid,
           paymentMode: mode,
           bankAccountId: 'b1',
@@ -89,7 +111,10 @@ void main() {
     final d = ExpenseDraft(
       category: 'Rent',
       date: DateTime(2026),
-      items: [ExpenseItem(description: 'Rent', unitPrice: 10000), ExpenseItem(description: 'Maint', quantity: 2, unitPrice: 500)],
+      items: [
+        ExpenseItem(description: 'Rent', unitPrice: 10000),
+        ExpenseItem(description: 'Maint', quantity: 2, unitPrice: 500),
+      ],
       withGst: true,
       taxRate: 18,
       bankAccountId: 'b',
@@ -102,8 +127,14 @@ void main() {
   });
 
   test('payment-out payload', () {
-    final j = PaymentOutDraft(partyId: 'v', amount: 500, date: DateTime(2026), mode: 'bank_transfer', bankAccountId: 'b', purchaseBillId: 'pb')
-        .toJson();
+    final j = PaymentOutDraft(
+      partyId: 'v',
+      amount: 500,
+      date: DateTime(2026),
+      mode: 'bank_transfer',
+      bankAccountId: 'b',
+      purchaseBillId: 'pb',
+    ).toJson();
     expect(j['amount_paid'], 500);
     expect(j['purchase_bill_id'], 'pb');
     expect(j['bank_account_id'], 'b');
@@ -111,13 +142,34 @@ void main() {
 
   test('models parse backend shapes', () {
     final bill = PurchaseBill.fromJson({
-      'id': 'b', 'bill_number': 'VB-1', 'status': 'partial', 'party': {'id': 'v', 'name': 'Acme'},
-      'items': [{'id': 'i', 'description': 'Rice', 'quantity': 2, 'unit_price': 100, 'discount': 10}],
-      'total_amount': 180, 'paid_amount': 80, 'balance_due': 100,
+      'id': 'b',
+      'bill_number': 'VB-1',
+      'status': 'partial',
+      'party': {'id': 'v', 'name': 'Acme'},
+      'items': [
+        {
+          'id': 'i',
+          'description': 'Rice',
+          'quantity': 2,
+          'unit_price': 100,
+          'discount': 10,
+        },
+      ],
+      'total_amount': 180,
+      'paid_amount': 80,
+      'balance_due': 100,
     });
     expect(bill.vendorName, 'Acme');
     expect(bill.lineDiscounts, 20);
     expect(PurchaseReturn.refundLabel('credit_note'), 'Debit note');
-    expect(Expense.fromJson({'items': [{'description': 'Tea'}, {'description': 'Snacks'}]}).title, 'Tea +1');
+    expect(
+      Expense.fromJson({
+        'items': [
+          {'description': 'Tea'},
+          {'description': 'Snacks'},
+        ],
+      }).title,
+      'Tea +1',
+    );
   });
 }

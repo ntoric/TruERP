@@ -21,13 +21,20 @@ class SplashScreen extends ConsumerWidget {
               ? Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    ErrorView(error: session.error!, onRetry: () => ref.invalidate(sessionProvider)),
+                    ErrorView(
+                      error: session.error!,
+                      onRetry: () => ref.invalidate(sessionProvider),
+                    ),
                     Wrap(
                       spacing: Spacing.sm,
                       children: [
-                        TextButton(onPressed: () => showServerSheet(context, ref), child: const Text('Server settings')),
                         TextButton(
-                          onPressed: () => ref.read(sessionProvider.notifier).logout(),
+                          onPressed: () => showServerSheet(context, ref),
+                          child: const Text('Server settings'),
+                        ),
+                        TextButton(
+                          onPressed: () =>
+                              ref.read(sessionProvider.notifier).logout(),
                           child: const Text('Sign out'),
                         ),
                       ],
@@ -42,7 +49,10 @@ class SplashScreen extends ConsumerWidget {
                     Image.asset('assets/logo.png', width: 96, height: 96),
                     const Padding(
                       padding: EdgeInsets.only(top: 96 + Spacing.xxl * 2),
-                      child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2.6)),
+                      child: SizedBox.square(
+                        dimension: 24,
+                        child: CircularProgressIndicator(strokeWidth: 2.6),
+                      ),
                     ),
                   ],
                 ),

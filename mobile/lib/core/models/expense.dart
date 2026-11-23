@@ -2,7 +2,12 @@ import '../api/json.dart';
 import 'payment.dart';
 
 class ExpenseItem {
-  ExpenseItem({required this.description, this.quantity = 1, this.unitPrice = 0, this.total = 0});
+  ExpenseItem({
+    required this.description,
+    this.quantity = 1,
+    this.unitPrice = 0,
+    this.total = 0,
+  });
 
   String description;
   double quantity;
@@ -14,13 +19,17 @@ class ExpenseItem {
   double get amount => quantity * unitPrice;
 
   factory ExpenseItem.fromJson(JsonMap j) => ExpenseItem(
-        description: asString(j['description']),
-        quantity: asDouble(j['quantity'], 1),
-        unitPrice: asDouble(j['unit_price']),
-        total: asDouble(j['total']),
-      );
+    description: asString(j['description']),
+    quantity: asDouble(j['quantity'], 1),
+    unitPrice: asDouble(j['unit_price']),
+    total: asDouble(j['total']),
+  );
 
-  JsonMap toJson() => {'description': description.trim(), 'quantity': quantity, 'unit_price': unitPrice};
+  JsonMap toJson() => {
+    'description': description.trim(),
+    'quantity': quantity,
+    'unit_price': unitPrice,
+  };
 }
 
 class Expense {
@@ -72,7 +81,9 @@ class Expense {
   String get title {
     if (description.trim().isNotEmpty) return description.trim();
     if (items.isNotEmpty && items.first.description.isNotEmpty) {
-      return items.length == 1 ? items.first.description : '${items.first.description} +${items.length - 1}';
+      return items.length == 1
+          ? items.first.description
+          : '${items.first.description} +${items.length - 1}';
     }
     return category.isEmpty ? 'Expense' : category;
   }
@@ -104,16 +115,21 @@ class Expense {
 }
 
 class ExpenseCategory {
-  const ExpenseCategory({required this.id, required this.name, this.description = '', this.isActive = true});
+  const ExpenseCategory({
+    required this.id,
+    required this.name,
+    this.description = '',
+    this.isActive = true,
+  });
   final String id;
   final String name;
   final String description;
   final bool isActive;
 
   factory ExpenseCategory.fromJson(JsonMap j) => ExpenseCategory(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        description: asString(j['description']),
-        isActive: asBool(j['is_active'], true),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    description: asString(j['description']),
+    isActive: asBool(j['is_active'], true),
+  );
 }

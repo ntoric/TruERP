@@ -73,34 +73,37 @@ class Quotation {
   bool get canEdit => status != 'accepted' && !isConverted;
 
   bool get isExpired =>
-      validUntil != null && !isConverted && status != 'accepted' && validUntil!.isBefore(DateTime.now().subtract(const Duration(days: 1)));
+      validUntil != null &&
+      !isConverted &&
+      status != 'accepted' &&
+      validUntil!.isBefore(DateTime.now().subtract(const Duration(days: 1)));
 
   factory Quotation.fromJson(JsonMap j) => Quotation(
-        id: asString(j['id']),
-        number: asString(j['quotation_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        validUntil: asDate(j['valid_until']),
-        partyId: asString(j['party_id']),
-        party: _party(j),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-        subTotal: asDouble(j['sub_total']),
-        discountTotal: asDouble(j['discount_total']),
-        quotationDiscount: asDouble(j['quotation_discount']),
-        additionalCharges: asDouble(j['additional_charges']),
-        hasChargeItems: asMapList(j['additional_charge_items']).isNotEmpty,
-        roundOff: asDouble(j['round_off']),
-        totalAmount: asDouble(j['total_amount']),
-        notes: asString(j['notes']),
-        terms: asString(j['terms']),
-        paymentTerms: asInt(j['payment_terms']),
-        isInterState: asBool(j['is_inter_state']),
-        placeOfSupply: asString(j['place_of_supply']),
-        reverseCharge: asBool(j['reverse_charge']),
-        signature: asString(j['signature']),
-        convertedInvoiceId: asStringOrNull(j['converted_to_invoice_id']),
-        version: asInt(j['version'], 1),
-      );
+    id: asString(j['id']),
+    number: asString(j['quotation_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    validUntil: asDate(j['valid_until']),
+    partyId: asString(j['party_id']),
+    party: _party(j),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+    subTotal: asDouble(j['sub_total']),
+    discountTotal: asDouble(j['discount_total']),
+    quotationDiscount: asDouble(j['quotation_discount']),
+    additionalCharges: asDouble(j['additional_charges']),
+    hasChargeItems: asMapList(j['additional_charge_items']).isNotEmpty,
+    roundOff: asDouble(j['round_off']),
+    totalAmount: asDouble(j['total_amount']),
+    notes: asString(j['notes']),
+    terms: asString(j['terms']),
+    paymentTerms: asInt(j['payment_terms']),
+    isInterState: asBool(j['is_inter_state']),
+    placeOfSupply: asString(j['place_of_supply']),
+    reverseCharge: asBool(j['reverse_charge']),
+    signature: asString(j['signature']),
+    convertedInvoiceId: asStringOrNull(j['converted_to_invoice_id']),
+    version: asInt(j['version'], 1),
+  );
 }
 
 /// Delivery challan. Status: draft, delivered, cancelled.
@@ -146,37 +149,42 @@ class DeliveryChallan {
   bool get isDraft => status == 'draft';
 
   factory DeliveryChallan.fromJson(JsonMap j) => DeliveryChallan(
-        id: asString(j['id']),
-        number: asString(j['challan_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        dueDate: asDate(j['due_date']),
-        partyId: asString(j['party_id']),
-        party: _party(j),
-        invoiceId: asStringOrNull(j['invoice_id']),
-        invoiceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-        subTotal: asDouble(j['sub_total']),
-        totalQuantity: asDouble(j['total_quantity']),
-        notes: asString(j['notes']),
-        terms: asString(j['terms']),
-        signature: asString(j['signature']),
-        vehicleNumber: asString(j['vehicle_number']),
-        transportMode: asString(j['transport_mode']),
-      );
+    id: asString(j['id']),
+    number: asString(j['challan_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    dueDate: asDate(j['due_date']),
+    partyId: asString(j['party_id']),
+    party: _party(j),
+    invoiceId: asStringOrNull(j['invoice_id']),
+    invoiceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+    subTotal: asDouble(j['sub_total']),
+    totalQuantity: asDouble(j['total_quantity']),
+    notes: asString(j['notes']),
+    terms: asString(j['terms']),
+    signature: asString(j['signature']),
+    vehicleNumber: asString(j['vehicle_number']),
+    transportMode: asString(j['transport_mode']),
+  );
 
   /// Header-only update body; the backend overwrites every one of these.
   JsonMap headerJson({String? status}) => {
-        'status': status ?? this.status,
-        'notes': notes,
-        'terms': terms,
-        'signature': signature,
-        'vehicle_number': vehicleNumber,
-        'transport_mode': transportMode,
-        'due_date': dueDate?.toUtc().toIso8601String(),
-      };
+    'status': status ?? this.status,
+    'notes': notes,
+    'terms': terms,
+    'signature': signature,
+    'vehicle_number': vehicleNumber,
+    'transport_mode': transportMode,
+    'due_date': apiDateOrNull(dueDate),
+  };
 
-  static const transportModes = [('road', 'Road'), ('rail', 'Rail'), ('air', 'Air'), ('sea', 'Sea')];
+  static const transportModes = [
+    ('road', 'Road'),
+    ('rail', 'Rail'),
+    ('air', 'Air'),
+    ('sea', 'Sea'),
+  ];
 }
 
 /// Shared shape of sales returns, credit notes and debit notes.
@@ -226,61 +234,74 @@ class ReturnDoc {
   String get partyName => party?.name ?? 'Party';
 
   factory ReturnDoc.salesReturn(JsonMap j) => ReturnDoc(
-        id: asString(j['id']),
-        number: asString(j['return_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        amount: asDouble(j['amount']),
-        party: _party(j),
-        partyId: asString(j['party_id']),
-        sourceId: asStringOrNull(j['invoice_id']),
-        sourceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
-        reason: asString(j['reason']),
-        refundMode: asString(j['refund_mode']),
-        notes: asString(j['notes']),
-        deductionTotal: asDouble(j['deduction_total']),
-        refundAmount: asDouble(j['refund_amount']),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['return_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    amount: asDouble(j['amount']),
+    party: _party(j),
+    partyId: asString(j['party_id']),
+    sourceId: asStringOrNull(j['invoice_id']),
+    sourceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
+    reason: asString(j['reason']),
+    refundMode: asString(j['refund_mode']),
+    notes: asString(j['notes']),
+    deductionTotal: asDouble(j['deduction_total']),
+    refundAmount: asDouble(j['refund_amount']),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+  );
 
   factory ReturnDoc.creditNote(JsonMap j) => ReturnDoc(
-        id: asString(j['id']),
-        number: asString(j['credit_note_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        amount: asDouble(j['total_amount']),
-        party: _party(j),
-        partyId: asString(j['party_id']),
-        sourceId: asStringOrNull(j['invoice_id']),
-        sourceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
-        reason: asString(j['reason']),
-        refundMode: asString(j['refund_mode']),
-        cancelReason: asString(j['cancel_reason']),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['credit_note_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    amount: asDouble(j['total_amount']),
+    party: _party(j),
+    partyId: asString(j['party_id']),
+    sourceId: asStringOrNull(j['invoice_id']),
+    sourceNumber: asStringOrNull(pick(j, 'invoice.invoice_number')),
+    reason: asString(j['reason']),
+    refundMode: asString(j['refund_mode']),
+    cancelReason: asString(j['cancel_reason']),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+  );
 
   factory ReturnDoc.debitNote(JsonMap j) => ReturnDoc(
-        id: asString(j['id']),
-        number: asString(j['debit_note_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        amount: asDouble(j['total_amount']),
-        party: _party(j),
-        partyId: asString(j['party_id']),
-        sourceId: asStringOrNull(j['purchase_bill_id']),
-        sourceNumber: asStringOrNull(pick(j, 'purchase_bill.bill_number')),
-        reason: asString(j['reason']),
-        refundMode: asString(j['refund_mode']),
-        cancelReason: asString(j['cancel_reason']),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['debit_note_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    amount: asDouble(j['total_amount']),
+    party: _party(j),
+    partyId: asString(j['party_id']),
+    sourceId: asStringOrNull(j['purchase_bill_id']),
+    sourceNumber: asStringOrNull(pick(j, 'purchase_bill.bill_number')),
+    reason: asString(j['reason']),
+    refundMode: asString(j['refund_mode']),
+    cancelReason: asString(j['cancel_reason']),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+  );
 }
 
 /// Settlement choices, matching each web form.
 abstract final class RefundModes {
-  static const salesReturn = [('cash', 'Cash'), ('bank', 'Bank'), ('upi', 'UPI'), ('credit_note', 'Credit note')];
-  static const creditNote = [('cash', 'Cash'), ('original_payment', 'Original payment'), ('credit_note', 'Keep as credit')];
-  static const debitNote = [('cash', 'Cash'), ('original_payment', 'Original payment'), ('debit_note', 'Adjust against dues')];
+  static const salesReturn = [
+    ('cash', 'Cash'),
+    ('bank', 'Bank'),
+    ('upi', 'UPI'),
+    ('credit_note', 'Credit note'),
+  ];
+  static const creditNote = [
+    ('cash', 'Cash'),
+    ('original_payment', 'Original payment'),
+    ('credit_note', 'Keep as credit'),
+  ];
+  static const debitNote = [
+    ('cash', 'Cash'),
+    ('original_payment', 'Original payment'),
+    ('debit_note', 'Adjust against dues'),
+  ];
 
   static String label(String mode) {
     for (final list in [salesReturn, creditNote, debitNote]) {
@@ -321,17 +342,17 @@ class DiscountTxn {
   final double documentTotal;
 
   factory DiscountTxn.fromJson(JsonMap j) => DiscountTxn(
-        id: asString(j['id']),
-        type: asString(j['type']),
-        typeLabel: asString(j['type_label'], asString(j['type'])),
-        reference: asString(j['reference']),
-        date: asDate(j['date']),
-        partyName: asString(j['party_name']),
-        itemDiscount: asDouble(j['item_discount']),
-        documentDiscount: asDouble(j['document_discount']),
-        totalDiscount: asDouble(j['total_discount']),
-        documentTotal: asDouble(j['document_total']),
-      );
+    id: asString(j['id']),
+    type: asString(j['type']),
+    typeLabel: asString(j['type_label'], asString(j['type'])),
+    reference: asString(j['reference']),
+    date: asDate(j['date']),
+    partyName: asString(j['party_name']),
+    itemDiscount: asDouble(j['item_discount']),
+    documentDiscount: asDouble(j['document_discount']),
+    totalDiscount: asDouble(j['total_discount']),
+    documentTotal: asDouble(j['document_total']),
+  );
 
   static const types = [
     ('sale_invoice', 'Invoices'),

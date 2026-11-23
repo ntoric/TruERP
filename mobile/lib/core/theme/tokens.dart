@@ -55,10 +55,16 @@ abstract final class Breakpoints {
   static const expanded = 1024.0;
 
   static bool isCompact(BuildContext c) => MediaQuery.sizeOf(c).width < compact;
-  static bool isExpanded(BuildContext c) => MediaQuery.sizeOf(c).width >= expanded;
+  static bool isExpanded(BuildContext c) =>
+      MediaQuery.sizeOf(c).width >= expanded;
 
   /// Column count for card grids at the current width.
-  static int columns(BuildContext c, {int compactCols = 2, int mediumCols = 3, int expandedCols = 4}) {
+  static int columns(
+    BuildContext c, {
+    int compactCols = 2,
+    int mediumCols = 3,
+    int expandedCols = 4,
+  }) {
     final w = MediaQuery.sizeOf(c).width;
     if (w >= expanded) return expandedCols;
     if (w >= compact) return mediumCols;

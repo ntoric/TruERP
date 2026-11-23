@@ -9,4 +9,6 @@ class DataRevision extends Notifier<int> {
   void bump() => state++;
 }
 
-final dataRevisionProvider = NotifierProvider<DataRevision, int>(DataRevision.new);
+final dataRevisionProvider = NotifierProvider<DataRevision, int>(
+  DataRevision.new,
+);

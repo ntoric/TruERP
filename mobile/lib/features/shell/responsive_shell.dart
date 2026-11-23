@@ -27,7 +27,8 @@ class ResponsiveShell extends ConsumerWidget {
   const ResponsiveShell({super.key, required this.shell});
   final StatefulNavigationShell shell;
 
-  void _go(int i) => shell.goBranch(i, initialLocation: i == shell.currentIndex);
+  void _go(int i) =>
+      shell.goBranch(i, initialLocation: i == shell.currentIndex);
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -44,7 +45,11 @@ class ResponsiveShell extends ConsumerWidget {
           onDestinationSelected: _go,
           destinations: [
             for (final d in _dests)
-              NavigationDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: d.label),
+              NavigationDestination(
+                icon: Icon(d.icon),
+                selectedIcon: Icon(d.selectedIcon),
+                label: d.label,
+              ),
           ],
         ),
       );
@@ -61,20 +66,28 @@ class ResponsiveShell extends ConsumerWidget {
               minExtendedWidth: 200,
               selectedIndex: shell.currentIndex,
               onDestinationSelected: _go,
-              labelType: extended ? NavigationRailLabelType.none : NavigationRailLabelType.all,
+              labelType: extended
+                  ? NavigationRailLabelType.none
+                  : NavigationRailLabelType.all,
               leading: Padding(
                 padding: const EdgeInsets.symmetric(vertical: Spacing.md),
                 child: extended
-                    ? Row(children: [
-                        Image.asset('assets/logo.png', height: 32),
-                        const SizedBox(width: Spacing.sm),
-                        Text('TruERP', style: context.text.titleMedium),
-                      ])
+                    ? Row(
+                        children: [
+                          Image.asset('assets/logo.png', height: 32),
+                          const SizedBox(width: Spacing.sm),
+                          Text('TruERP', style: context.text.titleMedium),
+                        ],
+                      )
                     : Image.asset('assets/logo.png', height: 32),
               ),
               destinations: [
                 for (final d in _dests)
-                  NavigationRailDestination(icon: Icon(d.icon), selectedIcon: Icon(d.selectedIcon), label: Text(d.label)),
+                  NavigationRailDestination(
+                    icon: Icon(d.icon),
+                    selectedIcon: Icon(d.selectedIcon),
+                    label: Text(d.label),
+                  ),
               ],
             ),
           ),

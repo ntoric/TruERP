@@ -1,7 +1,15 @@
 import 'package:intl/intl.dart';
 
-final _inr = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 2);
-final _inr0 = NumberFormat.currency(locale: 'en_IN', symbol: '₹', decimalDigits: 0);
+final _inr = NumberFormat.currency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 2,
+);
+final _inr0 = NumberFormat.currency(
+  locale: 'en_IN',
+  symbol: '₹',
+  decimalDigits: 0,
+);
 final _num = NumberFormat.decimalPattern('en_IN');
 final _dMy = DateFormat('dd MMM yyyy');
 final _dM = DateFormat('dd MMM');
@@ -34,7 +42,10 @@ String moneyCompact(num? v) {
 String qty(num? v) {
   final n = (v ?? 0).toDouble();
   if (n == n.roundToDouble()) return _num.format(n.round());
-  return n.toStringAsFixed(3).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  return n
+      .toStringAsFixed(3)
+      .replaceAll(RegExp(r'0+$'), '')
+      .replaceAll(RegExp(r'\.$'), '');
 }
 
 String number(num? v) => _num.format(v ?? 0);

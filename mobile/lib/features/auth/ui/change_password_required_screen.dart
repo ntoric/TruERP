@@ -49,7 +49,8 @@ class _State extends ConsumerState<ChangePasswordRequiredScreen> {
   Widget build(BuildContext context) {
     return AuthLayout(
       title: 'Set a new password',
-      subtitle: 'Your account was set up with a temporary password. Choose your own to continue.',
+      subtitle:
+          'Your account was set up with a temporary password. Choose your own to continue.',
       child: Form(
         key: _form,
         child: Column(
@@ -59,7 +60,10 @@ class _State extends ConsumerState<ChangePasswordRequiredScreen> {
               controller: _password,
               obscureText: true,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'New password', prefixIcon: Icon(Icons.lock_outline_rounded)),
+              decoration: const InputDecoration(
+                labelText: 'New password',
+                prefixIcon: Icon(Icons.lock_outline_rounded),
+              ),
               validator: Validators.password,
             ),
             const SizedBox(height: Spacing.md),
@@ -67,15 +71,25 @@ class _State extends ConsumerState<ChangePasswordRequiredScreen> {
               controller: _confirm,
               obscureText: true,
               onFieldSubmitted: (_) => _submit(),
-              decoration: const InputDecoration(labelText: 'Confirm password', prefixIcon: Icon(Icons.lock_outline_rounded)),
-              validator: (v) => v == _password.text ? null : 'Passwords don\'t match',
+              decoration: const InputDecoration(
+                labelText: 'Confirm password',
+                prefixIcon: Icon(Icons.lock_outline_rounded),
+              ),
+              validator: (v) =>
+                  v == _password.text ? null : 'Passwords don\'t match',
             ),
             const SizedBox(height: Spacing.lg),
             if (_error != null) ErrorBanner(_error!),
             FilledButton(
               onPressed: _busy ? null : _submit,
               child: _busy
-                  ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                  ? const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Text('Save and continue'),
             ),
             TextButton(

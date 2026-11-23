@@ -36,18 +36,20 @@ class DocLine {
   final double total;
 
   factory DocLine.fromJson(JsonMap j) => DocLine(
-        id: asString(j['id']),
-        productId: asStringOrNull(j['product_id']),
-        description: asStringOrNull(j['description']) ?? asString(pick(j, 'product.name'), 'Item'),
-        quantity: asDouble(j['quantity']),
-        receivedQty: asDouble(j['received_qty']),
-        unit: asString(j['unit']),
-        unitPrice: asDouble(j['unit_price']),
-        discount: asDouble(j['discount']),
-        taxRate: asDouble(j['tax_rate']),
-        taxAmount: asDouble(j['tax_amount']),
-        total: asDouble(j['total']),
-      );
+    id: asString(j['id']),
+    productId: asStringOrNull(j['product_id']),
+    description:
+        asStringOrNull(j['description']) ??
+        asString(pick(j, 'product.name'), 'Item'),
+    quantity: asDouble(j['quantity']),
+    receivedQty: asDouble(j['received_qty']),
+    unit: asString(j['unit']),
+    unitPrice: asDouble(j['unit_price']),
+    discount: asDouble(j['discount']),
+    taxRate: asDouble(j['tax_rate']),
+    taxAmount: asDouble(j['tax_amount']),
+    total: asDouble(j['total']),
+  );
 }
 
 class PurchaseBill {
@@ -95,29 +97,30 @@ class PurchaseBill {
 
   String get vendorName => party?.name ?? 'Vendor';
   bool get isDraft => status == 'draft';
-  double get lineDiscounts => items.fold(0, (s, l) => s + l.quantity * l.unitPrice * l.discount / 100);
+  double get lineDiscounts =>
+      items.fold(0, (s, l) => s + l.quantity * l.unitPrice * l.discount / 100);
 
   factory PurchaseBill.fromJson(JsonMap j) => PurchaseBill(
-        id: asString(j['id']),
-        number: asString(j['bill_number']),
-        status: asString(j['status'], 'unpaid'),
-        date: asDate(j['bill_date']),
-        dueDate: asDate(j['due_date']),
-        partyId: asString(j['party_id']),
-        party: _party(j),
-        stockStatus: asString(j['stock_status'], 'none'),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-        subTotal: asDouble(j['sub_total']),
-        taxTotal: asDouble(j['tax_total']),
-        invoiceDiscount: asDouble(j['invoice_discount']),
-        additionalCharges: asDouble(j['additional_charges']),
-        totalAmount: asDouble(j['total_amount']),
-        paidAmount: asDouble(j['paid_amount']),
-        balanceDue: asDouble(j['balance_due']),
-        paymentMode: asString(j['payment_mode']),
-        taxExempt: asBool(j['tax_exempt']),
-        notes: asString(j['notes']),
-      );
+    id: asString(j['id']),
+    number: asString(j['bill_number']),
+    status: asString(j['status'], 'unpaid'),
+    date: asDate(j['bill_date']),
+    dueDate: asDate(j['due_date']),
+    partyId: asString(j['party_id']),
+    party: _party(j),
+    stockStatus: asString(j['stock_status'], 'none'),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+    subTotal: asDouble(j['sub_total']),
+    taxTotal: asDouble(j['tax_total']),
+    invoiceDiscount: asDouble(j['invoice_discount']),
+    additionalCharges: asDouble(j['additional_charges']),
+    totalAmount: asDouble(j['total_amount']),
+    paidAmount: asDouble(j['paid_amount']),
+    balanceDue: asDouble(j['balance_due']),
+    paymentMode: asString(j['payment_mode']),
+    taxExempt: asBool(j['tax_exempt']),
+    notes: asString(j['notes']),
+  );
 }
 
 class PurchaseStats {
@@ -127,10 +130,10 @@ class PurchaseStats {
   final double unpaid;
 
   factory PurchaseStats.fromJson(JsonMap j) => PurchaseStats(
-        total: asDouble(j['total_purchase']),
-        paid: asDouble(j['paid']),
-        unpaid: asDouble(j['unpaid']),
-      );
+    total: asDouble(j['total_purchase']),
+    paid: asDouble(j['paid']),
+    unpaid: asDouble(j['unpaid']),
+  );
 }
 
 /// Payment Out (money paid to a vendor, or a refund to a customer).
@@ -224,20 +227,20 @@ class PurchaseReturn {
   bool get isDraft => status == 'draft';
 
   factory PurchaseReturn.fromJson(JsonMap j) => PurchaseReturn(
-        id: asString(j['id']),
-        number: asString(j['return_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['date']),
-        amount: asDouble(j['amount']),
-        party: _party(j),
-        partyId: asString(j['party_id']),
-        purchaseBillId: asStringOrNull(j['purchase_bill_id']),
-        purchaseBillNumber: asStringOrNull(pick(j, 'purchase_bill.bill_number')),
-        reason: asString(j['reason']),
-        refundMode: asString(j['refund_mode']),
-        notes: asString(j['notes']),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['return_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['date']),
+    amount: asDouble(j['amount']),
+    party: _party(j),
+    partyId: asString(j['party_id']),
+    purchaseBillId: asStringOrNull(j['purchase_bill_id']),
+    purchaseBillNumber: asStringOrNull(pick(j, 'purchase_bill.bill_number')),
+    reason: asString(j['reason']),
+    refundMode: asString(j['refund_mode']),
+    notes: asString(j['notes']),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+  );
 
   /// Refund modes offered by the web form.
   static const refundModes = <(String, String)>[
@@ -248,7 +251,8 @@ class PurchaseReturn {
   ];
 
   static String refundLabel(String mode) =>
-      refundModes.where((m) => m.$1 == mode).map((m) => m.$2).firstOrNull ?? PaymentMode.labelOf(mode);
+      refundModes.where((m) => m.$1 == mode).map((m) => m.$2).firstOrNull ??
+      PaymentMode.labelOf(mode);
 }
 
 class PurchaseOrder {
@@ -285,18 +289,18 @@ class PurchaseOrder {
   bool get isDraft => status == 'draft';
 
   factory PurchaseOrder.fromJson(JsonMap j) => PurchaseOrder(
-        id: asString(j['id']),
-        number: asString(j['order_number']),
-        status: asString(j['status'], 'draft'),
-        date: asDate(j['order_date']),
-        expectedDate: asDate(j['expected_date']),
-        party: _party(j),
-        partyId: asString(j['party_id']),
-        subTotal: asDouble(j['sub_total']),
-        taxTotal: asDouble(j['tax_total']),
-        totalAmount: asDouble(j['total_amount']),
-        notes: asString(j['notes']),
-        terms: asString(j['terms']),
-        items: asMapList(j['items']).map(DocLine.fromJson).toList(),
-      );
+    id: asString(j['id']),
+    number: asString(j['order_number']),
+    status: asString(j['status'], 'draft'),
+    date: asDate(j['order_date']),
+    expectedDate: asDate(j['expected_date']),
+    party: _party(j),
+    partyId: asString(j['party_id']),
+    subTotal: asDouble(j['sub_total']),
+    taxTotal: asDouble(j['tax_total']),
+    totalAmount: asDouble(j['total_amount']),
+    notes: asString(j['notes']),
+    terms: asString(j['terms']),
+    items: asMapList(j['items']).map(DocLine.fromJson).toList(),
+  );
 }

@@ -11,7 +11,13 @@ void main() {
   group('InvoiceTotals mirrors backend CreateInvoice', () {
     test('percentage line discount, tax ignored', () {
       final t = InvoiceTotals.compute([
-        InvoiceLine(description: 'A', quantity: 2, unitPrice: 100, discountPct: 10, taxRate: 18),
+        InvoiceLine(
+          description: 'A',
+          quantity: 2,
+          unitPrice: 100,
+          discountPct: 10,
+          taxRate: 18,
+        ),
         InvoiceLine(description: 'B', quantity: 1, unitPrice: 50),
       ]);
       expect(t.subTotal, 250);
@@ -31,17 +37,32 @@ void main() {
     });
 
     test('rounds to paise; POS rounds to rupees', () {
-      final lines = [InvoiceLine(description: 'A', quantity: 3, unitPrice: 10.333)];
+      final lines = [
+        InvoiceLine(description: 'A', quantity: 3, unitPrice: 10.333),
+      ];
       expect(InvoiceTotals.compute(lines).total, 31.0);
-      expect(InvoiceTotals.compute([InvoiceLine(description: 'A', quantity: 1, unitPrice: 10.6)], pos: true).total, 11);
+      expect(
+        InvoiceTotals.compute([
+          InvoiceLine(description: 'A', quantity: 1, unitPrice: 10.6),
+        ], pos: true).total,
+        11,
+      );
     });
   });
 
   group('InvoiceDraft payload', () {
-    InvoiceDraft draft({double received = 0, String mode = 'cash'}) => InvoiceDraft(
+    InvoiceDraft draft({double received = 0, String mode = 'cash'}) =>
+        InvoiceDraft(
           partyId: 'p1',
           date: DateTime(2026, 11, 1),
-          lines: [InvoiceLine(productId: 'x', description: 'Item', quantity: 2, unitPrice: 100)],
+          lines: [
+            InvoiceLine(
+              productId: 'x',
+              description: 'Item',
+              quantity: 2,
+              unitPrice: 100,
+            ),
+          ],
           amountReceived: received,
           paymentMode: mode,
         );
@@ -70,23 +91,50 @@ void main() {
   });
 
   test('payment-in never sends a bank account for cash', () {
-    final j = PaymentInDraft(partyId: 'p', amount: 10, date: DateTime(2026), bankAccountId: 'b').toJson();
+    final j = PaymentInDraft(
+      partyId: 'p',
+      amount: 10,
+      date: DateTime(2026),
+      bankAccountId: 'b',
+    ).toJson();
     expect(j['bank_account_id'], isNull);
-    final upi = PaymentInDraft(partyId: 'p', amount: 10, date: DateTime(2026), mode: 'upi', bankAccountId: 'b').toJson();
+    final upi = PaymentInDraft(
+      partyId: 'p',
+      amount: 10,
+      date: DateTime(2026),
+      mode: 'upi',
+      bankAccountId: 'b',
+    ).toJson();
     expect(upi['bank_account_id'], 'b');
   });
 
   group('round-tripped fields the backend overwrites on update', () {
     test('product keeps tax-inclusive and batching flags', () {
-      final p = Product.fromJson({'id': '1', 'name': 'X', 'sale_price_with_tax': false, 'enable_batching': true});
+      final p = Product.fromJson({
+        'id': '1',
+        'name': 'X',
+        'sale_price_with_tax': false,
+        'enable_batching': true,
+      });
       final j = p.toJson();
       expect(j['sale_price_with_tax'], false);
       expect(j['enable_batching'], true);
-      expect(j['purchase_price_with_tax'], true, reason: 'missing flag defaults to backend default (true)');
+      expect(
+        j['purchase_price_with_tax'],
+        true,
+        reason: 'missing flag defaults to backend default (true)',
+      );
     });
 
     test('party keeps TAN', () {
-      expect(Party.fromJson({'id': '1', 'name': 'A', 'tan': 'blra12345b'}).toJson()['tan'], 'BLRA12345B');
+      expect(
+        Party.fromJson({
+          'id': '1',
+          'name': 'A',
+          'tan': 'blra12345b',
+        }).toJson()['tan'],
+        'BLRA12345B',
+      );
     });
   });
 
@@ -97,9 +145,17 @@ void main() {
   });
 
   test('invoice balance due', () {
-    final inv = Invoice.fromJson({'id': '1', 'total_amount': 100, 'amount_paid': 40, 'status': 'partial'});
+    final inv = Invoice.fromJson({
+      'id': '1',
+      'total_amount': 100,
+      'amount_paid': 40,
+      'status': 'partial',
+    });
     expect(inv.balanceDue, 60);
-    expect(Invoice.fromJson({'total_amount': 100, 'status': 'cancelled'}).balanceDue, 0);
+    expect(
+      Invoice.fromJson({'total_amount': 100, 'status': 'cancelled'}).balanceDue,
+      0,
+    );
   });
 
   test('payment mode labels', () {

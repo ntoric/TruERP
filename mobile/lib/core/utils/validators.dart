@@ -1,6 +1,8 @@
 abstract final class Validators {
   static final _email = RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$');
-  static final _gstin = RegExp(r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$');
+  static final _gstin = RegExp(
+    r'^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$',
+  );
   static final _phone = RegExp(r'^[+]?[0-9]{10,13}$');
 
   static String? required(String? v, [String field = 'This field']) =>
@@ -12,7 +14,8 @@ abstract final class Validators {
     return _email.hasMatch(s) ? null : 'Enter a valid email';
   }
 
-  static String? optionalEmail(String? v) => (v ?? '').trim().isEmpty ? null : email(v);
+  static String? optionalEmail(String? v) =>
+      (v ?? '').trim().isEmpty ? null : email(v);
 
   static String? password(String? v) {
     if ((v ?? '').isEmpty) return 'Password is required';
@@ -31,7 +34,12 @@ abstract final class Validators {
     return _gstin.hasMatch(s) ? null : 'Enter a valid 15-character GSTIN';
   }
 
-  static String? number(String? v, {bool required = false, bool allowZero = true, String field = 'Value'}) {
+  static String? number(
+    String? v, {
+    bool required = false,
+    bool allowZero = true,
+    String field = 'Value',
+  }) {
     final s = (v ?? '').trim();
     if (s.isEmpty) return required ? '$field is required' : null;
     final n = double.tryParse(s);

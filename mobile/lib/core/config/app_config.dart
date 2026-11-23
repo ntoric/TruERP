@@ -4,9 +4,13 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Overridden in `main()` once SharedPreferences has loaded.
-final sharedPrefsProvider = Provider<SharedPreferences>((_) => throw UnimplementedError());
+final sharedPrefsProvider = Provider<SharedPreferences>(
+  (_) => throw UnimplementedError(),
+);
 
-final secureStorageProvider = Provider<FlutterSecureStorage>((_) => const FlutterSecureStorage());
+final secureStorageProvider = Provider<FlutterSecureStorage>(
+  (_) => const FlutterSecureStorage(),
+);
 
 /// Persistent, non-secret app settings.
 class AppConfig {
@@ -24,22 +28,28 @@ class AppConfig {
   /// `--dart-define=API_URL=http://10.0.2.2:8088/api/v1`.
   static String get defaultServerUrl {
     const fromEnv = String.fromEnvironment('API_URL');
-    return fromEnv.isNotEmpty ? normalizeServerUrl(fromEnv) : productionServerUrl;
+    return fromEnv.isNotEmpty
+        ? normalizeServerUrl(fromEnv)
+        : productionServerUrl;
   }
 
-  static final _localHost = RegExp(r'^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)');
+  static final _localHost = RegExp(
+    r'^(localhost|127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)',
+  );
 
   String get serverUrl => _prefs.getString(_kServer) ?? defaultServerUrl;
-  Future<void> setServerUrl(String url) => _prefs.setString(_kServer, normalizeServerUrl(url));
+  Future<void> setServerUrl(String url) =>
+      _prefs.setString(_kServer, normalizeServerUrl(url));
 
   String? get storeId => _prefs.getString(_kStore);
-  Future<void> setStoreId(String? id) =>
-      id == null || id.isEmpty ? _prefs.remove(_kStore) : _prefs.setString(_kStore, id);
+  Future<void> setStoreId(String? id) => id == null || id.isEmpty
+      ? _prefs.remove(_kStore)
+      : _prefs.setString(_kStore, id);
 
   ThemeMode get themeMode => ThemeMode.values.firstWhere(
-        (m) => m.name == _prefs.getString(_kTheme),
-        orElse: () => ThemeMode.system,
-      );
+    (m) => m.name == _prefs.getString(_kTheme),
+    orElse: () => ThemeMode.system,
+  );
   Future<void> setThemeMode(ThemeMode m) => _prefs.setString(_kTheme, m.name);
 
   /// Accepts `host`, `host:port`, `https://host`, or a full `/api/v1` URL.
@@ -55,7 +65,9 @@ class AppConfig {
   }
 }
 
-final appConfigProvider = Provider<AppConfig>((ref) => AppConfig(ref.watch(sharedPrefsProvider)));
+final appConfigProvider = Provider<AppConfig>(
+  (ref) => AppConfig(ref.watch(sharedPrefsProvider)),
+);
 
 class ThemeModeController extends Notifier<ThemeMode> {
   @override
@@ -67,4 +79,6 @@ class ThemeModeController extends Notifier<ThemeMode> {
   }
 }
 
-final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(ThemeModeController.new);
+final themeModeProvider = NotifierProvider<ThemeModeController, ThemeMode>(
+  ThemeModeController.new,
+);

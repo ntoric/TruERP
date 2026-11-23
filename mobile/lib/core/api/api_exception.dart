@@ -3,7 +3,12 @@ import 'package:dio/dio.dart';
 import 'json.dart';
 
 class ApiException implements Exception {
-  ApiException(this.message, {this.statusCode, this.fields = const {}, this.data});
+  ApiException(
+    this.message, {
+    this.statusCode,
+    this.fields = const {},
+    this.data,
+  });
 
   final String message;
   final int? statusCode;
@@ -24,12 +29,15 @@ class ApiException implements Exception {
         DioExceptionType.sendTimeout =>
           'The server took too long to respond. Check your connection and try again.',
         DioExceptionType.cancel => 'Request cancelled.',
-        _ => 'Unable to reach the server. Check your connection or server address.',
+        _ =>
+          'Unable to reach the server. Check your connection or server address.',
       };
       return ApiException(msg);
     }
     final body = res.data is Map ? asMap(res.data) : <String, dynamic>{};
-    final fields = asMap(body['fields']).map((k, v) => MapEntry(k, asString(v)));
+    final fields = asMap(
+      body['fields'],
+    ).map((k, v) => MapEntry(k, asString(v)));
     var msg = asStringOrNull(body['error']) ?? asStringOrNull(body['message']);
     msg ??= switch (res.statusCode) {
       401 => 'Your session has expired. Please sign in again.',
@@ -37,7 +45,12 @@ class ApiException implements Exception {
       404 => 'Not found.',
       _ => 'Something went wrong (${res.statusCode}).',
     };
-    return ApiException(msg, statusCode: res.statusCode, fields: fields, data: body);
+    return ApiException(
+      msg,
+      statusCode: res.statusCode,
+      fields: fields,
+      data: body,
+    );
   }
 
   @override

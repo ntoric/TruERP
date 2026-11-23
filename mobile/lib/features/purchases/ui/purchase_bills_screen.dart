@@ -30,7 +30,8 @@ class PurchaseBillsScreen extends ConsumerStatefulWidget {
   final bool isTab;
 
   @override
-  ConsumerState<PurchaseBillsScreen> createState() => _PurchaseBillsScreenState();
+  ConsumerState<PurchaseBillsScreen> createState() =>
+      _PurchaseBillsScreenState();
 }
 
 class _PurchaseBillsScreenState extends ConsumerState<PurchaseBillsScreen> {
@@ -57,26 +58,40 @@ class _PurchaseBillsScreenState extends ConsumerState<PurchaseBillsScreen> {
 
     final list = PagedListView<PurchaseBill>(
       resetKey: (_status, _q, _range, rev, store),
-      fetch: (page) => repo.bills(page: page, search: _q, status: _status, from: _range?.start, to: _range?.end),
+      fetch: (page) => repo.bills(
+        page: page,
+        search: _q,
+        status: _status,
+        from: _range?.start,
+        to: _range?.end,
+      ),
       header: ListFilters(
-        summary: SummaryStrip(cells: [
-          ('Total purchases', stats?.total, null),
-          ('Paid', stats?.paid, StatusColors.success),
-          ('To pay', stats?.unpaid, StatusColors.danger),
-        ]),
+        summary: SummaryStrip(
+          cells: [
+            ('Total purchases', stats?.total, null),
+            ('Paid', stats?.paid, StatusColors.success),
+            ('To pay', stats?.unpaid, StatusColors.danger),
+          ],
+        ),
         searchHint: 'Search bill number or vendor',
         onSearch: (v) => setState(() => _q = v),
         range: _range,
         onRange: (r) => setState(() => _range = r),
         chips: [
           for (final (value, label) in _statuses)
-            ChoiceChip(label: Text(label), selected: _status == value, onSelected: (_) => setState(() => _status = value)),
+            ChoiceChip(
+              label: Text(label),
+              selected: _status == value,
+              onSelected: (_) => setState(() => _status = value),
+            ),
         ],
       ),
       empty: EmptyState(
         icon: Icons.shopping_bag_rounded,
         title: filtered ? 'No matching purchases' : 'No purchases yet',
-        message: filtered ? null : 'Record bills from your vendors to track what you owe and update stock.',
+        message: filtered
+            ? null
+            : 'Record bills from your vendors to track what you owe and update stock.',
         action: filtered
             ? null
             : FilledButton.icon(
@@ -111,10 +126,27 @@ class _PurchaseBillsScreenState extends ConsumerState<PurchaseBillsScreen> {
             tooltip: 'More',
             onSelected: (r) => context.push(r),
             itemBuilder: (_) => const [
-              PopupMenuItem(value: '/purchase-returns', child: ListTile(leading: Icon(Icons.undo_rounded), title: Text('Purchase returns'))),
               PopupMenuItem(
-                  value: '/purchase-orders', child: ListTile(leading: Icon(Icons.shopping_cart_checkout_rounded), title: Text('Purchase orders'))),
-              PopupMenuItem(value: '/expenses', child: ListTile(leading: Icon(Icons.receipt_rounded), title: Text('Expenses'))),
+                value: '/purchase-returns',
+                child: ListTile(
+                  leading: Icon(Icons.undo_rounded),
+                  title: Text('Purchase returns'),
+                ),
+              ),
+              PopupMenuItem(
+                value: '/purchase-orders',
+                child: ListTile(
+                  leading: Icon(Icons.shopping_cart_checkout_rounded),
+                  title: Text('Purchase orders'),
+                ),
+              ),
+              PopupMenuItem(
+                value: '/expenses',
+                child: ListTile(
+                  leading: Icon(Icons.receipt_rounded),
+                  title: Text('Expenses'),
+                ),
+              ),
             ],
           ),
           if (widget.isTab) const AccountButton(),

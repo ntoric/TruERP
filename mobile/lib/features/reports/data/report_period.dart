@@ -17,7 +17,12 @@ enum PeriodKind {
 /// The period selector shared by the dashboard reports
 /// (`period`, `date`, `start_date`, `end_date` on the backend).
 class ReportPeriod {
-  const ReportPeriod({required this.kind, required this.anchor, this.start, this.end});
+  const ReportPeriod({
+    required this.kind,
+    required this.anchor,
+    this.start,
+    this.end,
+  });
 
   ReportPeriod.thisMonth() : this(kind: PeriodKind.monthly, anchor: _today());
   ReportPeriod.today() : this(kind: PeriodKind.daily, anchor: _today());
@@ -37,15 +42,17 @@ class ReportPeriod {
   }
 
   Map<String, dynamic> toQuery() => {
-        'period': kind.value,
-        'date': ymd(anchor),
-        if (kind == PeriodKind.custom && start != null) 'start_date': ymd(start!),
-        if (kind == PeriodKind.custom && end != null) 'end_date': ymd(end!),
-      };
+    'period': kind.value,
+    'date': ymd(anchor),
+    if (kind == PeriodKind.custom && start != null) 'start_date': ymd(start!),
+    if (kind == PeriodKind.custom && end != null) 'end_date': ymd(end!),
+  };
 
-  ReportPeriod withKind(PeriodKind k) => ReportPeriod(kind: k, anchor: anchor, start: start, end: end);
+  ReportPeriod withKind(PeriodKind k) =>
+      ReportPeriod(kind: k, anchor: anchor, start: start, end: end);
 
-  ReportPeriod custom(DateTime s, DateTime e) => ReportPeriod(kind: PeriodKind.custom, anchor: e, start: s, end: e);
+  ReportPeriod custom(DateTime s, DateTime e) =>
+      ReportPeriod(kind: PeriodKind.custom, anchor: e, start: s, end: e);
 
   /// Previous / next period of the same size.
   ReportPeriod shift(int step) {
@@ -96,7 +103,11 @@ class ReportPeriod {
 
   @override
   bool operator ==(Object other) =>
-      other is ReportPeriod && other.kind == kind && other.anchor == anchor && other.start == start && other.end == end;
+      other is ReportPeriod &&
+      other.kind == kind &&
+      other.anchor == anchor &&
+      other.start == start &&
+      other.end == end;
 
   @override
   int get hashCode => Object.hash(kind, anchor, start, end);

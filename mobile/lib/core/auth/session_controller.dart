@@ -46,7 +46,8 @@ class SessionController extends AsyncNotifier<Session?> {
     if (active.isNotEmpty && stores.every((s) => s.id != active['id'])) {
       stores = [StoreInfo.fromJson(active), ...stores];
     }
-    final assignedId = asStringOrNull(active['id']) ??
+    final assignedId =
+        asStringOrNull(active['id']) ??
         asStringOrNull(loginStore?['id']) ??
         user.storeId ??
         (stores.isEmpty ? null : stores.first.id);
@@ -54,7 +55,8 @@ class SessionController extends AsyncNotifier<Session?> {
     if (user.isSuperAdmin) {
       // Super admins keep their last selection while it still exists.
       activeId = _config.storeId;
-      if (activeId == null || stores.isNotEmpty && stores.every((s) => s.id != activeId)) {
+      if (activeId == null ||
+          stores.isNotEmpty && stores.every((s) => s.id != activeId)) {
         activeId = assignedId;
       }
     } else {
@@ -63,34 +65,56 @@ class SessionController extends AsyncNotifier<Session?> {
       stores = stores.where((s) => s.id == activeId).toList();
     }
     if (activeId != _config.storeId) await _config.setStoreId(activeId);
-    return Session(token: token, user: user, stores: stores, activeStoreId: activeId);
+    return Session(
+      token: token,
+      user: user,
+      stores: stores,
+      activeStoreId: activeId,
+    );
   }
 
   Future<void> login(String email, String password, {String? totpCode}) async {
     JsonMap data;
     try {
-      data = asMap(await _api.post('/auth/login', body: {
-        'email': email.trim(),
-        'password': password,
-        'totp_code': totpCode ?? '',
-      }));
+      data = asMap(
+        await _api.post(
+          '/auth/login',
+          body: {
+            'email': email.trim(),
+            'password': password,
+            'totp_code': totpCode ?? '',
+          },
+        ),
+      );
     } on ApiException catch (e) {
       if (asBool(e.data?['requires_2fa'])) throw TwoFactorRequired(e.message);
       rethrow;
     }
     if (asBool(data['requires_2fa']) && asStringOrNull(data['token']) == null) {
-      throw const TwoFactorRequired('Enter the 6-digit code from your authenticator app.');
+      throw const TwoFactorRequired(
+        'Enter the 6-digit code from your authenticator app.',
+      );
     }
     await _acceptToken(data);
   }
 
-  Future<void> register({required String name, required String email, required String password, String? phone}) async {
-    final data = asMap(await _api.post('/auth/register', body: {
-      'name': name.trim(),
-      'email': email.trim(),
-      'password': password,
-      'phone': phone?.trim() ?? '',
-    }));
+  Future<void> register({
+    required String name,
+    required String email,
+    required String password,
+    String? phone,
+  }) async {
+    final data = asMap(
+      await _api.post(
+        '/auth/register',
+        body: {
+          'name': name.trim(),
+          'email': email.trim(),
+          'password': password,
+          'phone': phone?.trim() ?? '',
+        },
+      ),
+    );
     await _acceptToken(data);
   }
 
@@ -100,9 +124,13 @@ class SessionController extends AsyncNotifier<Session?> {
     ref.read(authTokenHolderProvider).token = token;
     await ref.read(secureStorageProvider).write(key: _kTokenKey, value: token);
     final loginStore = asMap(data['store']);
-    if (loginStore.isNotEmpty) await _config.setStoreId(asString(loginStore['id']));
+    if (loginStore.isNotEmpty) {
+      await _config.setStoreId(asString(loginStore['id']));
+    }
     state = const AsyncLoading();
-    state = await AsyncValue.guard(() => _loadSession(token, loginStore: loginStore));
+    state = await AsyncValue.guard(
+      () => _loadSession(token, loginStore: loginStore),
+    );
   }
 
   Future<void> refreshProfile() async {
@@ -118,7 +146,11 @@ class SessionController extends AsyncNotifier<Session?> {
 
   Future<void> switchStore(String storeId) async {
     final current = state.asData?.value;
-    if (current == null || current.activeStoreId == storeId || !current.canSwitchStores) return;
+    if (current == null ||
+        current.activeStoreId == storeId ||
+        !current.canSwitchStores) {
+      return;
+    }
     await _config.setStoreId(storeId);
     state = AsyncData(current.copyWith(activeStoreId: storeId));
   }
@@ -139,12 +171,15 @@ class SessionController extends AsyncNotifier<Session?> {
   }
 }
 
-final sessionProvider = AsyncNotifierProvider<SessionController, Session?>(SessionController.new);
+final sessionProvider = AsyncNotifierProvider<SessionController, Session?>(
+  SessionController.new,
+);
 
 /// The active store. Data providers watch this so a store switch refetches
 /// every store-scoped screen.
 final activeStoreIdProvider = Provider<String?>(
-  (ref) => ref.watch(sessionProvider.select((s) => s.asData?.value?.activeStoreId)),
+  (ref) =>
+      ref.watch(sessionProvider.select((s) => s.asData?.value?.activeStoreId)),
 );
 
 final currentUserProvider = Provider<AppUser?>(

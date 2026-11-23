@@ -9,7 +9,13 @@ import '../../../shared/widgets/common.dart';
 /// Shared frame for auth screens: brand panel beside the form on tablets,
 /// logo above the form on phones.
 class AuthLayout extends StatelessWidget {
-  const AuthLayout({super.key, required this.title, required this.subtitle, required this.child, this.showBack = false});
+  const AuthLayout({
+    super.key,
+    required this.title,
+    required this.subtitle,
+    required this.child,
+    this.showBack = false,
+  });
   final String title;
   final String subtitle;
   final Widget child;
@@ -21,7 +27,10 @@ class AuthLayout extends StatelessWidget {
     final form = SafeArea(
       child: Center(
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(horizontal: Spacing.xl, vertical: Spacing.xl),
+          padding: const EdgeInsets.symmetric(
+            horizontal: Spacing.xl,
+            vertical: Spacing.xl,
+          ),
           child: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 420),
             child: Column(
@@ -31,9 +40,19 @@ class AuthLayout extends StatelessWidget {
                   Center(child: Image.asset('assets/logo.png', height: 64)),
                   const SizedBox(height: Spacing.xl),
                 ],
-                Text(title, style: context.text.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
+                Text(
+                  title,
+                  style: context.text.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: Spacing.xs),
-                Text(subtitle, style: context.text.bodyMedium?.copyWith(color: context.colors.onSurfaceVariant)),
+                Text(
+                  subtitle,
+                  style: context.text.bodyMedium?.copyWith(
+                    color: context.colors.onSurfaceVariant,
+                  ),
+                ),
                 const SizedBox(height: Spacing.xl),
                 child,
               ],
@@ -77,15 +96,28 @@ class _BrandPanel extends StatelessWidget {
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(18)),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(18),
+            ),
             child: Image.asset('assets/logo.png', height: 56),
           ),
           const SizedBox(height: 32),
-          Text('Run your business\nfrom anywhere.',
-              style: context.text.headlineMedium?.copyWith(color: Colors.white, fontWeight: FontWeight.w700, height: 1.2)),
+          Text(
+            'Run your business\nfrom anywhere.',
+            style: context.text.headlineMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+            ),
+          ),
           const SizedBox(height: 16),
-          Text('GST billing, inventory, payments and reports — synced with your TruERP account.',
-              style: context.text.bodyLarge?.copyWith(color: Colors.white.withValues(alpha: 0.85))),
+          Text(
+            'GST billing, inventory, payments and reports — synced with your TruERP account.',
+            style: context.text.bodyLarge?.copyWith(
+              color: Colors.white.withValues(alpha: 0.85),
+            ),
+          ),
         ],
       ),
     );
@@ -100,21 +132,31 @@ Future<void> showServerSheet(BuildContext context, WidgetRef ref) async {
     context: context,
     isScrollControlled: true,
     builder: (ctx) => Padding(
-      padding: EdgeInsets.fromLTRB(Spacing.xl, 0, Spacing.xl, MediaQuery.viewInsetsOf(ctx).bottom + Spacing.xl),
+      padding: EdgeInsets.fromLTRB(
+        Spacing.xl,
+        0,
+        Spacing.xl,
+        MediaQuery.viewInsetsOf(ctx).bottom + Spacing.xl,
+      ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text('Server address', style: ctx.text.titleMedium),
           const SizedBox(height: Spacing.xs),
-          Text('The TruERP backend this app talks to. Example: https://erp.mybusiness.in',
-              style: ctx.text.bodySmall),
+          Text(
+            'The TruERP backend this app talks to. Example: https://erp.mybusiness.in',
+            style: ctx.text.bodySmall,
+          ),
           const SizedBox(height: Spacing.lg),
           TextField(
             controller: ctrl,
             keyboardType: TextInputType.url,
             autocorrect: false,
-            decoration: const InputDecoration(labelText: 'Server URL', prefixIcon: Icon(Icons.dns_rounded)),
+            decoration: const InputDecoration(
+              labelText: 'Server URL',
+              prefixIcon: Icon(Icons.dns_rounded),
+            ),
           ),
           const SizedBox(height: Spacing.sm),
           Align(

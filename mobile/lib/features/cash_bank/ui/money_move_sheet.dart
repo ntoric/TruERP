@@ -21,15 +21,22 @@ Future<void> showMoneyMoveSheet(
   required MoneyMove kind,
   required List<BankAccount> accounts,
   String? accountId,
-}) =>
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _MoneyMoveSheet(kind: kind, accounts: accounts.where((a) => a.isActive).toList(), accountId: accountId),
-    );
+}) => showModalBottomSheet<void>(
+  context: context,
+  isScrollControlled: true,
+  builder: (_) => _MoneyMoveSheet(
+    kind: kind,
+    accounts: accounts.where((a) => a.isActive).toList(),
+    accountId: accountId,
+  ),
+);
 
 class _MoneyMoveSheet extends ConsumerStatefulWidget {
-  const _MoneyMoveSheet({required this.kind, required this.accounts, this.accountId});
+  const _MoneyMoveSheet({
+    required this.kind,
+    required this.accounts,
+    this.accountId,
+  });
   final MoneyMove kind;
   final List<BankAccount> accounts;
   final String? accountId;
@@ -44,11 +51,16 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
   final _description = TextEditingController();
   final _reference = TextEditingController();
   late MoneyMove _kind = widget.kind;
-  late String _account = widget.accountId == null || widget.accountId == 'cash' ? _cash : widget.accountId!;
+  late String _account = widget.accountId == null || widget.accountId == 'cash'
+      ? _cash
+      : widget.accountId!;
   late String? _from = widget.accountId != null && widget.accountId != 'cash'
       ? widget.accountId
       : (widget.accounts.isEmpty ? null : widget.accounts.first.id);
-  late String? _to = widget.accounts.where((a) => a.id != _from).firstOrNull?.id;
+  late String? _to = widget.accounts
+      .where((a) => a.id != _from)
+      .firstOrNull
+      ?.id;
   DateTime _date = DateTime.now();
   bool _busy = false;
   String? _error;
@@ -61,7 +73,8 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
     super.dispose();
   }
 
-  BankAccount? _byId(String? id) => widget.accounts.where((a) => a.id == id).firstOrNull;
+  BankAccount? _byId(String? id) =>
+      widget.accounts.where((a) => a.id == id).firstOrNull;
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
@@ -70,7 +83,9 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
       _error = null;
     });
     try {
-      await ref.read(cashBankRepositoryProvider).move(
+      await ref
+          .read(cashBankRepositoryProvider)
+          .move(
             _kind,
             amount: NumberField.parse(_amount),
             date: _date,
@@ -86,7 +101,8 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
       showSnack(context, switch (_kind) {
         MoneyMove.add => '${money(NumberField.parse(_amount))} added',
         MoneyMove.reduce => '${money(NumberField.parse(_amount))} reduced',
-        MoneyMove.transfer => '${money(NumberField.parse(_amount))} transferred',
+        MoneyMove.transfer =>
+          '${money(NumberField.parse(_amount))} transferred',
       });
     } catch (e) {
       setState(() => _error = errorMessage(e));
@@ -101,7 +117,12 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
     final from = _byId(_from);
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(Spacing.xl, 0, Spacing.xl, MediaQuery.viewInsetsOf(context).bottom + Spacing.xl),
+      padding: EdgeInsets.fromLTRB(
+        Spacing.xl,
+        0,
+        Spacing.xl,
+        MediaQuery.viewInsetsOf(context).bottom + Spacing.xl,
+      ),
       child: Form(
         key: _form,
         child: SingleChildScrollView(
@@ -112,8 +133,16 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
               SegmentedButton<MoneyMove>(
                 showSelectedIcon: false,
                 segments: [
-                  const ButtonSegment(value: MoneyMove.add, icon: Icon(Icons.add_rounded), label: Text('Add')),
-                  const ButtonSegment(value: MoneyMove.reduce, icon: Icon(Icons.remove_rounded), label: Text('Reduce')),
+                  const ButtonSegment(
+                    value: MoneyMove.add,
+                    icon: Icon(Icons.add_rounded),
+                    label: Text('Add'),
+                  ),
+                  const ButtonSegment(
+                    value: MoneyMove.reduce,
+                    icon: Icon(Icons.remove_rounded),
+                    label: Text('Reduce'),
+                  ),
                   ButtonSegment(
                     value: MoneyMove.transfer,
                     enabled: canTransfer,
@@ -125,24 +154,30 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
                 onSelectionChanged: (s) => setState(() => _kind = s.first),
               ),
               const SizedBox(height: Spacing.sm),
-              Text(
-                switch (_kind) {
-                  MoneyMove.add => 'Record money put in — owner capital, a loan, cash found…',
-                  MoneyMove.reduce => 'Record money taken out — owner drawings, bank charges…',
-                  MoneyMove.transfer => 'Move money between your bank accounts.',
-                },
-                style: context.text.bodySmall,
-              ),
+              Text(switch (_kind) {
+                MoneyMove.add =>
+                  'Record money put in — owner capital, a loan, cash found…',
+                MoneyMove.reduce =>
+                  'Record money taken out — owner drawings, bank charges…',
+                MoneyMove.transfer => 'Move money between your bank accounts.',
+              }, style: context.text.bodySmall),
               const SizedBox(height: Spacing.lg),
               if (_error != null) ErrorBanner(_error!),
               if (_kind != MoneyMove.transfer)
                 DropdownButtonFormField<String>(
                   initialValue: _account,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'Account', prefixIcon: Icon(Icons.account_balance_wallet_outlined)),
+                  decoration: const InputDecoration(
+                    labelText: 'Account',
+                    prefixIcon: Icon(Icons.account_balance_wallet_outlined),
+                  ),
                   items: [
-                    const DropdownMenuItem(value: _cash, child: Text('Cash in hand')),
-                    for (final a in widget.accounts) DropdownMenuItem(value: a.id, child: Text(a.label)),
+                    const DropdownMenuItem(
+                      value: _cash,
+                      child: Text('Cash in hand'),
+                    ),
+                    for (final a in widget.accounts)
+                      DropdownMenuItem(value: a.id, child: Text(a.label)),
                   ],
                   onChanged: (v) => setState(() => _account = v ?? _cash),
                 )
@@ -152,45 +187,72 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
                   isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'From',
-                    helperText: from == null ? null : 'Balance ${money(from.balance)}',
+                    helperText: from == null
+                        ? null
+                        : 'Balance ${money(from.balance)}',
                     prefixIcon: const Icon(Icons.north_east_rounded),
                   ),
-                  items: [for (final a in widget.accounts) DropdownMenuItem(value: a.id, child: Text(a.label))],
+                  items: [
+                    for (final a in widget.accounts)
+                      DropdownMenuItem(value: a.id, child: Text(a.label)),
+                  ],
                   onChanged: (v) => setState(() {
                     _from = v;
-                    if (_to == v) _to = widget.accounts.where((a) => a.id != v).firstOrNull?.id;
+                    if (_to == v) {
+                      _to = widget.accounts
+                          .where((a) => a.id != v)
+                          .firstOrNull
+                          ?.id;
+                    }
                   }),
                 ),
                 const SizedBox(height: Spacing.md),
                 DropdownButtonFormField<String>(
                   initialValue: _to,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: 'To', prefixIcon: Icon(Icons.south_west_rounded)),
+                  decoration: const InputDecoration(
+                    labelText: 'To',
+                    prefixIcon: Icon(Icons.south_west_rounded),
+                  ),
                   items: [
-                    for (final a in widget.accounts.where((a) => a.id != _from)) DropdownMenuItem(value: a.id, child: Text(a.label)),
+                    for (final a in widget.accounts.where((a) => a.id != _from))
+                      DropdownMenuItem(value: a.id, child: Text(a.label)),
                   ],
                   onChanged: (v) => setState(() => _to = v),
                   validator: (v) => v == null ? 'Choose an account' : null,
                 ),
               ],
               const SizedBox(height: Spacing.md),
-              FieldRow(children: [
-                NumberField(
-                  controller: _amount,
-                  label: 'Amount *',
-                  autofocus: true,
-                  validator: (v) {
-                    final e = Validators.number(v, required: true, allowZero: false, field: 'Amount');
-                    if (e != null) return e;
-                    // The server refuses transfers above the source balance.
-                    if (_kind == MoneyMove.transfer && from != null && (double.tryParse(v!) ?? 0) > from.balance) {
-                      return 'Only ${money(from.balance)} available';
-                    }
-                    return null;
-                  },
-                ),
-                DateField(label: 'Date', value: _date, onChanged: (d) => setState(() => _date = d ?? _date)),
-              ]),
+              FieldRow(
+                children: [
+                  NumberField(
+                    controller: _amount,
+                    label: 'Amount *',
+                    autofocus: true,
+                    validator: (v) {
+                      final e = Validators.number(
+                        v,
+                        required: true,
+                        allowZero: false,
+                        field: 'Amount',
+                      );
+                      if (e != null) return e;
+                      // The server refuses transfers above the source balance.
+                      if (_kind == MoneyMove.transfer &&
+                          from != null &&
+                          (double.tryParse(v!) ?? 0) > from.balance) {
+                        return 'Only ${money(from.balance)} available';
+                      }
+                      return null;
+                    },
+                  ),
+                  DateField(
+                    label: 'Date',
+                    value: _date,
+                    onChanged: (d) => setState(() => _date = d ?? _date),
+                  ),
+                ],
+              ),
               const SizedBox(height: Spacing.md),
               TextFormField(
                 controller: _description,
@@ -198,12 +260,21 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
                 decoration: const InputDecoration(labelText: 'Description'),
               ),
               const SizedBox(height: Spacing.md),
-              TextFormField(controller: _reference, decoration: const InputDecoration(labelText: 'Reference')),
+              TextFormField(
+                controller: _reference,
+                decoration: const InputDecoration(labelText: 'Reference'),
+              ),
               const SizedBox(height: Spacing.lg),
               FilledButton(
                 onPressed: _busy ? null : _save,
                 child: _busy
-                    ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                    ? const SizedBox.square(
+                        dimension: 22,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: Colors.white,
+                        ),
+                      )
                     : Text(switch (_kind) {
                         MoneyMove.add => 'Add money',
                         MoneyMove.reduce => 'Reduce money',
@@ -220,7 +291,14 @@ class _State extends ConsumerState<_MoneyMoveSheet> {
 
 /// Inflow/outflow tile used by the cash & bank screens.
 class CashTxnTile extends StatelessWidget {
-  const CashTxnTile({super.key, required this.inflow, required this.amount, required this.title, required this.subtitle, this.onLongPress});
+  const CashTxnTile({
+    super.key,
+    required this.inflow,
+    required this.amount,
+    required this.title,
+    required this.subtitle,
+    this.onLongPress,
+  });
   final bool inflow;
   final double amount;
   final String title;
@@ -232,11 +310,24 @@ class CashTxnTile extends StatelessWidget {
     final color = inflow ? StatusColors.success : StatusColors.danger;
     return ListTile(
       onLongPress: onLongPress,
-      leading: IconBadge(inflow ? Icons.south_west_rounded : Icons.north_east_rounded, color: color),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
+      leading: IconBadge(
+        inflow ? Icons.south_west_rounded : Icons.north_east_rounded,
+        color: color,
+      ),
+      title: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
       subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
-      trailing: Text('${inflow ? '+' : '−'} ${money(amount)}',
-          style: context.text.labelLarge?.copyWith(color: color, fontFeatures: const [FontFeature.tabularFigures()])),
+      trailing: Text(
+        '${inflow ? '+' : '−'} ${money(amount)}',
+        style: context.text.labelLarge?.copyWith(
+          color: color,
+          fontFeatures: const [FontFeature.tabularFigures()],
+        ),
+      ),
     );
   }
 }

@@ -52,10 +52,21 @@ class _ListState extends ConsumerState<ChallansScreen> {
         child: PagedListView<DeliveryChallan>(
           resetKey: (_status, rev, store),
           fetch: (page) => repo.challans(page: page, status: _status),
-          header: ChipsHeader(chips: [
-            for (final (v, l) in const [(null, 'All'), ('draft', 'Pending'), ('delivered', 'Delivered'), ('cancelled', 'Cancelled')])
-              ChoiceChip(label: Text(l), selected: _status == v, onSelected: (_) => setState(() => _status = v)),
-          ]),
+          header: ChipsHeader(
+            chips: [
+              for (final (v, l) in const [
+                (null, 'All'),
+                ('draft', 'Pending'),
+                ('delivered', 'Delivered'),
+                ('cancelled', 'Cancelled'),
+              ])
+                ChoiceChip(
+                  label: Text(l),
+                  selected: _status == v,
+                  onSelected: (_) => setState(() => _status = v),
+                ),
+            ],
+          ),
           empty: EmptyState(
             icon: Icons.local_shipping_rounded,
             title: 'No delivery challans',
@@ -70,7 +81,8 @@ class _ListState extends ConsumerState<ChallansScreen> {
             icon: Icons.local_shipping_rounded,
             accent: challansAccent,
             title: c.party?.name ?? 'Customer',
-            subtitle: '${c.number} · ${relativeDay(c.date)} · ${qty(c.totalQuantity)} items',
+            subtitle:
+                '${c.number} · ${relativeDay(c.date)} · ${qty(c.totalQuantity)} items',
             amount: c.subTotal,
             status: c.status,
             statusLabel: c.isDraft ? 'Pending' : null,
@@ -88,23 +100,52 @@ class ChallanDetailScreen extends ConsumerWidget {
   const ChallanDetailScreen({super.key, required this.challanId});
   final String challanId;
 
-  Future<void> _setStatus(BuildContext context, WidgetRef ref, DeliveryChallan c, String status) async {
+  Future<void> _setStatus(
+    BuildContext context,
+    WidgetRef ref,
+    DeliveryChallan c,
+    String status,
+  ) async {
     final (title, msg, label) = status == 'delivered'
-        ? ('Mark ${c.number} as delivered?', 'Delivered challans can\'t be edited or deleted.', 'Mark delivered')
+        ? (
+            'Mark ${c.number} as delivered?',
+            'Delivered challans can\'t be edited or deleted.',
+            'Mark delivered',
+          )
         : ('Cancel ${c.number}?', null, 'Cancel challan');
-    final ok = await confirmSheet(context, title: title, message: msg, confirmLabel: label, destructive: status == 'cancelled');
+    final ok = await confirmSheet(
+      context,
+      title: title,
+      message: msg,
+      confirmLabel: label,
+      destructive: status == 'cancelled',
+    );
     if (!ok) return;
     try {
       await ref.read(salesDocsRepositoryProvider).setChallanStatus(c, status);
       ref.read(dataRevisionProvider.notifier).bump();
-      if (context.mounted) showSnack(context, status == 'delivered' ? 'Marked as delivered' : 'Challan cancelled');
+      if (context.mounted) {
+        showSnack(
+          context,
+          status == 'delivered' ? 'Marked as delivered' : 'Challan cancelled',
+        );
+      }
     } catch (e) {
       if (context.mounted) showSnack(context, errorMessage(e), error: true);
     }
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref, DeliveryChallan c) async {
-    final ok = await confirmSheet(context, title: 'Delete ${c.number}?', confirmLabel: 'Delete', destructive: true);
+  Future<void> _delete(
+    BuildContext context,
+    WidgetRef ref,
+    DeliveryChallan c,
+  ) async {
+    final ok = await confirmSheet(
+      context,
+      title: 'Delete ${c.number}?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
     if (!ok) return;
     try {
       await ref.read(salesDocsRepositoryProvider).deleteChallan(c.id);
@@ -131,10 +172,22 @@ class ChallanDetailScreen extends ConsumerWidget {
               },
               itemBuilder: (_) => [
                 if (c.status != 'cancelled')
-                  const PopupMenuItem(value: 'cancel', child: ListTile(leading: Icon(Icons.block_rounded), title: Text('Cancel challan'))),
+                  const PopupMenuItem(
+                    value: 'cancel',
+                    child: ListTile(
+                      leading: Icon(Icons.block_rounded),
+                      title: Text('Cancel challan'),
+                    ),
+                  ),
                 const PopupMenuItem(
                   value: 'delete',
-                  child: ListTile(leading: Icon(Icons.delete_outline, color: StatusColors.danger), title: Text('Delete')),
+                  child: ListTile(
+                    leading: Icon(
+                      Icons.delete_outline,
+                      color: StatusColors.danger,
+                    ),
+                    title: Text('Delete'),
+                  ),
                 ),
               ],
             ),
@@ -142,46 +195,83 @@ class ChallanDetailScreen extends ConsumerWidget {
       ),
       bottomNavigationBar: c == null || !c.isDraft
           ? null
-          : SaveBar(label: 'Mark delivered', onPressed: () => _setStatus(context, ref, c, 'delivered')),
+          : SaveBar(
+              label: 'Mark delivered',
+              onPressed: () => _setStatus(context, ref, c, 'delivered'),
+            ),
       body: async.when(
         loading: () => const SkeletonList(count: 5),
-        error: (e, _) => ErrorView(error: e, onRetry: () => ref.invalidate(challanProvider(challanId))),
+        error: (e, _) => ErrorView(
+          error: e,
+          onRetry: () => ref.invalidate(challanProvider(challanId)),
+        ),
         data: (c) => ListView(
-          padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.xxl),
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            Spacing.sm,
+            Spacing.lg,
+            Spacing.xxl,
+          ),
           children: [
             ContentWidth(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(Spacing.lg),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Row(children: [
-                        Expanded(child: Text(c.party?.name ?? 'Customer', style: context.text.titleMedium)),
-                        StatusChip(c.status, label: c.isDraft ? 'Pending' : null),
-                      ]),
-                      const SizedBox(height: Spacing.md),
-                      KeyValueRow('Date', dateText(c.date)),
-                      if (c.dueDate != null) KeyValueRow('Deliver by', dateText(c.dueDate)),
-                      KeyValueRow('Total quantity', qty(c.totalQuantity)),
-                      KeyValueRow('Value', money(c.subTotal)),
-                      if (c.transportMode.isNotEmpty) KeyValueRow('Transport', titleCase(c.transportMode)),
-                      if (c.vehicleNumber.isNotEmpty) KeyValueRow('Vehicle', c.vehicleNumber),
-                      if (c.invoiceNumber != null) KeyValueRow('Invoice', c.invoiceNumber!),
-                    ]),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(Spacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  c.party?.name ?? 'Customer',
+                                  style: context.text.titleMedium,
+                                ),
+                              ),
+                              StatusChip(
+                                c.status,
+                                label: c.isDraft ? 'Pending' : null,
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: Spacing.md),
+                          KeyValueRow('Date', dateText(c.date)),
+                          if (c.dueDate != null)
+                            KeyValueRow('Deliver by', dateText(c.dueDate)),
+                          KeyValueRow('Total quantity', qty(c.totalQuantity)),
+                          KeyValueRow('Value', money(c.subTotal)),
+                          if (c.transportMode.isNotEmpty)
+                            KeyValueRow(
+                              'Transport',
+                              titleCase(c.transportMode),
+                            ),
+                          if (c.vehicleNumber.isNotEmpty)
+                            KeyValueRow('Vehicle', c.vehicleNumber),
+                          if (c.invoiceNumber != null)
+                            KeyValueRow('Invoice', c.invoiceNumber!),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: Spacing.lg),
-                DocItemsCard(lines: c.items),
-                if (c.notes.isNotEmpty) ...[const SizedBox(height: Spacing.lg), SectionCard(title: 'Notes', child: Text(c.notes))],
-                if (c.invoiceId != null) ...[
                   const SizedBox(height: Spacing.lg),
-                  OutlinedButton.icon(
-                    onPressed: () => context.push('/invoices/${c.invoiceId}'),
-                    icon: const Icon(Icons.receipt_long_outlined),
-                    label: const Text('Open invoice'),
-                  ),
+                  DocItemsCard(lines: c.items),
+                  if (c.notes.isNotEmpty) ...[
+                    const SizedBox(height: Spacing.lg),
+                    SectionCard(title: 'Notes', child: Text(c.notes)),
+                  ],
+                  if (c.invoiceId != null) ...[
+                    const SizedBox(height: Spacing.lg),
+                    OutlinedButton.icon(
+                      onPressed: () => context.push('/invoices/${c.invoiceId}'),
+                      icon: const Icon(Icons.receipt_long_outlined),
+                      label: const Text('Open invoice'),
+                    ),
+                  ],
                 ],
-              ]),
+              ),
             ),
           ],
         ),
@@ -216,13 +306,21 @@ class _FormState extends ConsumerState<ChallanFormScreen> {
   @override
   void initState() {
     super.initState();
-    ref.read(salesDocsRepositoryProvider).nextChallanNumber().then((n) {
-      if (mounted && _number.text.isEmpty) _number.text = n;
-    }).catchError((_) {});
+    ref
+        .read(salesDocsRepositoryProvider)
+        .nextChallanNumber()
+        .then((n) {
+          if (mounted && _number.text.isEmpty) _number.text = n;
+        })
+        .catchError((_) {});
     if (widget.partyId != null) {
-      ref.read(partiesRepositoryProvider).get(widget.partyId!).then((p) {
-        if (mounted) setState(() => _party = p);
-      }).catchError((_) {});
+      ref
+          .read(partiesRepositoryProvider)
+          .get(widget.partyId!)
+          .then((p) {
+            if (mounted) setState(() => _party = p);
+          })
+          .catchError((_) {});
     }
   }
 
@@ -242,20 +340,35 @@ class _FormState extends ConsumerState<ChallanFormScreen> {
       if (existing != null) {
         existing.quantity += 1;
       } else {
-        _lines.add(LineItem(productId: p.id, description: p.name, unitPrice: p.salePrice, unit: p.unit, stockQty: p.isService ? null : p.stockQty));
+        _lines.add(
+          LineItem(
+            productId: p.id,
+            description: p.name,
+            unitPrice: p.salePrice,
+            unit: p.unit,
+            stockQty: p.isService ? null : p.stockQty,
+          ),
+        );
       }
     });
   }
 
   Future<void> _addCustom() async {
     final line = LineItem(description: '');
-    if (await showLineEditor(context, line, isNew: true, showDiscount: false) == true) setState(() => _lines.add(line));
+    if (await showLineEditor(context, line, isNew: true, showDiscount: false) ==
+        true) {
+      setState(() => _lines.add(line));
+    }
   }
 
   Future<void> _save() async {
     if (!_form.currentState!.validate()) return;
     if (_party == null || _lines.isEmpty) {
-      setState(() => _error = _party == null ? 'Choose a customer.' : 'Add at least one item.');
+      setState(
+        () => _error = _party == null
+            ? 'Choose a customer.'
+            : 'Add at least one item.',
+      );
       return;
     }
     setState(() {
@@ -263,7 +376,9 @@ class _FormState extends ConsumerState<ChallanFormScreen> {
       _error = null;
     });
     try {
-      final c = await ref.read(salesDocsRepositoryProvider).createChallan(
+      final c = await ref
+          .read(salesDocsRepositoryProvider)
+          .createChallan(
             number: _number.text,
             partyId: _party!.id,
             date: _date,
@@ -293,10 +408,22 @@ class _FormState extends ConsumerState<ChallanFormScreen> {
         label: 'Save challan',
         busy: _busy,
         onPressed: _save,
-        leading: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Value', style: context.text.labelSmall),
-          FittedBox(fit: BoxFit.scaleDown, child: Text(money(value), style: context.text.titleLarge?.copyWith(fontWeight: FontWeight.w700))),
-        ]),
+        leading: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Value', style: context.text.labelSmall),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                money(value),
+                style: context.text.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
       body: Form(
         key: _form,
@@ -304,58 +431,102 @@ class _FormState extends ConsumerState<ChallanFormScreen> {
           padding: const EdgeInsets.all(Spacing.lg),
           children: [
             ContentWidth(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                if (_error != null) ErrorBanner(_error!),
-                FormSection(title: 'Deliver to', children: [
-                  PickerField(
-                    label: 'Customer',
-                    icon: Icons.person_search_rounded,
-                    value: _party?.name,
-                    subtitle: _party?.fullAddress.isEmpty ?? true ? null : _party!.fullAddress,
-                    onTap: () async {
-                      final p = await pickParty(context, type: 'customer');
-                      if (p != null) setState(() => _party = p);
-                    },
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (_error != null) ErrorBanner(_error!),
+                  FormSection(
+                    title: 'Deliver to',
+                    children: [
+                      PickerField(
+                        label: 'Customer',
+                        icon: Icons.person_search_rounded,
+                        value: _party?.name,
+                        subtitle: _party?.fullAddress.isEmpty ?? true
+                            ? null
+                            : _party!.fullAddress,
+                        onTap: () async {
+                          final p = await pickParty(context, type: 'customer');
+                          if (p != null) setState(() => _party = p);
+                        },
+                      ),
+                      TextFormField(
+                        controller: _number,
+                        decoration: const InputDecoration(
+                          labelText: 'Challan number *',
+                        ),
+                        validator: (v) => (v ?? '').trim().isEmpty
+                            ? 'Challan number is required'
+                            : null,
+                      ),
+                      FieldRow(
+                        children: [
+                          DateField(
+                            label: 'Date',
+                            value: _date,
+                            onChanged: (d) =>
+                                setState(() => _date = d ?? _date),
+                          ),
+                          DateField(
+                            label: 'Deliver by',
+                            value: _due,
+                            clearable: true,
+                            firstDate: _date,
+                            onChanged: (d) => setState(() => _due = d),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                  TextFormField(
-                    controller: _number,
-                    decoration: const InputDecoration(labelText: 'Challan number *'),
-                    validator: (v) => (v ?? '').trim().isEmpty ? 'Challan number is required' : null,
+                  FormSection(
+                    title: 'Items',
+                    children: [
+                      LineItemsEditor(
+                        lines: _lines,
+                        showDiscount: false,
+                        onChanged: () => setState(() {}),
+                        onAddProduct: _addProduct,
+                        onAddCustom: _addCustom,
+                      ),
+                    ],
                   ),
-                  FieldRow(children: [
-                    DateField(label: 'Date', value: _date, onChanged: (d) => setState(() => _date = d ?? _date)),
-                    DateField(label: 'Deliver by', value: _due, clearable: true, firstDate: _date, onChanged: (d) => setState(() => _due = d)),
-                  ]),
-                ]),
-                FormSection(title: 'Items', children: [
-                  LineItemsEditor(
-                    lines: _lines,
-                    showDiscount: false,
-                    onChanged: () => setState(() {}),
-                    onAddProduct: _addProduct,
-                    onAddCustom: _addCustom,
+                  FormSection(
+                    title: 'Transport',
+                    children: [
+                      Wrap(
+                        spacing: Spacing.sm,
+                        children: [
+                          for (final (v, l) in DeliveryChallan.transportModes)
+                            ChoiceChip(
+                              label: Text(l),
+                              selected: _transport == v,
+                              onSelected: (_) => setState(() => _transport = v),
+                            ),
+                        ],
+                      ),
+                      TextFormField(
+                        controller: _vehicle,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: const InputDecoration(
+                          labelText: 'Vehicle number',
+                          hintText: 'KA01AB1234',
+                        ),
+                      ),
+                      TextFormField(
+                        controller: _notes,
+                        maxLines: 2,
+                        textCapitalization: TextCapitalization.sentences,
+                        decoration: const InputDecoration(labelText: 'Notes'),
+                      ),
+                    ],
                   ),
-                ]),
-                FormSection(title: 'Transport', children: [
-                  Wrap(spacing: Spacing.sm, children: [
-                    for (final (v, l) in DeliveryChallan.transportModes)
-                      ChoiceChip(label: Text(l), selected: _transport == v, onSelected: (_) => setState(() => _transport = v)),
-                  ]),
-                  TextFormField(
-                    controller: _vehicle,
-                    textCapitalization: TextCapitalization.characters,
-                    decoration: const InputDecoration(labelText: 'Vehicle number', hintText: 'KA01AB1234'),
+                  Text(
+                    'Challans don\'t change stock or balances; bill the customer with an invoice.',
+                    style: context.text.bodySmall,
+                    textAlign: TextAlign.center,
                   ),
-                  TextFormField(
-                    controller: _notes,
-                    maxLines: 2,
-                    textCapitalization: TextCapitalization.sentences,
-                    decoration: const InputDecoration(labelText: 'Notes'),
-                  ),
-                ]),
-                Text('Challans don\'t change stock or balances; bill the customer with an invoice.',
-                    style: context.text.bodySmall, textAlign: TextAlign.center),
-              ]),
+                ],
+              ),
             ),
           ],
         ),

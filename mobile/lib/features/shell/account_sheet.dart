@@ -20,13 +20,18 @@ class AccountButton extends ConsumerWidget {
       child: IconButton(
         tooltip: 'Account',
         onPressed: () => showAccountSheet(context),
-        icon: InitialsAvatar(user?.name ?? '?', size: 34, color: context.colors.primary),
+        icon: InitialsAvatar(
+          user?.name ?? '?',
+          size: 34,
+          color: context.colors.primary,
+        ),
       ),
     );
   }
 }
 
-Future<void> showAccountSheet(BuildContext context) => showModalBottomSheet<void>(
+Future<void> showAccountSheet(BuildContext context) =>
+    showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       builder: (_) => const _AccountSheet(),
@@ -44,14 +49,25 @@ class _AccountSheet extends ConsumerWidget {
 
     return SafeArea(
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxHeight: MediaQuery.sizeOf(context).height * 0.85),
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.85,
+        ),
         child: ListView(
           shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(Spacing.lg, 0, Spacing.lg, Spacing.lg),
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            0,
+            Spacing.lg,
+            Spacing.lg,
+          ),
           children: [
             Row(
               children: [
-                InitialsAvatar(user.name, size: 52, color: context.colors.primary),
+                InitialsAvatar(
+                  user.name,
+                  size: 52,
+                  color: context.colors.primary,
+                ),
                 const SizedBox(width: Spacing.md),
                 Expanded(
                   child: Column(
@@ -74,7 +90,9 @@ class _AccountSheet extends ConsumerWidget {
                 child: ListTile(
                   leading: const Icon(Icons.storefront_rounded),
                   title: Text(session.activeStore!.name),
-                  subtitle: session.activeStore!.city.isEmpty ? null : Text(session.activeStore!.city),
+                  subtitle: session.activeStore!.city.isEmpty
+                      ? null
+                      : Text(session.activeStore!.city),
                 ),
               ),
               const SizedBox(height: Spacing.lg),
@@ -87,17 +105,31 @@ class _AccountSheet extends ConsumerWidget {
                   children: [
                     for (final s in session.stores)
                       ListTile(
-                        leading: Icon(Icons.storefront_rounded,
-                            color: s.id == session.activeStoreId ? context.colors.primary : null),
+                        leading: Icon(
+                          Icons.storefront_rounded,
+                          color: s.id == session.activeStoreId
+                              ? context.colors.primary
+                              : null,
+                        ),
                         title: Text(s.name),
                         subtitle: s.city.isNotEmpty || s.code.isNotEmpty
-                            ? Text([s.code, s.city].where((e) => e.isNotEmpty).join(' · '))
+                            ? Text(
+                                [
+                                  s.code,
+                                  s.city,
+                                ].where((e) => e.isNotEmpty).join(' · '),
+                              )
                             : null,
                         trailing: s.id == session.activeStoreId
-                            ? Icon(Icons.check_circle_rounded, color: context.colors.primary)
+                            ? Icon(
+                                Icons.check_circle_rounded,
+                                color: context.colors.primary,
+                              )
                             : null,
                         onTap: () async {
-                          await ref.read(sessionProvider.notifier).switchStore(s.id);
+                          await ref
+                              .read(sessionProvider.notifier)
+                              .switchStore(s.id);
                           if (context.mounted) {
                             Navigator.pop(context);
                             showSnack(context, 'Switched to ${s.name}');
@@ -114,12 +146,25 @@ class _AccountSheet extends ConsumerWidget {
             SegmentedButton<ThemeMode>(
               showSelectedIcon: false,
               segments: const [
-                ButtonSegment(value: ThemeMode.system, icon: Icon(Icons.brightness_auto_rounded), label: Text('Auto')),
-                ButtonSegment(value: ThemeMode.light, icon: Icon(Icons.light_mode_rounded), label: Text('Light')),
-                ButtonSegment(value: ThemeMode.dark, icon: Icon(Icons.dark_mode_rounded), label: Text('Dark')),
+                ButtonSegment(
+                  value: ThemeMode.system,
+                  icon: Icon(Icons.brightness_auto_rounded),
+                  label: Text('Auto'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.light,
+                  icon: Icon(Icons.light_mode_rounded),
+                  label: Text('Light'),
+                ),
+                ButtonSegment(
+                  value: ThemeMode.dark,
+                  icon: Icon(Icons.dark_mode_rounded),
+                  label: Text('Dark'),
+                ),
               ],
               selected: {themeMode},
-              onSelectionChanged: (s) => ref.read(themeModeProvider.notifier).set(s.first),
+              onSelectionChanged: (s) =>
+                  ref.read(themeModeProvider.notifier).set(s.first),
             ),
             const SizedBox(height: Spacing.lg),
             Card(
@@ -128,16 +173,31 @@ class _AccountSheet extends ConsumerWidget {
                   ListTile(
                     leading: const Icon(Icons.dns_outlined),
                     title: const Text('Server'),
-                    subtitle: Text(ref.read(appConfigProvider).serverUrl, maxLines: 1, overflow: TextOverflow.ellipsis),
+                    subtitle: Text(
+                      ref.read(appConfigProvider).serverUrl,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
                     onTap: () => showServerSheet(context, ref),
                   ),
                   const Divider(indent: 56),
                   ListTile(
-                    leading: const Icon(Icons.logout_rounded, color: StatusColors.danger),
-                    title: const Text('Sign out', style: TextStyle(color: StatusColors.danger)),
+                    leading: const Icon(
+                      Icons.logout_rounded,
+                      color: StatusColors.danger,
+                    ),
+                    title: const Text(
+                      'Sign out',
+                      style: TextStyle(color: StatusColors.danger),
+                    ),
                     onTap: () async {
-                      final ok = await confirmSheet(context,
-                          title: 'Sign out?', message: 'You\'ll need your password to sign back in.', confirmLabel: 'Sign out', destructive: true);
+                      final ok = await confirmSheet(
+                        context,
+                        title: 'Sign out?',
+                        message: 'You\'ll need your password to sign back in.',
+                        confirmLabel: 'Sign out',
+                        destructive: true,
+                      );
                       if (!ok || !context.mounted) return;
                       Navigator.pop(context);
                       await ref.read(sessionProvider.notifier).logout();

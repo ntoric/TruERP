@@ -13,7 +13,11 @@ int asInt(Object? v, [int fallback = 0]) {
   if (v == null) return fallback;
   if (v is int) return v;
   if (v is num) return v.toInt();
-  if (v is String) return int.tryParse(v.trim()) ?? double.tryParse(v.trim())?.toInt() ?? fallback;
+  if (v is String) {
+    return int.tryParse(v.trim()) ??
+        double.tryParse(v.trim())?.toInt() ??
+        fallback;
+  }
   return fallback;
 }
 
@@ -42,7 +46,20 @@ DateTime? asDate(Object? v) {
   if (v is DateTime) return v;
   final s = asString(v).trim();
   if (s.isEmpty || s.startsWith('0001-01-01')) return null;
-  return DateTime.tryParse(s)?.toLocal();
+  final p = DateTime.tryParse(s);
+  if (p == null) return null;
+  // Date-only values ("2026-11-05" or UTC midnight, how [apiDate] and the web
+  // send them) are calendar days: keep the day instead of shifting it into
+  // the device's time zone, which would show the previous day west of UTC.
+  if (s.length == 10 ||
+      (p.isUtc &&
+          p.hour == 0 &&
+          p.minute == 0 &&
+          p.second == 0 &&
+          p.millisecond == 0)) {
+    return DateTime(p.year, p.month, p.day);
+  }
+  return p.toLocal();
 }
 
 JsonMap asMap(Object? v) {
@@ -69,8 +86,16 @@ Object? pick(JsonMap json, String path) {
   return cur;
 }
 
-/// Serialises a date as the backend expects (RFC3339 at local midnight → UTC).
-String apiDate(DateTime d) => DateTime(d.year, d.month, d.day).toUtc().toIso8601String();
+/// Serialises a calendar date the way the web app does: UTC midnight of the
+/// chosen day (`new Date('2026-11-01').toISOString()` → `2026-11-01T00:00:00Z`).
+///
+/// Converting *local* midnight to UTC instead would shift every date one day
+/// back in India (00:00 IST = 18:30Z the previous day), so invoices, bills
+/// and payroll periods would land on the wrong day in reports.
+String apiDate(DateTime d) =>
+    DateTime.utc(d.year, d.month, d.day).toIso8601String();
+
+String? apiDateOrNull(DateTime? d) => d == null ? null : apiDate(d);
 
 /// `YYYY-MM-DD` used by report/list query params.
 String ymd(DateTime d) =>

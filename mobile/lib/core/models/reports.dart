@@ -19,38 +19,51 @@ class ReportHeader {
   final DateTime? startDate;
   final DateTime? endDate;
 
-  factory ReportHeader.fromJson(JsonMap j) =>
-      ReportHeader(label: asString(j['label']), startDate: asDate(j['start_date']), endDate: asDate(j['end_date']));
+  factory ReportHeader.fromJson(JsonMap j) => ReportHeader(
+    label: asString(j['label']),
+    startDate: asDate(j['start_date']),
+    endDate: asDate(j['end_date']),
+  );
 }
 
 // ── Daily / period report ───────────────────────────────────────────────
 
 class ModeTotal {
-  const ModeTotal({required this.label, required this.inAmount, required this.outAmount});
+  const ModeTotal({
+    required this.label,
+    required this.inAmount,
+    required this.outAmount,
+  });
   final String label;
   final double inAmount;
   final double outAmount;
 
   factory ModeTotal.fromJson(JsonMap j) => ModeTotal(
-        label: asString(j['label'], asString(j['method'])),
-        inAmount: asDouble(pick(j, 'in.total_amount')),
-        outAmount: asDouble(pick(j, 'out.total_amount')),
-      );
+    label: asString(j['label'], asString(j['method'])),
+    inAmount: asDouble(pick(j, 'in.total_amount')),
+    outAmount: asDouble(pick(j, 'out.total_amount')),
+  );
 }
 
 class ExpenseRow {
-  const ExpenseRow({required this.category, required this.description, required this.amount, required this.date});
+  const ExpenseRow({
+    required this.category,
+    required this.description,
+    required this.amount,
+    required this.date,
+  });
   final String category;
   final String description;
   final double amount;
   final String date;
 
   factory ExpenseRow.fromJson(JsonMap j) => ExpenseRow(
-        category: asString(j['category']),
-        description: asStringOrNull(j['item_description']) ?? asString(j['description']),
-        amount: asDouble(j['amount']),
-        date: asString(j['date']),
-      );
+    category: asString(j['category']),
+    description:
+        asStringOrNull(j['item_description']) ?? asString(j['description']),
+    amount: asDouble(j['amount']),
+    date: asString(j['date']),
+  );
 }
 
 class PeriodReport {
@@ -101,26 +114,28 @@ class PeriodReport {
   final List<ExpenseRow> expenseLines;
 
   factory PeriodReport.fromJson(JsonMap j) => PeriodReport(
-        header: ReportHeader.fromJson(j),
-        sales: Metric.fromJson(j['sales']),
-        purchases: Metric.fromJson(j['purchases']),
-        expenses: Metric.fromJson(j['expenses']),
-        paymentsIn: Metric.fromJson(j['payments_in']),
-        paymentsOut: Metric.fromJson(j['payments_out']),
-        salesReturns: Metric.fromJson(j['sales_returns']),
-        purchaseReturns: Metric.fromJson(j['purchase_returns']),
-        creditNotes: Metric.fromJson(j['credit_notes']),
-        debitNotes: Metric.fromJson(j['debit_notes']),
-        profitDistributions: Metric.fromJson(j['profit_distributions']),
-        accountsPayable: Metric.fromJson(j['accounts_payable']),
-        accountsPayableTotal: asDouble(j['accounts_payable_total']),
-        gstCollected: asDouble(j['gst_collected']),
-        netCashFlow: asDouble(j['net_cash_flow']),
-        dailyProfit: asDouble(j['daily_profit']),
-        productProfit: asDouble(j['product_profit']),
-        byMode: asMapList(j['payments_by_method']).map(ModeTotal.fromJson).toList(),
-        expenseLines: asMapList(j['expense_lines']).map(ExpenseRow.fromJson).toList(),
-      );
+    header: ReportHeader.fromJson(j),
+    sales: Metric.fromJson(j['sales']),
+    purchases: Metric.fromJson(j['purchases']),
+    expenses: Metric.fromJson(j['expenses']),
+    paymentsIn: Metric.fromJson(j['payments_in']),
+    paymentsOut: Metric.fromJson(j['payments_out']),
+    salesReturns: Metric.fromJson(j['sales_returns']),
+    purchaseReturns: Metric.fromJson(j['purchase_returns']),
+    creditNotes: Metric.fromJson(j['credit_notes']),
+    debitNotes: Metric.fromJson(j['debit_notes']),
+    profitDistributions: Metric.fromJson(j['profit_distributions']),
+    accountsPayable: Metric.fromJson(j['accounts_payable']),
+    accountsPayableTotal: asDouble(j['accounts_payable_total']),
+    gstCollected: asDouble(j['gst_collected']),
+    netCashFlow: asDouble(j['net_cash_flow']),
+    dailyProfit: asDouble(j['daily_profit']),
+    productProfit: asDouble(j['product_profit']),
+    byMode: asMapList(j['payments_by_method']).map(ModeTotal.fromJson).toList(),
+    expenseLines: asMapList(
+      j['expense_lines'],
+    ).map(ExpenseRow.fromJson).toList(),
+  );
 }
 
 // ── Trading profit & loss ───────────────────────────────────────────────
@@ -130,7 +145,8 @@ class NamedAmount {
   final String name;
   final double amount;
 
-  factory NamedAmount.fromJson(JsonMap j) => NamedAmount(asString(j['name']), asDouble(j['amount']));
+  factory NamedAmount.fromJson(JsonMap j) =>
+      NamedAmount(asString(j['name']), asDouble(j['amount']));
 }
 
 class TradingProfitLoss {
@@ -169,22 +185,28 @@ class TradingProfitLoss {
   final List<ExpenseRow> expenseLines;
 
   factory TradingProfitLoss.fromJson(JsonMap j) => TradingProfitLoss(
-        header: ReportHeader.fromJson(j),
-        sales: Metric.fromJson(j['sales']),
-        salesReturns: Metric.fromJson(j['sales_returns']),
-        purchases: Metric.fromJson(j['purchases']),
-        purchaseReturns: Metric.fromJson(j['purchase_returns']),
-        openingStock: asDouble(j['opening_stock']),
-        closingStock: asDouble(j['closing_stock']),
-        grossProfit: asDouble(j['gross_profit']),
-        otherIncome: Metric.fromJson(j['other_income']),
-        indirectExpenses: Metric.fromJson(j['indirect_expenses']),
-        expenses: Metric.fromJson(j['expenses']),
-        netProfit: asDouble(j['net_profit']),
-        otherIncomeLines: asMapList(j['other_income_lines']).map(NamedAmount.fromJson).toList(),
-        indirectExpenseLines: asMapList(j['indirect_expense_lines']).map(NamedAmount.fromJson).toList(),
-        expenseLines: asMapList(j['expense_lines']).map(ExpenseRow.fromJson).toList(),
-      );
+    header: ReportHeader.fromJson(j),
+    sales: Metric.fromJson(j['sales']),
+    salesReturns: Metric.fromJson(j['sales_returns']),
+    purchases: Metric.fromJson(j['purchases']),
+    purchaseReturns: Metric.fromJson(j['purchase_returns']),
+    openingStock: asDouble(j['opening_stock']),
+    closingStock: asDouble(j['closing_stock']),
+    grossProfit: asDouble(j['gross_profit']),
+    otherIncome: Metric.fromJson(j['other_income']),
+    indirectExpenses: Metric.fromJson(j['indirect_expenses']),
+    expenses: Metric.fromJson(j['expenses']),
+    netProfit: asDouble(j['net_profit']),
+    otherIncomeLines: asMapList(
+      j['other_income_lines'],
+    ).map(NamedAmount.fromJson).toList(),
+    indirectExpenseLines: asMapList(
+      j['indirect_expense_lines'],
+    ).map(NamedAmount.fromJson).toList(),
+    expenseLines: asMapList(
+      j['expense_lines'],
+    ).map(ExpenseRow.fromJson).toList(),
+  );
 }
 
 // ── Daily profit ────────────────────────────────────────────────────────
@@ -213,37 +235,48 @@ class DailyProfitRow {
   final double netProfit;
 
   factory DailyProfitRow.fromJson(JsonMap j) => DailyProfitRow(
-        date: asDate(j['date']),
-        sales: asDouble(j['sales']),
-        cogs: asDouble(j['cogs']),
-        salesReturn: asDouble(j['sales_return']),
-        salesProfit: asDouble(j['sales_profit']),
-        purchase: asDouble(j['purchase']),
-        grossProfit: asDouble(j['gross_profit']),
-        expenses: asDouble(j['expenses']),
-        netProfit: asDouble(j['net_profit']),
-      );
+    date: asDate(j['date']),
+    sales: asDouble(j['sales']),
+    cogs: asDouble(j['cogs']),
+    salesReturn: asDouble(j['sales_return']),
+    salesProfit: asDouble(j['sales_profit']),
+    purchase: asDouble(j['purchase']),
+    grossProfit: asDouble(j['gross_profit']),
+    expenses: asDouble(j['expenses']),
+    netProfit: asDouble(j['net_profit']),
+  );
 }
 
 class DailyProfitReport {
-  const DailyProfitReport({required this.header, required this.rows, required this.totals, required this.totalDays});
+  const DailyProfitReport({
+    required this.header,
+    required this.rows,
+    required this.totals,
+    required this.totalDays,
+  });
   final ReportHeader header;
   final List<DailyProfitRow> rows;
   final DailyProfitRow totals;
   final int totalDays;
 
   factory DailyProfitReport.fromJson(JsonMap j) => DailyProfitReport(
-        header: ReportHeader.fromJson(j),
-        rows: asMapList(j['rows']).map(DailyProfitRow.fromJson).toList(),
-        totals: DailyProfitRow.fromJson(asMap(j['totals'])),
-        totalDays: asInt(j['total_days']),
-      );
+    header: ReportHeader.fromJson(j),
+    rows: asMapList(j['rows']).map(DailyProfitRow.fromJson).toList(),
+    totals: DailyProfitRow.fromJson(asMap(j['totals'])),
+    totalDays: asInt(j['total_days']),
+  );
 }
 
 // ── Bill-wise profit ────────────────────────────────────────────────────
 
 class BillProfitItem {
-  const BillProfitItem({required this.description, this.quantity = 0, this.saleAmount = 0, this.costAmount = 0, this.profit = 0});
+  const BillProfitItem({
+    required this.description,
+    this.quantity = 0,
+    this.saleAmount = 0,
+    this.costAmount = 0,
+    this.profit = 0,
+  });
   final String description;
   final double quantity;
   final double saleAmount;
@@ -251,12 +284,12 @@ class BillProfitItem {
   final double profit;
 
   factory BillProfitItem.fromJson(JsonMap j) => BillProfitItem(
-        description: asString(j['description']),
-        quantity: asDouble(j['quantity']),
-        saleAmount: asDouble(j['sale_amount']),
-        costAmount: asDouble(j['cost_amount']),
-        profit: asDouble(j['profit']),
-      );
+    description: asString(j['description']),
+    quantity: asDouble(j['quantity']),
+    saleAmount: asDouble(j['sale_amount']),
+    costAmount: asDouble(j['cost_amount']),
+    profit: asDouble(j['profit']),
+  );
 }
 
 class BillProfit {
@@ -289,19 +322,19 @@ class BillProfit {
   final List<BillProfitItem> items;
 
   factory BillProfit.fromJson(JsonMap j) => BillProfit(
-        invoiceId: asString(j['invoice_id']),
-        invoiceNumber: asString(j['invoice_number']),
-        date: asDate(j['date']),
-        partyName: asString(j['party_name']),
-        status: asString(j['status']),
-        saleAmount: asDouble(j['sale_amount']),
-        discount: asDouble(j['discount']),
-        costAmount: asDouble(j['cost_amount']),
-        returnsAmount: asDouble(j['returns_amount']),
-        profit: asDouble(j['profit']),
-        marginPct: asDouble(j['margin_pct']),
-        items: asMapList(j['items']).map(BillProfitItem.fromJson).toList(),
-      );
+    invoiceId: asString(j['invoice_id']),
+    invoiceNumber: asString(j['invoice_number']),
+    date: asDate(j['date']),
+    partyName: asString(j['party_name']),
+    status: asString(j['status']),
+    saleAmount: asDouble(j['sale_amount']),
+    discount: asDouble(j['discount']),
+    costAmount: asDouble(j['cost_amount']),
+    returnsAmount: asDouble(j['returns_amount']),
+    profit: asDouble(j['profit']),
+    marginPct: asDouble(j['margin_pct']),
+    items: asMapList(j['items']).map(BillProfitItem.fromJson).toList(),
+  );
 }
 
 class BillwiseProfitReport {
@@ -324,14 +357,14 @@ class BillwiseProfitReport {
   final double marginPct;
 
   factory BillwiseProfitReport.fromJson(JsonMap j) => BillwiseProfitReport(
-        header: ReportHeader.fromJson(j),
-        bills: asMapList(j['bills']).map(BillProfit.fromJson).toList(),
-        billCount: asInt(j['bill_count']),
-        saleAmount: asDouble(j['sale_amount']),
-        costAmount: asDouble(j['cost_amount']),
-        profit: asDouble(j['profit']),
-        marginPct: asDouble(j['margin_pct']),
-      );
+    header: ReportHeader.fromJson(j),
+    bills: asMapList(j['bills']).map(BillProfit.fromJson).toList(),
+    billCount: asInt(j['bill_count']),
+    saleAmount: asDouble(j['sale_amount']),
+    costAmount: asDouble(j['cost_amount']),
+    profit: asDouble(j['profit']),
+    marginPct: asDouble(j['margin_pct']),
+  );
 }
 
 // ── Stock ───────────────────────────────────────────────────────────────
@@ -360,16 +393,16 @@ class StockLine {
   final double closingValue;
 
   factory StockLine.fromJson(JsonMap j) => StockLine(
-        productId: asString(j['product_id']),
-        name: asString(j['product_name']),
-        category: asString(j['category']),
-        unit: asString(j['unit']),
-        openingQty: asDouble(j['opening_qty']),
-        inQty: asDouble(j['in_qty']),
-        outQty: asDouble(j['out_qty']),
-        closingQty: asDouble(j['closing_qty']),
-        closingValue: asDouble(j['closing_value']),
-      );
+    productId: asString(j['product_id']),
+    name: asString(j['product_name']),
+    category: asString(j['category']),
+    unit: asString(j['unit']),
+    openingQty: asDouble(j['opening_qty']),
+    inQty: asDouble(j['in_qty']),
+    outQty: asDouble(j['out_qty']),
+    closingQty: asDouble(j['closing_qty']),
+    closingValue: asDouble(j['closing_value']),
+  );
 }
 
 class StockReport {
@@ -392,14 +425,14 @@ class StockReport {
   final double change;
 
   factory StockReport.fromJson(JsonMap j) => StockReport(
-        header: ReportHeader.fromJson(j),
-        lines: asMapList(j['lines']).map(StockLine.fromJson).toList(),
-        openingValue: asDouble(j['opening_stock']),
-        closingValue: asDouble(j['closing_stock']),
-        inQty: asDouble(j['in_qty']),
-        outQty: asDouble(j['out_qty']),
-        change: asDouble(j['stock_change']),
-      );
+    header: ReportHeader.fromJson(j),
+    lines: asMapList(j['lines']).map(StockLine.fromJson).toList(),
+    openingValue: asDouble(j['opening_stock']),
+    closingValue: asDouble(j['closing_stock']),
+    inQty: asDouble(j['in_qty']),
+    outQty: asDouble(j['out_qty']),
+    change: asDouble(j['stock_change']),
+  );
 }
 
 // ── Party balances ──────────────────────────────────────────────────────
@@ -428,30 +461,35 @@ class PartyBalanceLine {
   final double closing;
 
   factory PartyBalanceLine.fromJson(JsonMap j) => PartyBalanceLine(
-        partyId: asString(j['party_id']),
-        name: asString(j['party_name']),
-        type: asString(j['party_type']),
-        phone: asString(j['phone']),
-        opening: asDouble(j['opening_balance']),
-        debit: asDouble(j['debit']),
-        credit: asDouble(j['credit']),
-        closing: asDouble(j['closing_balance']),
-      );
+    partyId: asString(j['party_id']),
+    name: asString(j['party_name']),
+    type: asString(j['party_type']),
+    phone: asString(j['phone']),
+    opening: asDouble(j['opening_balance']),
+    debit: asDouble(j['debit']),
+    credit: asDouble(j['credit']),
+    closing: asDouble(j['closing_balance']),
+  );
 }
 
 class PartyBalanceReport {
-  const PartyBalanceReport({required this.lines, this.receivable = 0, this.payable = 0, this.net = 0});
+  const PartyBalanceReport({
+    required this.lines,
+    this.receivable = 0,
+    this.payable = 0,
+    this.net = 0,
+  });
   final List<PartyBalanceLine> lines;
   final double receivable;
   final double payable;
   final double net;
 
   factory PartyBalanceReport.fromJson(JsonMap j) => PartyBalanceReport(
-        lines: asMapList(j['lines']).map(PartyBalanceLine.fromJson).toList(),
-        receivable: asDouble(j['closing_receivable']),
-        payable: asDouble(j['closing_payable']).abs(),
-        net: asDouble(j['net_closing']),
-      );
+    lines: asMapList(j['lines']).map(PartyBalanceLine.fromJson).toList(),
+    receivable: asDouble(j['closing_receivable']),
+    payable: asDouble(j['closing_payable']).abs(),
+    net: asDouble(j['net_closing']),
+  );
 }
 
 // ── Analytics ───────────────────────────────────────────────────────────
@@ -470,7 +508,14 @@ enum AnalyticsPeriod {
 
 /// Generic ranked row (customer, product or category).
 class RankRow {
-  const RankRow({required this.id, required this.name, this.subtitle = '', this.value = 0, this.secondary = 0, this.share = 0});
+  const RankRow({
+    required this.id,
+    required this.name,
+    this.subtitle = '',
+    this.value = 0,
+    this.secondary = 0,
+    this.share = 0,
+  });
   final String id;
   final String name;
   final String subtitle;
@@ -480,7 +525,13 @@ class RankRow {
 }
 
 class AgingBuckets {
-  const AgingBuckets({this.current = 0, this.d1To30 = 0, this.d31To60 = 0, this.d61To90 = 0, this.d90Plus = 0});
+  const AgingBuckets({
+    this.current = 0,
+    this.d1To30 = 0,
+    this.d31To60 = 0,
+    this.d61To90 = 0,
+    this.d90Plus = 0,
+  });
   final double current;
   final double d1To30;
   final double d31To60;
@@ -490,20 +541,20 @@ class AgingBuckets {
   double get total => current + d1To30 + d31To60 + d61To90 + d90Plus;
 
   List<(String, double)> get buckets => [
-        ('Not due', current),
-        ('1–30 days', d1To30),
-        ('31–60 days', d31To60),
-        ('61–90 days', d61To90),
-        ('90+ days', d90Plus),
-      ];
+    ('Not due', current),
+    ('1–30 days', d1To30),
+    ('31–60 days', d31To60),
+    ('61–90 days', d61To90),
+    ('90+ days', d90Plus),
+  ];
 
   factory AgingBuckets.fromJson(JsonMap j) => AgingBuckets(
-        current: asDouble(j['current']),
-        d1To30: asDouble(j['days_1_30']),
-        d31To60: asDouble(j['days_31_60']),
-        d61To90: asDouble(j['days_61_90']),
-        d90Plus: asDouble(j['days_90_plus']),
-      );
+    current: asDouble(j['current']),
+    d1To30: asDouble(j['days_1_30']),
+    d31To60: asDouble(j['days_31_60']),
+    d61To90: asDouble(j['days_61_90']),
+    d90Plus: asDouble(j['days_90_plus']),
+  );
 }
 
 class OutstandingInvoice {
@@ -524,13 +575,13 @@ class OutstandingInvoice {
   final int daysOverdue;
 
   factory OutstandingInvoice.fromJson(JsonMap j) => OutstandingInvoice(
-        id: asString(j['id']),
-        number: asString(j['invoice_number']),
-        partyName: asString(j['party_name']),
-        date: asDate(j['date']),
-        outstanding: asDouble(j['outstanding']),
-        daysOverdue: asInt(j['days_overdue']),
-      );
+    id: asString(j['id']),
+    number: asString(j['invoice_number']),
+    partyName: asString(j['party_name']),
+    date: asDate(j['date']),
+    outstanding: asDouble(j['outstanding']),
+    daysOverdue: asInt(j['days_overdue']),
+  );
 }
 
 class OutstandingReport {
@@ -549,19 +600,23 @@ class OutstandingReport {
   final int overdueCount;
 
   factory OutstandingReport.fromJson(JsonMap j) => OutstandingReport(
-        aging: AgingBuckets.fromJson(asMap(j['aging'])),
-        byParty: asMapList(j['by_party'])
-            .map((p) => RankRow(
-                  id: asString(p['party_id']),
-                  name: asString(p['party_name']),
-                  subtitle: '${asInt(p['invoice_count'])} invoices',
-                  value: asDouble(p['outstanding']),
-                ))
-            .toList(),
-        invoices: asMapList(j['invoices']).map(OutstandingInvoice.fromJson).toList(),
-        total: asDouble(pick(j, 'summary.total_outstanding')),
-        overdueCount: asInt(pick(j, 'summary.overdue_count')),
-      );
+    aging: AgingBuckets.fromJson(asMap(j['aging'])),
+    byParty: asMapList(j['by_party'])
+        .map(
+          (p) => RankRow(
+            id: asString(p['party_id']),
+            name: asString(p['party_name']),
+            subtitle: '${asInt(p['invoice_count'])} invoices',
+            value: asDouble(p['outstanding']),
+          ),
+        )
+        .toList(),
+    invoices: asMapList(
+      j['invoices'],
+    ).map(OutstandingInvoice.fromJson).toList(),
+    total: asDouble(pick(j, 'summary.total_outstanding')),
+    overdueCount: asInt(pick(j, 'summary.overdue_count')),
+  );
 }
 
 /// Customer-, product- or category-wise analytics, normalised to [RankRow]s.
@@ -572,52 +627,68 @@ class RankReport {
   final int count;
 
   static RankReport customers(JsonMap j) => RankReport(
-        rows: asMapList(j['customers'])
-            .map((c) => RankRow(
-                  id: asString(c['party_id']),
-                  name: asString(c['name']),
-                  subtitle: '${asInt(c['invoice_count'])} invoices',
-                  value: asDouble(c['total_sales']),
-                  secondary: asDouble(c['total_outstanding']),
-                ))
-            .toList(),
-        total: asDouble(pick(j, 'summary.total_paid_sales')),
-        count: asInt(pick(j, 'summary.customer_count')),
-      );
+    rows: asMapList(j['customers'])
+        .map(
+          (c) => RankRow(
+            id: asString(c['party_id']),
+            name: asString(c['name']),
+            subtitle: '${asInt(c['invoice_count'])} invoices',
+            value: asDouble(c['total_sales']),
+            secondary: asDouble(c['total_outstanding']),
+          ),
+        )
+        .toList(),
+    total: asDouble(pick(j, 'summary.total_paid_sales')),
+    count: asInt(pick(j, 'summary.customer_count')),
+  );
 
   static RankReport products(JsonMap j) => RankReport(
-        rows: asMapList(j['products'])
-            .map((p) => RankRow(
-                  id: asString(p['product_id']),
-                  name: asString(p['name']),
-                  subtitle: '${_qtyText(asDouble(p['quantity_sold']))} ${asString(p['unit'])} sold'.trim(),
-                  value: asDouble(p['revenue']),
-                  share: asDouble(p['share_percent']),
-                ))
-            .toList(),
-        total: asDouble(pick(j, 'summary.total_revenue')),
-        count: asInt(pick(j, 'summary.product_count')),
-      );
+    rows: asMapList(j['products'])
+        .map(
+          (p) => RankRow(
+            id: asString(p['product_id']),
+            name: asString(p['name']),
+            subtitle:
+                '${_qtyText(asDouble(p['quantity_sold']))} ${asString(p['unit'])} sold'
+                    .trim(),
+            value: asDouble(p['revenue']),
+            share: asDouble(p['share_percent']),
+          ),
+        )
+        .toList(),
+    total: asDouble(pick(j, 'summary.total_revenue')),
+    count: asInt(pick(j, 'summary.product_count')),
+  );
 
   static RankReport categories(JsonMap j) => RankReport(
-        rows: asMapList(j['categories'])
-            .map((c) => RankRow(
-                  id: asString(c['category']),
-                  name: asString(c['category']).isEmpty ? 'Uncategorised' : asString(c['category']),
-                  subtitle: '${asInt(c['product_count'])} products · ${_qtyText(asDouble(c['quantity_sold']))} sold',
-                  value: asDouble(c['revenue']),
-                  share: asDouble(c['share_percent']),
-                ))
-            .toList(),
-        total: asDouble(pick(j, 'summary.total_revenue')),
-        count: asInt(pick(j, 'summary.category_count')),
-      );
+    rows: asMapList(j['categories'])
+        .map(
+          (c) => RankRow(
+            id: asString(c['category']),
+            name: asString(c['category']).isEmpty
+                ? 'Uncategorised'
+                : asString(c['category']),
+            subtitle:
+                '${asInt(c['product_count'])} products · ${_qtyText(asDouble(c['quantity_sold']))} sold',
+            value: asDouble(c['revenue']),
+            share: asDouble(c['share_percent']),
+          ),
+        )
+        .toList(),
+    total: asDouble(pick(j, 'summary.total_revenue')),
+    count: asInt(pick(j, 'summary.category_count')),
+  );
 }
 
-String _qtyText(double q) => q == q.roundToDouble() ? q.toInt().toString() : q.toStringAsFixed(2);
+String _qtyText(double q) =>
+    q == q.roundToDouble() ? q.toInt().toString() : q.toStringAsFixed(2);
 
 class PaymentsAnalytics {
-  const PaymentsAnalytics({required this.totalIn, required this.totalOut, required this.byMode});
+  const PaymentsAnalytics({
+    required this.totalIn,
+    required this.totalOut,
+    required this.byMode,
+  });
   final double totalIn;
   final double totalOut;
   final List<ModeTotal> byMode;
@@ -632,12 +703,17 @@ class PaymentsAnalytics {
       final amount = asDouble(r['total'] ?? r['amount']);
       final inbound = asString(r['direction']) != 'out';
       final cur = byLabel[mode] ?? (0, 0);
-      byLabel[mode] = inbound ? (cur.$1 + amount, cur.$2) : (cur.$1, cur.$2 + amount);
+      byLabel[mode] = inbound
+          ? (cur.$1 + amount, cur.$2)
+          : (cur.$1, cur.$2 + amount);
     }
     return PaymentsAnalytics(
       totalIn: asDouble(pick(j, 'summary.total_in')),
       totalOut: asDouble(pick(j, 'summary.total_out')),
-      byMode: [for (final e in byLabel.entries) ModeTotal(label: e.key, inAmount: e.value.$1, outAmount: e.value.$2)],
+      byMode: [
+        for (final e in byLabel.entries)
+          ModeTotal(label: e.key, inAmount: e.value.$1, outAmount: e.value.$2),
+      ],
     );
   }
 }
@@ -684,7 +760,8 @@ class GstSummary {
       liability: asDouble(s['liability']),
       salesTaxable: asDouble(pick(j, 'details.sales.taxable_value')),
       purchaseTaxable: asDouble(p['taxable_value']),
-      purchaseTax: asDouble(p['cgst']) + asDouble(p['sgst']) + asDouble(p['igst']),
+      purchaseTax:
+          asDouble(p['cgst']) + asDouble(p['sgst']) + asDouble(p['igst']),
       itc: asDouble(pick(j, 'details.itc.total_itc')),
     );
   }
@@ -719,21 +796,28 @@ class GstReturnRow {
   double get tax => cgst + sgst + igst;
 
   factory GstReturnRow.fromJson(JsonMap j) => GstReturnRow(
-        number: asString(j['invoice_number'] ?? j['bill_number']),
-        date: asDate(j['invoice_date'] ?? j['receipt_date']),
-        partyName: asString(j['party_name']),
-        gstin: asString(j['party_gstin']),
-        type: asString(j['invoice_type']),
-        value: asDouble(j['invoice_value']),
-        taxable: asDouble(j['taxable_value']),
-        cgst: asDouble(j['cgst']),
-        sgst: asDouble(j['sgst']),
-        igst: asDouble(j['igst']),
-      );
+    number: asString(j['invoice_number'] ?? j['bill_number']),
+    date: asDate(j['invoice_date'] ?? j['receipt_date']),
+    partyName: asString(j['party_name']),
+    gstin: asString(j['party_gstin']),
+    type: asString(j['invoice_type']),
+    value: asDouble(j['invoice_value']),
+    taxable: asDouble(j['taxable_value']),
+    cgst: asDouble(j['cgst']),
+    sgst: asDouble(j['sgst']),
+    igst: asDouble(j['igst']),
+  );
 }
 
 class Gstr3b {
-  const Gstr3b({this.liability = 0, this.igst = 0, this.cgst = 0, this.sgst = 0, this.itc = 0, this.payable = 0});
+  const Gstr3b({
+    this.liability = 0,
+    this.igst = 0,
+    this.cgst = 0,
+    this.sgst = 0,
+    this.itc = 0,
+    this.payable = 0,
+  });
   final double liability;
   final double igst;
   final double cgst;
@@ -742,18 +826,24 @@ class Gstr3b {
   final double payable;
 
   factory Gstr3b.fromJson(JsonMap j) => Gstr3b(
-        liability: asDouble(j['total_tax_liability']),
-        igst: asDouble(j['igst_liability']),
-        cgst: asDouble(j['cgst_liability']),
-        sgst: asDouble(j['sgst_liability']),
-        itc: asDouble(j['total_itc']),
-        payable: asDouble(j['tax_payable']),
-      );
+    liability: asDouble(j['total_tax_liability']),
+    igst: asDouble(j['igst_liability']),
+    cgst: asDouble(j['cgst_liability']),
+    sgst: asDouble(j['sgst_liability']),
+    itc: asDouble(j['total_itc']),
+    payable: asDouble(j['tax_payable']),
+  );
 }
 
 /// E-invoice (IRN) or e-way bill history row.
 class GstDocRow {
-  const GstDocRow({required this.invoiceId, required this.invoiceNumber, required this.reference, required this.status, this.date});
+  const GstDocRow({
+    required this.invoiceId,
+    required this.invoiceNumber,
+    required this.reference,
+    required this.status,
+    this.date,
+  });
   final String invoiceId;
   final String invoiceNumber;
 
@@ -763,10 +853,10 @@ class GstDocRow {
   final DateTime? date;
 
   factory GstDocRow.fromJson(JsonMap j) => GstDocRow(
-        invoiceId: asString(j['invoice_id']),
-        invoiceNumber: asString(j['invoice_number']),
-        reference: asString(j['irn'] ?? j['ewb_number']),
-        status: asString(j['status']),
-        date: asDate(j['generated_at'] ?? j['valid_until']),
-      );
+    invoiceId: asString(j['invoice_id']),
+    invoiceNumber: asString(j['invoice_number']),
+    reference: asString(j['irn'] ?? j['ewb_number']),
+    status: asString(j['status']),
+    date: asDate(j['generated_at'] ?? j['valid_until']),
+  );
 }

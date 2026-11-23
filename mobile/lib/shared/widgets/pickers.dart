@@ -15,37 +15,53 @@ import 'paged_list.dart';
 
 /// Searchable party sheet. [type] limits to customer/vendor. Offers
 /// "Add new" which opens the party form and returns the created party.
-Future<Party?> pickParty(BuildContext context, {String? type}) => showModalBottomSheet<Party>(
+Future<Party?> pickParty(BuildContext context, {String? type}) =>
+    showModalBottomSheet<Party>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       builder: (_) => _PickerSheet<Party>(
-        title: type == 'vendor' ? 'Select vendor' : type == 'customer' ? 'Select customer' : 'Select party',
+        title: type == 'vendor'
+            ? 'Select vendor'
+            : type == 'customer'
+            ? 'Select customer'
+            : 'Select party',
         hint: 'Search name, phone or GSTIN',
         addLabel: type == 'vendor' ? 'New vendor' : 'New customer',
-        onAdd: (ctx) => ctx.push<Party>('/parties/new${type == null ? '' : '?type=$type'}'),
-        fetch: (ref, page, q) => ref.read(partiesRepositoryProvider).list(page: page, search: q, type: type),
+        onAdd: (ctx) =>
+            ctx.push<Party>('/parties/new${type == null ? '' : '?type=$type'}'),
+        fetch: (ref, page, q) => ref
+            .read(partiesRepositoryProvider)
+            .list(page: page, search: q, type: type),
         itemBuilder: (ctx, p) => ListTile(
           leading: InitialsAvatar(p.name),
           title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-          subtitle: Text([p.phone, p.city].where((e) => e.isNotEmpty).join(' · '), maxLines: 1),
+          subtitle: Text(
+            [p.phone, p.city].where((e) => e.isNotEmpty).join(' · '),
+            maxLines: 1,
+          ),
           trailing: p.balance.abs() > 0.005 ? _balance(ctx, p) : null,
         ),
       ),
     );
 
 Widget _balance(BuildContext context, Party p) => Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(moneyShort(p.balance.abs()),
-            style: context.text.labelLarge?.copyWith(color: p.toCollect ? StatusColors.success : StatusColors.danger)),
-        Text(p.toCollect ? 'to collect' : 'to pay', style: context.text.labelSmall),
-      ],
-    );
+  mainAxisAlignment: MainAxisAlignment.center,
+  crossAxisAlignment: CrossAxisAlignment.end,
+  children: [
+    Text(
+      moneyShort(p.balance.abs()),
+      style: context.text.labelLarge?.copyWith(
+        color: p.toCollect ? StatusColors.success : StatusColors.danger,
+      ),
+    ),
+    Text(p.toCollect ? 'to collect' : 'to pay', style: context.text.labelSmall),
+  ],
+);
 
 /// Searchable product sheet showing price and stock.
-Future<Product?> pickProduct(BuildContext context) => showModalBottomSheet<Product>(
+Future<Product?> pickProduct(BuildContext context) =>
+    showModalBottomSheet<Product>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
@@ -54,13 +70,22 @@ Future<Product?> pickProduct(BuildContext context) => showModalBottomSheet<Produ
         hint: 'Search name, code or SKU',
         addLabel: 'New product',
         onAdd: (ctx) => ctx.push<Product>('/products/new'),
-        fetch: (ref, page, q) => ref.read(productsRepositoryProvider).list(page: page, search: q, sort: 'name'),
+        fetch: (ref, page, q) => ref
+            .read(productsRepositoryProvider)
+            .list(page: page, search: q, sort: 'name'),
         itemBuilder: (ctx, p) => ListTile(
-          leading: const IconBadge(Icons.inventory_2_rounded, color: Color(0xFF0891B2)),
+          leading: const IconBadge(
+            Icons.inventory_2_rounded,
+            color: Color(0xFF0891B2),
+          ),
           title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(
             p.isService ? 'Service' : 'Stock: ${qty(p.stockQty)} ${p.unit}',
-            style: TextStyle(color: !p.isService && p.stockQty <= 0 ? StatusColors.danger : null),
+            style: TextStyle(
+              color: !p.isService && p.stockQty <= 0
+                  ? StatusColors.danger
+                  : null,
+            ),
           ),
           trailing: Text(money(p.salePrice), style: ctx.text.labelLarge),
         ),
@@ -98,16 +123,25 @@ class _PickerSheetState<T> extends ConsumerState<_PickerSheet<T>> {
       child: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(Spacing.lg, 0, Spacing.sm, Spacing.sm),
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.lg,
+              0,
+              Spacing.sm,
+              Spacing.sm,
+            ),
             child: Row(
               children: [
-                Expanded(child: Text(widget.title, style: context.text.titleMedium)),
+                Expanded(
+                  child: Text(widget.title, style: context.text.titleMedium),
+                ),
                 TextButton.icon(
                   icon: const Icon(Icons.add_rounded),
                   label: Text(widget.addLabel),
                   onPressed: () async {
                     final created = await widget.onAdd(context);
-                    if (created != null && context.mounted) Navigator.pop(context, created);
+                    if (created != null && context.mounted) {
+                      Navigator.pop(context, created);
+                    }
                   },
                 ),
               ],
@@ -115,7 +149,11 @@ class _PickerSheetState<T> extends ConsumerState<_PickerSheet<T>> {
           ),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: Spacing.lg),
-            child: SearchField(hint: widget.hint, autofocus: true, onChanged: (v) => setState(() => _q = v)),
+            child: SearchField(
+              hint: widget.hint,
+              autofocus: true,
+              onChanged: (v) => setState(() => _q = v),
+            ),
           ),
           const SizedBox(height: Spacing.sm),
           Expanded(
@@ -130,7 +168,9 @@ class _PickerSheetState<T> extends ConsumerState<_PickerSheet<T>> {
                   label: Text(widget.addLabel),
                   onPressed: () async {
                     final created = await widget.onAdd(context);
-                    if (created != null && context.mounted) Navigator.pop(context, created);
+                    if (created != null && context.mounted) {
+                      Navigator.pop(context, created);
+                    }
                   },
                 ),
               ),

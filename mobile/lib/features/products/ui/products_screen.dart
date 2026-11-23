@@ -43,15 +43,24 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
   Widget build(BuildContext context) {
     final rev = ref.watch(dataRevisionProvider);
     final store = ref.watch(activeStoreIdProvider);
-    final categories = ref.watch(productCategoriesProvider).asData?.value ?? const <String>[];
+    final categories =
+        ref.watch(productCategoriesProvider).asData?.value ?? const <String>[];
     final repo = ref.read(productsRepositoryProvider);
 
     final header = Padding(
-      padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.lg,
+        Spacing.sm,
+        Spacing.lg,
+        Spacing.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SearchField(hint: 'Search name, item code, SKU', onChanged: (v) => setState(() => _q = v)),
+          SearchField(
+            hint: 'Search name, item code, SKU',
+            onChanged: (v) => setState(() => _q = v),
+          ),
           const SizedBox(height: Spacing.sm),
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
@@ -62,8 +71,14 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   onSelected: (s) => setState(() => _sort = s),
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: _Sort.name, child: Text('Name (A–Z)')),
-                    PopupMenuItem(value: _Sort.lowStock, child: Text('Lowest stock first')),
-                    PopupMenuItem(value: _Sort.price, child: Text('Highest price first')),
+                    PopupMenuItem(
+                      value: _Sort.lowStock,
+                      child: Text('Lowest stock first'),
+                    ),
+                    PopupMenuItem(
+                      value: _Sort.price,
+                      child: Text('Highest price first'),
+                    ),
                   ],
                   child: Chip(
                     avatar: const Icon(Icons.sort_rounded, size: 18),
@@ -85,7 +100,8 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
                   ChoiceChip(
                     label: Text(c),
                     selected: _category == c,
-                    onSelected: (_) => setState(() => _category = _category == c ? null : c),
+                    onSelected: (_) =>
+                        setState(() => _category = _category == c ? null : c),
                   ),
                 ],
               ],
@@ -101,14 +117,22 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
         page: page,
         search: _q,
         category: _category,
-        sort: switch (_sort) { _Sort.name => 'name', _Sort.lowStock => 'stock', _Sort.price => 'sale_price' },
+        sort: switch (_sort) {
+          _Sort.name => 'name',
+          _Sort.lowStock => 'stock',
+          _Sort.price => 'sale_price',
+        },
         ascending: _sort != _Sort.price,
       ),
       header: header,
       empty: EmptyState(
         icon: Icons.inventory_2_rounded,
-        title: _q.isEmpty && _category == null ? 'No products yet' : 'No matching products',
-        message: _q.isEmpty && _category == null ? 'Add the items and services you sell.' : null,
+        title: _q.isEmpty && _category == null
+            ? 'No products yet'
+            : 'No matching products',
+        message: _q.isEmpty && _category == null
+            ? 'Add the items and services you sell.'
+            : null,
         action: _q.isEmpty && _category == null
             ? FilledButton.icon(
                 onPressed: () => context.push('/products/new'),
@@ -117,7 +141,11 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
               )
             : null,
       ),
-      itemBuilder: (ctx, p, _) => ProductTile(product: p, selected: p.id == _selected, onTap: () => _open(p)),
+      itemBuilder: (ctx, p, _) => ProductTile(
+        product: p,
+        selected: p.id == _selected,
+        onTap: () => _open(p),
+      ),
     );
 
     return Scaffold(
@@ -144,7 +172,12 @@ class _ProductsScreenState extends ConsumerState<ProductsScreen> {
 }
 
 class ProductTile extends StatelessWidget {
-  const ProductTile({super.key, required this.product, required this.onTap, this.selected = false});
+  const ProductTile({
+    super.key,
+    required this.product,
+    required this.onTap,
+    this.selected = false,
+  });
   final Product product;
   final VoidCallback onTap;
   final bool selected;
@@ -155,18 +188,29 @@ class ProductTile extends StatelessWidget {
     final stockColor = p.isService
         ? context.colors.onSurfaceVariant
         : p.isOutOfStock
-            ? StatusColors.danger
-            : p.isLowStock
-                ? StatusColors.warning
-                : StatusColors.success;
+        ? StatusColors.danger
+        : p.isLowStock
+        ? StatusColors.warning
+        : StatusColors.success;
     return ListTile(
       selected: selected,
       selectedTileColor: context.colors.primaryContainer.withValues(alpha: 0.5),
       onTap: onTap,
-      leading: IconBadge(p.isService ? Icons.handyman_rounded : Icons.inventory_2_rounded, color: productsAccent),
-      title: Text(p.name, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
+      leading: IconBadge(
+        p.isService ? Icons.handyman_rounded : Icons.inventory_2_rounded,
+        color: productsAccent,
+      ),
+      title: Text(
+        p.name,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
       subtitle: Text(
-        [if (p.itemCode.isNotEmpty) p.itemCode, if (p.category.isNotEmpty) p.category].join(' · ').ifEmpty(p.unit),
+        [
+          if (p.itemCode.isNotEmpty) p.itemCode,
+          if (p.category.isNotEmpty) p.category,
+        ].join(' · ').ifEmpty(p.unit),
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
       ),
@@ -177,7 +221,10 @@ class ProductTile extends StatelessWidget {
           Text(money(p.salePrice), style: context.text.labelLarge),
           Text(
             p.isService ? 'Service' : '${qty(p.stockQty)} ${p.unit}',
-            style: context.text.labelSmall?.copyWith(color: stockColor, fontWeight: FontWeight.w600),
+            style: context.text.labelSmall?.copyWith(
+              color: stockColor,
+              fontWeight: FontWeight.w600,
+            ),
           ),
         ],
       ),

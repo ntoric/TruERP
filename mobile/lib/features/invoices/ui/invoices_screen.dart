@@ -67,7 +67,12 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
     final repo = ref.read(invoicesRepositoryProvider);
 
     final header = Padding(
-      padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.lg,
+        Spacing.sm,
+        Spacing.lg,
+        Spacing.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -75,7 +80,12 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
           const SizedBox(height: Spacing.md),
           Row(
             children: [
-              Expanded(child: SearchField(hint: 'Search number or customer', onChanged: (v) => setState(() => _q = v))),
+              Expanded(
+                child: SearchField(
+                  hint: 'Search number or customer',
+                  onChanged: (v) => setState(() => _q = v),
+                ),
+              ),
               const SizedBox(width: Spacing.sm),
               IconButton.outlined(
                 tooltip: 'Date range',
@@ -91,7 +101,9 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: InputChip(
-                  label: Text('${dateShort(_range!.start)} – ${dateShort(_range!.end)}'),
+                  label: Text(
+                    '${dateShort(_range!.start)} – ${dateShort(_range!.end)}',
+                  ),
                   onDeleted: () => setState(() => _range = null),
                   onPressed: _pickRange,
                 ),
@@ -119,12 +131,22 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
 
     final list = PagedListView<Invoice>(
       resetKey: (_status, _q, _range, rev, store),
-      fetch: (page) => repo.list(page: page, search: _q, status: _status, from: _range?.start, to: _range?.end),
+      fetch: (page) => repo.list(
+        page: page,
+        search: _q,
+        status: _status,
+        from: _range?.start,
+        to: _range?.end,
+      ),
       header: header,
       empty: EmptyState(
         icon: Icons.receipt_long_rounded,
-        title: _status == null && _q.isEmpty && _range == null ? 'No invoices yet' : 'No matching invoices',
-        message: _status == null && _q.isEmpty && _range == null ? 'Create your first invoice to start tracking sales.' : null,
+        title: _status == null && _q.isEmpty && _range == null
+            ? 'No invoices yet'
+            : 'No matching invoices',
+        message: _status == null && _q.isEmpty && _range == null
+            ? 'Create your first invoice to start tracking sales.'
+            : null,
         action: _status == null && _q.isEmpty && _range == null
             ? FilledButton.icon(
                 onPressed: () => context.push('/invoices/new'),
@@ -133,7 +155,11 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
               )
             : null,
       ),
-      itemBuilder: (ctx, inv, _) => InvoiceTile(invoice: inv, selected: inv.id == _selected, onTap: () => _open(inv)),
+      itemBuilder: (ctx, inv, _) => InvoiceTile(
+        invoice: inv,
+        selected: inv.id == _selected,
+        onTap: () => _open(inv),
+      ),
     );
 
     return Scaffold(
@@ -160,7 +186,11 @@ class _InvoicesScreenState extends ConsumerState<InvoicesScreen> {
         list: list,
         detail: _selected == null
             ? null
-            : InvoiceDetailScreen(key: ValueKey(_selected), invoiceId: _selected!, embedded: true),
+            : InvoiceDetailScreen(
+                key: ValueKey(_selected),
+                invoiceId: _selected!,
+                embedded: true,
+              ),
       ),
     );
   }
@@ -174,35 +204,50 @@ class _StatsStrip extends ConsumerWidget {
     ref.watch(dataRevisionProvider);
     final s = ref.watch(invoiceStatsProvider).asData?.value;
     Widget cell(String label, double? v, Color c) => Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: context.text.labelSmall),
-              const SizedBox(height: 2),
-              FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerLeft,
-                child: Text(v == null ? '—' : moneyShort(v),
-                    style: context.text.titleSmall?.copyWith(color: c, fontWeight: FontWeight.w700)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: context.text.labelSmall),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              v == null ? '—' : moneyShort(v),
+              style: context.text.titleSmall?.copyWith(
+                color: c,
+                fontWeight: FontWeight.w700,
               ),
-            ],
+            ),
           ),
-        );
+        ],
+      ),
+    );
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Spacing.lg, vertical: Spacing.md),
-        child: Row(children: [
-          cell('Total sales', s?.totalSales, context.colors.onSurface),
-          cell('Received', s?.paid, StatusColors.success),
-          cell('Unpaid', s?.unpaid, StatusColors.danger),
-        ]),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.lg,
+          vertical: Spacing.md,
+        ),
+        child: Row(
+          children: [
+            cell('Total sales', s?.totalSales, context.colors.onSurface),
+            cell('Received', s?.paid, StatusColors.success),
+            cell('Unpaid', s?.unpaid, StatusColors.danger),
+          ],
+        ),
       ),
     );
   }
 }
 
 class InvoiceTile extends StatelessWidget {
-  const InvoiceTile({super.key, required this.invoice, required this.onTap, this.selected = false});
+  const InvoiceTile({
+    super.key,
+    required this.invoice,
+    required this.onTap,
+    this.selected = false,
+  });
   final Invoice invoice;
   final VoidCallback onTap;
   final bool selected;
@@ -215,17 +260,28 @@ class InvoiceTile extends StatelessWidget {
       selectedTileColor: context.colors.primaryContainer.withValues(alpha: 0.5),
       onTap: onTap,
       leading: const IconBadge(Icons.receipt_long_rounded, color: salesAccent),
-      title: Text(inv.partyName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
-      subtitle: Text('${inv.number} · ${relativeDay(inv.date)}', maxLines: 1, overflow: TextOverflow.ellipsis),
+      title: Text(
+        inv.partyName,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
+      subtitle: Text(
+        '${inv.number} · ${relativeDay(inv.date)}',
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(money(inv.totalAmount),
-              style: context.text.labelLarge?.copyWith(
-                decoration: inv.isCancelled ? TextDecoration.lineThrough : null,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              )),
+          Text(
+            money(inv.totalAmount),
+            style: context.text.labelLarge?.copyWith(
+              decoration: inv.isCancelled ? TextDecoration.lineThrough : null,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
           const SizedBox(height: 2),
           StatusChip(inv.status, label: inv.status == 'sent' ? 'Unpaid' : null),
         ],

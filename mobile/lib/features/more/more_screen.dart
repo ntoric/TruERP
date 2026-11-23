@@ -38,41 +38,73 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
     for (final g in moduleGroups) {
       final mods = g.modules
           .where((m) => m.visibleTo(user))
-          .where((m) =>
-              q.isEmpty ||
-              m.name.toLowerCase().contains(q) ||
-              g.name.toLowerCase().contains(q) ||
-              m.keywords.contains(q))
+          .where(
+            (m) =>
+                q.isEmpty ||
+                m.name.toLowerCase().contains(q) ||
+                g.name.toLowerCase().contains(q) ||
+                m.keywords.contains(q),
+          )
           .toList();
       if (mods.isNotEmpty) groups.add((g, mods));
     }
-    final cols = Breakpoints.columns(context, compactCols: 3, mediumCols: 5, expandedCols: 6);
+    final cols = Breakpoints.columns(
+      context,
+      compactCols: 3,
+      mediumCols: 5,
+      expandedCols: 6,
+    );
 
     return Scaffold(
-      appBar: AppBar(title: const Text('All modules'), actions: const [AccountButton()]),
+      appBar: AppBar(
+        title: const Text('All modules'),
+        actions: const [AccountButton()],
+      ),
       body: CustomScrollView(
         slivers: [
           SliverPadding(
-            padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.lg,
+              Spacing.sm,
+              Spacing.lg,
+              Spacing.sm,
+            ),
             sliver: SliverToBoxAdapter(
-              child: SearchField(hint: 'Search modules', onChanged: (v) => setState(() => _q = v)),
+              child: SearchField(
+                hint: 'Search modules',
+                onChanged: (v) => setState(() => _q = v),
+              ),
             ),
           ),
           if (groups.isEmpty)
             const SliverFillRemaining(
               hasScrollBody: false,
-              child: EmptyState(icon: Icons.search_off_rounded, title: 'No matching modules'),
+              child: EmptyState(
+                icon: Icons.search_off_rounded,
+                title: 'No matching modules',
+              ),
             ),
           for (final (g, mods) in groups) ...[
             SliverPadding(
-              padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.lg, Spacing.lg, Spacing.sm),
+              padding: const EdgeInsets.fromLTRB(
+                Spacing.lg,
+                Spacing.lg,
+                Spacing.lg,
+                Spacing.sm,
+              ),
               sliver: SliverToBoxAdapter(
                 child: Row(
                   children: [
                     Icon(g.icon, size: 18, color: g.accent),
                     const SizedBox(width: Spacing.sm),
-                    Text(g.name.toUpperCase(), style: context.text.labelMedium?.copyWith(
-                      color: context.colors.onSurfaceVariant, fontWeight: FontWeight.w600, letterSpacing: 0.6)),
+                    Text(
+                      g.name.toUpperCase(),
+                      style: context.text.labelMedium?.copyWith(
+                        color: context.colors.onSurfaceVariant,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.6,
+                      ),
+                    ),
                   ],
                 ),
               ),
@@ -84,7 +116,10 @@ class _MoreScreenState extends ConsumerState<MoreScreen> {
                 mainAxisSpacing: Spacing.sm,
                 crossAxisSpacing: Spacing.sm,
                 childAspectRatio: 0.98,
-                children: [for (final m in mods) _ModuleTile(module: m, accent: g.accent)],
+                children: [
+                  for (final m in mods)
+                    _ModuleTile(module: m, accent: g.accent),
+                ],
               ),
             ),
           ],
@@ -112,7 +147,11 @@ class _ModuleTile extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              IconBadge(module.icon, color: soon ? accent.withValues(alpha: 0.55) : accent, size: 42),
+              IconBadge(
+                module.icon,
+                color: soon ? accent.withValues(alpha: 0.55) : accent,
+                size: 42,
+              ),
               const SizedBox(height: Spacing.sm),
               Text(
                 module.name,
@@ -148,7 +187,7 @@ class ComingSoonScreen extends StatelessWidget {
         message: m == null
             ? null
             : 'Scheduled for phase ${m.phase} of the mobile roadmap. '
-                'Meanwhile you can use it from the TruERP web app.',
+                  'Meanwhile you can use it from the TruERP web app.',
       ),
     );
   }

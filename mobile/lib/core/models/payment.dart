@@ -55,24 +55,26 @@ class BankAccount {
   final bool isActive;
   final String notes;
 
-  String get maskedNumber =>
-      accountNumber.length > 4 ? '••${accountNumber.substring(accountNumber.length - 4)}' : accountNumber;
+  String get maskedNumber => accountNumber.length > 4
+      ? '••${accountNumber.substring(accountNumber.length - 4)}'
+      : accountNumber;
 
-  String get label => '${accountName.isNotEmpty ? accountName : bankName}${accountNumber.length > 4 ? ' $maskedNumber' : ''}';
+  String get label =>
+      '${accountName.isNotEmpty ? accountName : bankName}${accountNumber.length > 4 ? ' $maskedNumber' : ''}';
 
   factory BankAccount.fromJson(JsonMap j) => BankAccount(
-        id: asString(j['id']),
-        accountName: asString(j['account_name']),
-        bankName: asString(j['bank_name']),
-        accountNumber: asString(j['account_number']),
-        ifscCode: asString(j['ifsc_code']),
-        accountType: asString(j['account_type'], 'savings'),
-        openingBalance: asDouble(j['opening_balance']),
-        balance: asDouble(j['balance']),
-        isPrimary: asBool(j['is_primary']),
-        isActive: asBool(j['is_active'], true),
-        notes: asString(j['notes']),
-      );
+    id: asString(j['id']),
+    accountName: asString(j['account_name']),
+    bankName: asString(j['bank_name']),
+    accountNumber: asString(j['account_number']),
+    ifscCode: asString(j['ifsc_code']),
+    accountType: asString(j['account_type'], 'savings'),
+    openingBalance: asDouble(j['opening_balance']),
+    balance: asDouble(j['balance']),
+    isPrimary: asBool(j['is_primary']),
+    isActive: asBool(j['is_active'], true),
+    notes: asString(j['notes']),
+  );
 }
 
 /// Payment In (receipt from a customer).

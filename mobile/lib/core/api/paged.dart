@@ -7,7 +7,12 @@ import 'json.dart';
 ///   2. `{ <key>: [...], total, page, per_page }`
 ///   3. `{ data: [...], total, ... }`
 class Paged<T> {
-  const Paged({required this.items, required this.total, required this.page, required this.perPage});
+  const Paged({
+    required this.items,
+    required this.total,
+    required this.page,
+    required this.perPage,
+  });
 
   final List<T> items;
   final int total;
@@ -17,12 +22,29 @@ class Paged<T> {
   bool get hasMore => page * perPage < total;
 
   static const _knownKeys = [
-    'data', 'items', 'invoices', 'parties', 'products', 'payments', 'payment_outs', 'bills',
-    'categories', 'transactions', 'orders', 'results', 'records', 'entries',
+    'data',
+    'items',
+    'invoices',
+    'parties',
+    'products',
+    'payments',
+    'payment_outs',
+    'bills',
+    'categories',
+    'transactions',
+    'orders',
+    'results',
+    'records',
+    'entries',
   ];
 
-  static Paged<T> parse<T>(Object? body, T Function(JsonMap) fromJson,
-      {String? key, int page = 1, int perPage = 25}) {
+  static Paged<T> parse<T>(
+    Object? body,
+    T Function(JsonMap) fromJson, {
+    String? key,
+    int page = 1,
+    int perPage = 25,
+  }) {
     List<JsonMap> raw;
     var total = -1;
     var p = page;
@@ -42,7 +64,10 @@ class Paged<T> {
           }
         }
         // Last resort: the first list-valued field.
-        list ??= map.values.firstWhere((v) => v is List, orElse: () => const []);
+        list ??= map.values.firstWhere(
+          (v) => v is List,
+          orElse: () => const [],
+        );
       }
       raw = asMapList(list);
       total = asInt(map['total'], -1);
@@ -55,6 +80,11 @@ class Paged<T> {
       pp = raw.isEmpty ? perPage : raw.length;
       p = 1;
     }
-    return Paged(items: raw.map(fromJson).toList(), total: total, page: p, perPage: pp == 0 ? perPage : pp);
+    return Paged(
+      items: raw.map(fromJson).toList(),
+      total: total,
+      page: p,
+      perPage: pp == 0 ? perPage : pp,
+    );
   }
 }

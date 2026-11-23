@@ -6,18 +6,38 @@ import 'package:truerp_mobile/features/accounting/ui/accounting_screen.dart';
 void main() {
   test('cash transaction direction follows the backend totals rule', () {
     for (final t in ['add', 'transfer_in']) {
-      expect(CashTransaction.fromJson({'transaction_type': t}).isInflow, isTrue, reason: t);
+      expect(
+        CashTransaction.fromJson({'transaction_type': t}).isInflow,
+        isTrue,
+        reason: t,
+      );
     }
-    for (final t in ['reduce', 'transfer_out', 'expense', 'payroll', 'profit_distribution']) {
-      expect(CashTransaction.fromJson({'transaction_type': t}).isInflow, isFalse, reason: t);
+    for (final t in [
+      'reduce',
+      'transfer_out',
+      'expense',
+      'payroll',
+      'profit_distribution',
+    ]) {
+      expect(
+        CashTransaction.fromJson({'transaction_type': t}).isInflow,
+        isFalse,
+        reason: t,
+      );
     }
   });
 
   test('cash transaction without account is cash in hand', () {
-    final t = CashTransaction.fromJson({'transaction_type': 'add', 'amount': 10});
+    final t = CashTransaction.fromJson({
+      'transaction_type': 'add',
+      'amount': 10,
+    });
     expect(t.accountId, isNull);
     expect(t.where, 'Cash in hand');
-    expect(CashTransaction.fromJson({'transaction_type': 'weird_type'}).typeLabel, 'weird type');
+    expect(
+      CashTransaction.fromJson({'transaction_type': 'weird_type'}).typeLabel,
+      'weird type',
+    );
   });
 
   test('summary sums only active bank accounts', () {
@@ -32,19 +52,47 @@ void main() {
   });
 
   test('routing marks owner equity', () {
-    expect(PaymentRouting.fromJson({'payment_method': 'initial_investment'}).isOwnerEquity, isTrue);
-    expect(PaymentRouting.fromJson({'payment_method': 'upi', 'bank_account_id': 'x'}).bankAccountId, 'x');
+    expect(
+      PaymentRouting.fromJson({
+        'payment_method': 'initial_investment',
+      }).isOwnerEquity,
+      isTrue,
+    );
+    expect(
+      PaymentRouting.fromJson({
+        'payment_method': 'upi',
+        'bank_account_id': 'x',
+      }).bankAccountId,
+      'x',
+    );
   });
 
   test('accounting rows read both account and report field names', () {
-    expect(LedgerAccount.fromJson({'account_id': 'a', 'account_code': '1000', 'account_name': 'Cash'}).name, 'Cash');
-    expect(LedgerAccount.fromJson({'id': 'a', 'code': '1000', 'name': 'Cash'}).code, '1000');
-    final tb = TrialBalance.fromJson({'items': [], 'total_debit': 10, 'total_credit': 10});
+    expect(
+      LedgerAccount.fromJson({
+        'account_id': 'a',
+        'account_code': '1000',
+        'account_name': 'Cash',
+      }).name,
+      'Cash',
+    );
+    expect(
+      LedgerAccount.fromJson({'id': 'a', 'code': '1000', 'name': 'Cash'}).code,
+      '1000',
+    );
+    final tb = TrialBalance.fromJson({
+      'items': [],
+      'total_debit': 10,
+      'total_credit': 10,
+    });
     expect(tb.isBalanced, isTrue);
   });
 
   test('journal line shows code and name', () {
-    final l = JournalLine.fromJson({'account': {'code': '4000', 'name': 'Sales'}, 'credit': 5});
+    final l = JournalLine.fromJson({
+      'account': {'code': '4000', 'name': 'Sales'},
+      'credit': 5,
+    });
     expect(l.accountName, '4000 · Sales');
   });
 
@@ -59,6 +107,10 @@ void main() {
     expect(moduleById('accounting')!.isBuilt, isTrue);
     expect(moduleById('estimates')!.isBuilt, isTrue, reason: 'phase 3');
     expect(moduleById('stock')!.isBuilt, isTrue, reason: 'phase 4');
-    expect(moduleById('pos')!.isBuilt, isFalse, reason: 'phase 8 not built yet');
+    expect(
+      moduleById('pos')!.isBuilt,
+      isFalse,
+      reason: 'phase 8 not built yet',
+    );
   });
 }

@@ -41,32 +41,48 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
   Widget build(BuildContext context) {
     final rev = ref.watch(dataRevisionProvider);
     final store = ref.watch(activeStoreIdProvider);
-    final categories = ref.watch(expenseCategoriesProvider).asData?.value ?? const <ExpenseCategory>[];
+    final categories =
+        ref.watch(expenseCategoriesProvider).asData?.value ??
+        const <ExpenseCategory>[];
     final repo = ref.read(expensesRepositoryProvider);
     final filtered = _q.isNotEmpty || _category != null || _range != null;
 
     final list = PagedListView<Expense>(
       resetKey: (_q, _category, _range, rev, store),
-      fetch: (page) => repo.list(page: page, search: _q, category: _category, from: _range?.start, to: _range?.end),
+      fetch: (page) => repo.list(
+        page: page,
+        search: _q,
+        category: _category,
+        from: _range?.start,
+        to: _range?.end,
+      ),
       header: ListFilters(
         searchHint: 'Search expenses',
         onSearch: (v) => setState(() => _q = v),
         range: _range,
         onRange: (r) => setState(() => _range = r),
         chips: [
-          ChoiceChip(label: const Text('All'), selected: _category == null, onSelected: (_) => setState(() => _category = null)),
+          ChoiceChip(
+            label: const Text('All'),
+            selected: _category == null,
+            onSelected: (_) => setState(() => _category = null),
+          ),
           for (final c in categories.where((c) => c.isActive))
             ChoiceChip(
               label: Text(c.name),
               selected: _category == c.name,
-              onSelected: (_) => setState(() => _category = _category == c.name ? null : c.name),
+              onSelected: (_) => setState(
+                () => _category = _category == c.name ? null : c.name,
+              ),
             ),
         ],
       ),
       empty: EmptyState(
         icon: Icons.receipt_rounded,
         title: filtered ? 'No matching expenses' : 'No expenses yet',
-        message: filtered ? null : 'Track rent, salaries, utilities and other business spending.',
+        message: filtered
+            ? null
+            : 'Track rent, salaries, utilities and other business spending.',
         action: filtered
             ? null
             : FilledButton.icon(
@@ -111,7 +127,13 @@ class _ExpensesScreenState extends ConsumerState<ExpensesScreen> {
       ),
       body: MasterDetail(
         list: list,
-        detail: _selected == null ? null : ExpenseDetailScreen(key: ValueKey(_selected), expenseId: _selected!, embedded: true),
+        detail: _selected == null
+            ? null
+            : ExpenseDetailScreen(
+                key: ValueKey(_selected),
+                expenseId: _selected!,
+                embedded: true,
+              ),
       ),
     );
   }

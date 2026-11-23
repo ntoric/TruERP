@@ -14,11 +14,15 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   await initializeDateFormatting('en_IN');
 
-  runApp(ProviderScope(
-    overrides: [sharedPrefsProvider.overrideWithValue(prefs)],
-    // API errors are shown to the user with a retry button, so don't
-    // silently retry them in the background.
-    retry: (count, error) => error is ApiException ? null : (count < 2 ? const Duration(seconds: 1) : null),
-    child: const TruErpApp(),
-  ));
+  runApp(
+    ProviderScope(
+      overrides: [sharedPrefsProvider.overrideWithValue(prefs)],
+      // API errors are shown to the user with a retry button, so don't
+      // silently retry them in the background.
+      retry: (count, error) => error is ApiException
+          ? null
+          : (count < 2 ? const Duration(seconds: 1) : null),
+      child: const TruErpApp(),
+    ),
+  );
 }

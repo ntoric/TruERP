@@ -111,12 +111,19 @@ class PagedListViewState<T> extends State<PagedListView<T>> {
 
   @override
   Widget build(BuildContext context) {
-    final firstLoad = _items.isEmpty && (_loading || (_error == null && _hasMore));
+    final firstLoad =
+        _items.isEmpty && (_loading || (_error == null && _hasMore));
     Widget body;
     if (firstLoad) {
-      body = const SliverFillRemaining(hasScrollBody: false, child: SkeletonList());
+      body = const SliverFillRemaining(
+        hasScrollBody: false,
+        child: SkeletonList(),
+      );
     } else if (_items.isEmpty && _error != null) {
-      body = SliverFillRemaining(hasScrollBody: false, child: ErrorView(error: _error!, onRetry: refresh));
+      body = SliverFillRemaining(
+        hasScrollBody: false,
+        child: ErrorView(error: _error!, onRetry: refresh),
+      );
     } else if (_items.isEmpty) {
       body = SliverFillRemaining(hasScrollBody: false, child: widget.empty);
     } else {
@@ -153,7 +160,12 @@ class PagedListViewState<T> extends State<PagedListView<T>> {
     if (_loading) {
       return const Padding(
         padding: EdgeInsets.all(Spacing.xl),
-        child: Center(child: SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4))),
+        child: Center(
+          child: SizedBox.square(
+            dimension: 22,
+            child: CircularProgressIndicator(strokeWidth: 2.4),
+          ),
+        ),
       );
     }
     if (_error != null) {
@@ -161,7 +173,11 @@ class PagedListViewState<T> extends State<PagedListView<T>> {
         padding: const EdgeInsets.all(Spacing.lg),
         child: Column(
           children: [
-            Text(errorMessage(_error!), style: context.text.bodySmall, textAlign: TextAlign.center),
+            Text(
+              errorMessage(_error!),
+              style: context.text.bodySmall,
+              textAlign: TextAlign.center,
+            ),
             TextButton(onPressed: _loadNext, child: const Text('Retry')),
           ],
         ),
@@ -170,7 +186,12 @@ class PagedListViewState<T> extends State<PagedListView<T>> {
     if (!_hasMore && _items.length > 8) {
       return Padding(
         padding: const EdgeInsets.all(Spacing.lg),
-        child: Center(child: Text('${_items.length} records', style: context.text.labelSmall)),
+        child: Center(
+          child: Text(
+            '${_items.length} records',
+            style: context.text.labelSmall,
+          ),
+        ),
       );
     }
     return const SizedBox(height: Spacing.sm);
@@ -179,7 +200,12 @@ class PagedListViewState<T> extends State<PagedListView<T>> {
 
 /// Search box that reports changes after the user pauses typing.
 class SearchField extends StatefulWidget {
-  const SearchField({super.key, required this.onChanged, this.hint = 'Search', this.autofocus = false});
+  const SearchField({
+    super.key,
+    required this.onChanged,
+    this.hint = 'Search',
+    this.autofocus = false,
+  });
   final ValueChanged<String> onChanged;
   final String hint;
   final bool autofocus;
@@ -202,7 +228,10 @@ class _SearchFieldState extends State<SearchField> {
   void _changed(String v) {
     setState(() {});
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), () => widget.onChanged(v.trim()));
+    _debounce = Timer(
+      const Duration(milliseconds: 350),
+      () => widget.onChanged(v.trim()),
+    );
   }
 
   @override

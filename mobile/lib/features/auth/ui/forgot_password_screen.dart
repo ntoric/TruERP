@@ -18,7 +18,8 @@ class ForgotPasswordScreen extends ConsumerStatefulWidget {
   const ForgotPasswordScreen({super.key});
 
   @override
-  ConsumerState<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
+  ConsumerState<ForgotPasswordScreen> createState() =>
+      _ForgotPasswordScreenState();
 }
 
 class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
@@ -49,19 +50,31 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
     try {
       switch (_step) {
         case _Step.email:
-          await api.post('/auth/forgot-password', body: {'email': _email.text.trim()});
+          await api.post(
+            '/auth/forgot-password',
+            body: {'email': _email.text.trim()},
+          );
           setState(() => _step = _Step.otp);
         case _Step.otp:
-          await api.post('/auth/verify-reset-otp', body: {'email': _email.text.trim(), 'otp': _otp.text.trim()});
+          await api.post(
+            '/auth/verify-reset-otp',
+            body: {'email': _email.text.trim(), 'otp': _otp.text.trim()},
+          );
           setState(() => _step = _Step.password);
         case _Step.password:
-          await api.post('/auth/reset-password', body: {
-            'email': _email.text.trim(),
-            'otp': _otp.text.trim(),
-            'new_password': _password.text,
-          });
+          await api.post(
+            '/auth/reset-password',
+            body: {
+              'email': _email.text.trim(),
+              'otp': _otp.text.trim(),
+              'new_password': _password.text,
+            },
+          );
           if (!mounted) return;
-          showSnack(context, 'Password updated. Sign in with your new password.');
+          showSnack(
+            context,
+            'Password updated. Sign in with your new password.',
+          );
           context.go('/login');
       }
     } catch (e) {
@@ -74,9 +87,21 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
   @override
   Widget build(BuildContext context) {
     final (title, subtitle, action) = switch (_step) {
-      _Step.email => ('Reset your password', 'We\'ll email you a one-time code.', 'Send code'),
-      _Step.otp => ('Check your email', 'Enter the code sent to ${_email.text.trim()}.', 'Verify code'),
-      _Step.password => ('Choose a new password', 'Use at least 6 characters.', 'Update password'),
+      _Step.email => (
+        'Reset your password',
+        'We\'ll email you a one-time code.',
+        'Send code',
+      ),
+      _Step.otp => (
+        'Check your email',
+        'Enter the code sent to ${_email.text.trim()}.',
+        'Verify code',
+      ),
+      _Step.password => (
+        'Choose a new password',
+        'Use at least 6 characters.',
+        'Update password',
+      ),
     };
 
     return AuthLayout(
@@ -95,7 +120,10 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                 keyboardType: TextInputType.emailAddress,
                 autocorrect: false,
                 onFieldSubmitted: (_) => _next(),
-                decoration: const InputDecoration(labelText: 'Email', prefixIcon: Icon(Icons.mail_outline_rounded)),
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  prefixIcon: Icon(Icons.mail_outline_rounded),
+                ),
                 validator: Validators.email,
               ),
             if (_step == _Step.otp) ...[
@@ -104,15 +132,23 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                 autofocus: true,
                 keyboardType: TextInputType.number,
                 autofillHints: const [AutofillHints.oneTimeCode],
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly, LengthLimitingTextInputFormatter(8)],
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(8),
+                ],
                 onFieldSubmitted: (_) => _next(),
-                decoration: const InputDecoration(labelText: 'Verification code', prefixIcon: Icon(Icons.pin_outlined)),
+                decoration: const InputDecoration(
+                  labelText: 'Verification code',
+                  prefixIcon: Icon(Icons.pin_outlined),
+                ),
                 validator: (v) => Validators.required(v, 'Code'),
               ),
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton(
-                  onPressed: _busy ? null : () => setState(() => _step = _Step.email),
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() => _step = _Step.email),
                   child: const Text('Use a different email'),
                 ),
               ),
@@ -123,7 +159,10 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                 obscureText: true,
                 autofocus: true,
                 autofillHints: const [AutofillHints.newPassword],
-                decoration: const InputDecoration(labelText: 'New password', prefixIcon: Icon(Icons.lock_outline_rounded)),
+                decoration: const InputDecoration(
+                  labelText: 'New password',
+                  prefixIcon: Icon(Icons.lock_outline_rounded),
+                ),
                 validator: Validators.password,
               ),
               const SizedBox(height: Spacing.md),
@@ -131,8 +170,12 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
                 controller: _confirm,
                 obscureText: true,
                 onFieldSubmitted: (_) => _next(),
-                decoration: const InputDecoration(labelText: 'Confirm password', prefixIcon: Icon(Icons.lock_outline_rounded)),
-                validator: (v) => v == _password.text ? null : 'Passwords don\'t match',
+                decoration: const InputDecoration(
+                  labelText: 'Confirm password',
+                  prefixIcon: Icon(Icons.lock_outline_rounded),
+                ),
+                validator: (v) =>
+                    v == _password.text ? null : 'Passwords don\'t match',
               ),
             ],
             const SizedBox(height: Spacing.lg),
@@ -140,7 +183,13 @@ class _ForgotPasswordScreenState extends ConsumerState<ForgotPasswordScreen> {
             FilledButton(
               onPressed: _busy ? null : _next,
               child: _busy
-                  ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                  ? const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
+                    )
                   : Text(action),
             ),
           ],

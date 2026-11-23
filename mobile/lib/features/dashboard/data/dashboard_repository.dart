@@ -46,17 +46,17 @@ class DashboardStats {
   final int overdueInvoices;
 
   factory DashboardStats.fromJson(JsonMap j) => DashboardStats(
-        totalSales: asDouble(j['total_sales']),
-        totalSalesPaid: asDouble(j['total_sales_paid']),
-        totalInvoices: asInt(j['total_invoices']),
-        totalCustomers: asInt(j['total_customers']),
-        totalProducts: asInt(j['total_products']),
-        pendingAmount: asDouble(j['pending_amount']),
-        todaySales: asDouble(j['today_sales']),
-        todayInvoices: asInt(j['today_invoices']),
-        lowStockProducts: asInt(j['low_stock_products']),
-        overdueInvoices: asInt(j['overdue_invoices']),
-      );
+    totalSales: asDouble(j['total_sales']),
+    totalSalesPaid: asDouble(j['total_sales_paid']),
+    totalInvoices: asInt(j['total_invoices']),
+    totalCustomers: asInt(j['total_customers']),
+    totalProducts: asInt(j['total_products']),
+    pendingAmount: asDouble(j['pending_amount']),
+    todaySales: asDouble(j['today_sales']),
+    todayInvoices: asInt(j['today_invoices']),
+    lowStockProducts: asInt(j['low_stock_products']),
+    overdueInvoices: asInt(j['overdue_invoices']),
+  );
 }
 
 class SalesPoint {
@@ -79,44 +79,68 @@ class DashboardRepository {
   final ApiClient _api;
 
   Future<DashboardStats> stats(DashPeriod period) async =>
-      DashboardStats.fromJson(await _api.getMap('/dashboard/stats', query: {'period': period.value}));
+      DashboardStats.fromJson(
+        await _api.getMap('/dashboard/stats', query: {'period': period.value}),
+      );
 
   /// Last 30 days of *paid* sales, oldest first, with missing days filled as 0.
   Future<List<SalesPoint>> dailySales() async {
-    final res = await _api.get('/dashboard/sales-report', query: {'period': 'daily'});
+    final res = await _api.get(
+      '/dashboard/sales-report',
+      query: {'period': 'daily'},
+    );
     final byDay = <String, SalesPoint>{};
     for (final r in (res is List ? asMapList(res) : const <JsonMap>[])) {
       final raw = asString(r['period']);
-      final d = DateTime.tryParse(raw.length >= 10 ? raw.substring(0, 10) : raw);
+      final d = DateTime.tryParse(
+        raw.length >= 10 ? raw.substring(0, 10) : raw,
+      );
       if (d == null) continue;
       byDay[ymd(d)] = SalesPoint(d, asDouble(r['sales']), asInt(r['count']));
     }
     final today = DateTime.now();
     return List.generate(30, (i) {
-      final d = DateTime(today.year, today.month, today.day).subtract(Duration(days: 29 - i));
+      final d = DateTime(
+        today.year,
+        today.month,
+        today.day,
+      ).subtract(Duration(days: 29 - i));
       return byDay[ymd(d)] ?? SalesPoint(d, 0, 0);
     });
   }
 
   Future<List<Invoice>> recentInvoices() async {
     final res = await _api.get('/dashboard/recent-invoices');
-    return (res is List ? asMapList(res) : asMapList(asMap(res)['data'])).map(Invoice.fromJson).toList();
+    return (res is List ? asMapList(res) : asMapList(asMap(res)['data']))
+        .map(Invoice.fromJson)
+        .toList();
   }
 
   Future<List<PaymentIn>> recentPayments() async {
     final res = await _api.get('/dashboard/recent-payments');
-    return (res is List ? asMapList(res) : asMapList(asMap(res)['data'])).map(PaymentIn.fromJson).toList();
+    return (res is List ? asMapList(res) : asMapList(asMap(res)['data']))
+        .map(PaymentIn.fromJson)
+        .toList();
   }
 
   Future<List<TopParty>> topParties() async {
     final res = await _api.get('/dashboard/top-parties');
     return (res is List ? asMapList(res) : const <JsonMap>[])
-        .map((r) => TopParty(asString(r['party_id']), asString(r['name']), asDouble(r['total_sales']), asInt(r['invoice_count'])))
+        .map(
+          (r) => TopParty(
+            asString(r['party_id']),
+            asString(r['name']),
+            asDouble(r['total_sales']),
+            asInt(r['invoice_count']),
+          ),
+        )
         .toList();
   }
 }
 
-final dashboardRepositoryProvider = Provider((ref) => DashboardRepository(ref.watch(apiClientProvider)));
+final dashboardRepositoryProvider = Provider(
+  (ref) => DashboardRepository(ref.watch(apiClientProvider)),
+);
 
 class DashPeriodController extends Notifier<DashPeriod> {
   @override
@@ -124,13 +148,19 @@ class DashPeriodController extends Notifier<DashPeriod> {
   void set(DashPeriod p) => state = p;
 }
 
-final dashPeriodProvider = NotifierProvider<DashPeriodController, DashPeriod>(DashPeriodController.new);
+final dashPeriodProvider = NotifierProvider<DashPeriodController, DashPeriod>(
+  DashPeriodController.new,
+);
 
 /// All dashboard data refetch on store switch and after any save.
-final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((ref) {
+final dashboardStatsProvider = FutureProvider.autoDispose<DashboardStats>((
+  ref,
+) {
   ref.watch(activeStoreIdProvider);
   ref.watch(dataRevisionProvider);
-  return ref.watch(dashboardRepositoryProvider).stats(ref.watch(dashPeriodProvider));
+  return ref
+      .watch(dashboardRepositoryProvider)
+      .stats(ref.watch(dashPeriodProvider));
 });
 
 final dailySalesProvider = FutureProvider.autoDispose<List<SalesPoint>>((ref) {
@@ -145,7 +175,9 @@ final recentInvoicesProvider = FutureProvider.autoDispose<List<Invoice>>((ref) {
   return ref.watch(dashboardRepositoryProvider).recentInvoices();
 });
 
-final recentPaymentsProvider = FutureProvider.autoDispose<List<PaymentIn>>((ref) {
+final recentPaymentsProvider = FutureProvider.autoDispose<List<PaymentIn>>((
+  ref,
+) {
   ref.watch(activeStoreIdProvider);
   ref.watch(dataRevisionProvider);
   return ref.watch(dashboardRepositoryProvider).recentPayments();

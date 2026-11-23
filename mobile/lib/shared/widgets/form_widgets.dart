@@ -7,7 +7,12 @@ import '../../core/utils/formatters.dart';
 
 /// Titled group of form fields.
 class FormSection extends StatelessWidget {
-  const FormSection({super.key, required this.title, required this.children, this.trailing});
+  const FormSection({
+    super.key,
+    required this.title,
+    required this.children,
+    this.trailing,
+  });
   final String title;
   final List<Widget> children;
   final Widget? trailing;
@@ -55,20 +60,22 @@ class FieldRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return LayoutBuilder(builder: (context, c) {
-      if (c.maxWidth < breakpoint) {
-        return Column(children: FormSection._spaced(children));
-      }
-      return Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          for (var i = 0; i < children.length; i++) ...[
-            if (i > 0) const SizedBox(width: Spacing.md),
-            Expanded(child: children[i]),
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < breakpoint) {
+          return Column(children: FormSection._spaced(children));
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            for (var i = 0; i < children.length; i++) ...[
+              if (i > 0) const SizedBox(width: Spacing.md),
+              Expanded(child: children[i]),
+            ],
           ],
-        ],
-      );
-    });
+        );
+      },
+    );
   }
 }
 
@@ -99,7 +106,8 @@ class NumberField extends StatelessWidget {
   final bool autofocus;
   final TextInputAction? textInputAction;
 
-  static double parse(TextEditingController c) => double.tryParse(c.text.trim()) ?? 0;
+  static double parse(TextEditingController c) =>
+      double.tryParse(c.text.trim()) ?? 0;
 
   /// Text for a number without trailing ".0".
   static String text(num v) => v == 0 ? '' : qty(v).replaceAll(',', '');
@@ -161,11 +169,18 @@ class DateField extends StatelessWidget {
           labelText: label,
           prefixIcon: const Icon(Icons.event_rounded),
           suffixIcon: clearable && value != null
-              ? IconButton(icon: const Icon(Icons.close_rounded), onPressed: () => onChanged(null))
+              ? IconButton(
+                  icon: const Icon(Icons.close_rounded),
+                  onPressed: () => onChanged(null),
+                )
               : null,
         ),
-        child: Text(value == null ? 'Not set' : dateText(value),
-            style: value == null ? TextStyle(color: context.colors.onSurfaceVariant) : null),
+        child: Text(
+          value == null ? 'Not set' : dateText(value),
+          style: value == null
+              ? TextStyle(color: context.colors.onSurfaceVariant)
+              : null,
+        ),
       ),
     );
   }
@@ -209,8 +224,14 @@ class PickerField extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(value!, style: context.text.bodyLarge?.copyWith(fontWeight: FontWeight.w500)),
-                  if (subtitle != null) Text(subtitle!, style: context.text.bodySmall),
+                  Text(
+                    value!,
+                    style: context.text.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                  if (subtitle != null)
+                    Text(subtitle!, style: context.text.bodySmall),
                 ],
               ),
       ),
@@ -220,7 +241,13 @@ class PickerField extends StatelessWidget {
 
 /// Sticky bottom bar with the primary save action (and optional summary).
 class SaveBar extends StatelessWidget {
-  const SaveBar({super.key, required this.label, required this.onPressed, this.busy = false, this.leading});
+  const SaveBar({
+    super.key,
+    required this.label,
+    required this.onPressed,
+    this.busy = false,
+    this.leading,
+  });
   final String label;
   final VoidCallback? onPressed;
   final bool busy;
@@ -235,16 +262,29 @@ class SaveBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.md, Spacing.lg, Spacing.md),
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            Spacing.md,
+            Spacing.lg,
+            Spacing.md,
+          ),
           child: Row(
             children: [
-              if (leading != null) ...[Expanded(child: leading!), const SizedBox(width: Spacing.md)],
+              if (leading != null) ...[
+                Expanded(child: leading!),
+                const SizedBox(width: Spacing.md),
+              ],
               Expanded(
                 child: FilledButton(
                   onPressed: busy ? null : onPressed,
                   child: busy
                       ? const SizedBox.square(
-                          dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                          dimension: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            color: Colors.white,
+                          ),
+                        )
                       : Text(label),
                 ),
               ),
@@ -257,14 +297,23 @@ class SaveBar extends StatelessWidget {
 }
 
 /// Asks for a required reason (cancellations). Returns null if dismissed.
-Future<String?> askReason(BuildContext context, {required String title, String confirmLabel = 'Confirm'}) {
+Future<String?> askReason(
+  BuildContext context, {
+  required String title,
+  String confirmLabel = 'Confirm',
+}) {
   final ctrl = TextEditingController();
   final formKey = GlobalKey<FormState>();
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
     builder: (ctx) => Padding(
-      padding: EdgeInsets.fromLTRB(Spacing.xl, 0, Spacing.xl, MediaQuery.viewInsetsOf(ctx).bottom + Spacing.xl),
+      padding: EdgeInsets.fromLTRB(
+        Spacing.xl,
+        0,
+        Spacing.xl,
+        MediaQuery.viewInsetsOf(ctx).bottom + Spacing.xl,
+      ),
       child: Form(
         key: formKey,
         child: Column(
@@ -279,14 +328,22 @@ Future<String?> askReason(BuildContext context, {required String title, String c
               maxLines: 3,
               minLines: 2,
               textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Reason', hintText: 'Why is this being cancelled?'),
-              validator: (v) => (v ?? '').trim().isEmpty ? 'A reason is required' : null,
+              decoration: const InputDecoration(
+                labelText: 'Reason',
+                hintText: 'Why is this being cancelled?',
+              ),
+              validator: (v) =>
+                  (v ?? '').trim().isEmpty ? 'A reason is required' : null,
             ),
             const SizedBox(height: Spacing.lg),
             FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: StatusColors.danger),
+              style: FilledButton.styleFrom(
+                backgroundColor: StatusColors.danger,
+              ),
               onPressed: () {
-                if (formKey.currentState!.validate()) Navigator.pop(ctx, ctrl.text.trim());
+                if (formKey.currentState!.validate()) {
+                  Navigator.pop(ctx, ctrl.text.trim());
+                }
               },
               child: Text(confirmLabel),
             ),

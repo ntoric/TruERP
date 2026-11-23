@@ -13,7 +13,10 @@ void main() {
 
   group('Paged.parse', () {
     test('bare array is a single complete page', () {
-      final p = Paged.parse([{'name': 'a'}, {'name': 'b'}], _name);
+      final p = Paged.parse([
+        {'name': 'a'},
+        {'name': 'b'},
+      ], _name);
       expect(p.items, ['a', 'b']);
       expect(p.total, 2);
       expect(p.hasMore, isFalse);
@@ -21,7 +24,9 @@ void main() {
 
     test('keyed envelope with paging', () {
       final p = Paged.parse({
-        'invoices': [{'name': 'x'}],
+        'invoices': [
+          {'name': 'x'},
+        ],
         'total': 60,
         'page': 2,
         'per_page': 25,
@@ -32,17 +37,51 @@ void main() {
     });
 
     test('data envelope and unknown keys', () {
-      expect(Paged.parse({'data': [{'name': 'd'}], 'total': 1}, _name).items, ['d']);
-      expect(Paged.parse({'whatever': [{'name': 'w'}], 'total': 1}, _name).items, ['w']);
+      expect(
+        Paged.parse({
+          'data': [
+            {'name': 'd'},
+          ],
+          'total': 1,
+        }, _name).items,
+        ['d'],
+      );
+      expect(
+        Paged.parse({
+          'whatever': [
+            {'name': 'w'},
+          ],
+          'total': 1,
+        }, _name).items,
+        ['w'],
+      );
     });
 
     test('explicit key wins over data', () {
-      final p = Paged.parse({'data': [{'name': 'no'}], 'payment_outs': [{'name': 'yes'}]}, _name, key: 'payment_outs');
+      final p = Paged.parse(
+        {
+          'data': [
+            {'name': 'no'},
+          ],
+          'payment_outs': [
+            {'name': 'yes'},
+          ],
+        },
+        _name,
+        key: 'payment_outs',
+      );
       expect(p.items, ['yes']);
     });
 
     test('last page has no more', () {
-      final p = Paged.parse({'parties': [{'name': 'z'}], 'total': 51, 'page': 3, 'per_page': 25}, _name);
+      final p = Paged.parse({
+        'parties': [
+          {'name': 'z'},
+        ],
+        'total': 51,
+        'page': 3,
+        'per_page': 25,
+      }, _name);
       expect(p.hasMore, isFalse);
     });
 
@@ -68,11 +107,41 @@ void main() {
     });
 
     test('pick walks nested maps', () {
-      expect(pick({'party': {'name': 'Acme'}}, 'party.name'), 'Acme');
+      expect(
+        pick({
+          'party': {'name': 'Acme'},
+        }, 'party.name'),
+        'Acme',
+      );
       expect(pick({'party': null}, 'party.name'), isNull);
     });
 
     test('ymd pads', () => expect(ymd(DateTime(2026, 3, 5)), '2026-03-05'));
+  });
+
+  group('apiDate sends the chosen calendar day like the web', () {
+    test('UTC midnight of the local date, whatever the time of day', () {
+      expect(apiDate(DateTime(2026, 11, 1)), '2026-11-01T00:00:00.000Z');
+      expect(
+        apiDate(DateTime(2026, 11, 1, 23, 59)),
+        '2026-11-01T00:00:00.000Z',
+      );
+      expect(apiDate(DateTime(2026, 11, 1, 0, 1)), '2026-11-01T00:00:00.000Z');
+    });
+
+    test('date-only values read back as the same calendar day', () {
+      expect(asDate('2026-11-05T00:00:00Z'), DateTime(2026, 11, 5));
+      expect(asDate('2026-11-05'), DateTime(2026, 11, 5));
+      expect(asDate(apiDate(DateTime(2026, 2, 28))), DateTime(2026, 2, 28));
+      // Real timestamps still convert to local time.
+      expect(asDate('2026-11-05T10:30:00Z')!.isUtc, isFalse);
+    });
+
+    test('never shifts to the previous day (the IST bug)', () {
+      // Local midnight converted to UTC would be 2026-10-31T18:30Z in India.
+      expect(apiDate(DateTime(2026, 11, 1)).startsWith('2026-11-01'), isTrue);
+      expect(apiDateOrNull(null), isNull);
+    });
   });
 
   group('formatters', () {
@@ -95,17 +164,32 @@ void main() {
       expect(qty(0.125), '0.125');
     });
 
-    test('titleCase', () => expect(titleCase('bank_transfer'), 'Bank Transfer'));
+    test(
+      'titleCase',
+      () => expect(titleCase('bank_transfer'), 'Bank Transfer'),
+    );
   });
 
   group('server url', () {
     test('normalises common inputs', () {
-      expect(AppConfig.normalizeServerUrl('backend.truerp.co.in'), 'https://backend.truerp.co.in/api/v1');
-      expect(AppConfig.normalizeServerUrl('192.168.1.20:8088'), 'http://192.168.1.20:8088/api/v1');
+      expect(
+        AppConfig.normalizeServerUrl('backend.truerp.co.in'),
+        'https://backend.truerp.co.in/api/v1',
+      );
+      expect(
+        AppConfig.normalizeServerUrl('192.168.1.20:8088'),
+        'http://192.168.1.20:8088/api/v1',
+      );
       expect(AppConfig.normalizeServerUrl(''), AppConfig.productionServerUrl);
       expect(AppConfig.defaultServerUrl, 'https://backend.truerp.co.in/api/v1');
-      expect(AppConfig.normalizeServerUrl('https://erp.example.com/'), 'https://erp.example.com/api/v1');
-      expect(AppConfig.normalizeServerUrl('http://10.0.2.2:8088/api/v1'), 'http://10.0.2.2:8088/api/v1');
+      expect(
+        AppConfig.normalizeServerUrl('https://erp.example.com/'),
+        'https://erp.example.com/api/v1',
+      );
+      expect(
+        AppConfig.normalizeServerUrl('http://10.0.2.2:8088/api/v1'),
+        'http://10.0.2.2:8088/api/v1',
+      );
     });
   });
 

@@ -11,7 +11,11 @@ import 'expenses_screen.dart';
 class ExpenseCategoriesScreen extends ConsumerWidget {
   const ExpenseCategoriesScreen({super.key});
 
-  Future<void> _edit(BuildContext context, WidgetRef ref, [ExpenseCategory? c]) async {
+  Future<void> _edit(
+    BuildContext context,
+    WidgetRef ref, [
+    ExpenseCategory? c,
+  ]) async {
     final ctrl = TextEditingController(text: c?.name);
     var active = c?.isActive ?? true;
     final ok = await showDialog<bool>(
@@ -19,24 +23,33 @@ class ExpenseCategoriesScreen extends ConsumerWidget {
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setLocal) => AlertDialog(
           title: Text(c == null ? 'New category' : 'Edit category'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              textCapitalization: TextCapitalization.words,
-              decoration: const InputDecoration(labelText: 'Name'),
-            ),
-            if (c != null)
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('Active'),
-                value: active,
-                onChanged: (v) => setLocal(() => active = v),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: ctrl,
+                autofocus: true,
+                textCapitalization: TextCapitalization.words,
+                decoration: const InputDecoration(labelText: 'Name'),
               ),
-          ]),
+              if (c != null)
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('Active'),
+                  value: active,
+                  onChanged: (v) => setLocal(() => active = v),
+                ),
+            ],
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-            FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Save')),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Save'),
+            ),
           ],
         ),
       ),
@@ -57,12 +70,18 @@ class ExpenseCategoriesScreen extends ConsumerWidget {
     }
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref, ExpenseCategory c) async {
-    final ok = await confirmSheet(context,
-        title: 'Delete "${c.name}"?',
-        message: 'Existing expenses keep their category name.',
-        confirmLabel: 'Delete',
-        destructive: true);
+  Future<void> _delete(
+    BuildContext context,
+    WidgetRef ref,
+    ExpenseCategory c,
+  ) async {
+    final ok = await confirmSheet(
+      context,
+      title: 'Delete "${c.name}"?',
+      message: 'Existing expenses keep their category name.',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
     if (!ok) return;
     try {
       await ref.read(expensesRepositoryProvider).deleteCategory(c.id);
@@ -85,9 +104,16 @@ class ExpenseCategoriesScreen extends ConsumerWidget {
       ),
       body: async.when(
         loading: () => const SkeletonList(),
-        error: (e, _) => ErrorView(error: e, onRetry: () => ref.invalidate(expenseCategoriesProvider)),
+        error: (e, _) => ErrorView(
+          error: e,
+          onRetry: () => ref.invalidate(expenseCategoriesProvider),
+        ),
         data: (list) => list.isEmpty
-            ? const EmptyState(icon: Icons.category_outlined, title: 'No categories yet', message: 'Add categories like Rent, Salary or Electricity.')
+            ? const EmptyState(
+                icon: Icons.category_outlined,
+                title: 'No categories yet',
+                message: 'Add categories like Rent, Salary or Electricity.',
+              )
             : ContentWidth(
                 child: ListView.separated(
                   padding: const EdgeInsets.only(top: Spacing.sm, bottom: 96),
@@ -96,7 +122,12 @@ class ExpenseCategoriesScreen extends ConsumerWidget {
                   itemBuilder: (ctx, i) {
                     final c = list[i];
                     return ListTile(
-                      leading: IconBadge(Icons.label_rounded, color: c.isActive ? expensesAccent : StatusColors.neutral),
+                      leading: IconBadge(
+                        Icons.label_rounded,
+                        color: c.isActive
+                            ? expensesAccent
+                            : StatusColors.neutral,
+                      ),
                       title: Text(c.name),
                       subtitle: c.isActive ? null : const Text('Inactive'),
                       onTap: () => _edit(context, ref, c),

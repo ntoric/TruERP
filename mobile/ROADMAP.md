@@ -273,12 +273,19 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - **Analytics use rolling windows**, not calendar periods, so their chips read "Last 12 months" and so on.
 - Filing returns and generating e-invoices / e-way bills stay on the web.
 
-### P7 — HR & Payroll ☐
-- Staff: list, detail (balance, attendance, advances, deductions, extras), create/edit
-- Attendance: a daily marking sheet (present/absent/half-day/leave) with bulk mark, monthly stats, a calendar per staff member
-- Payroll: list, calculate, create, record payments, cancel
-- Advances, deductions, extras: list and create; recover, redeem
-- Attendance reminder settings
+### P7 — HR & Payroll ☑
+- ☑ **Staff**: list with search, inactive toggle, and how much salary is owed to each person (and in total); staff page with call/WhatsApp, balance breakdown (unpaid payroll, earned-but-unpaid days, pending extras, advances and deductions to recover), monthly attendance calendar, and payroll / advances / extras / deductions history; create/edit with salary type (monthly, daily, hourly), bank and ID details.
+- ☑ **Attendance**: daily roll call for all active staff (present, absent, half day, paid leave, week off), "mark everyone else present", day stepper, saved in one request; reminder settings (on/off, time, snooze).
+- ☑ **Payroll**: list with paid-this-month and still-due totals; run payroll for a period (server's own calculation shown: days, salary, extras, deductions, advance recovery) or "pay all dues", with extra deduction and bonus, pay full / part / later, payout mode and account; detail with attendance, salary breakdown, payments, pay the remainder, cancel.
+- ☑ **Advances, extras, deductions** from the staff page: give an advance, record an extra (owed to staff, or an extra payout to recover), add a one-off or instalment deduction, recover an advance directly, pay out an extra now.
+- ☑ Tests: 81 unit tests, 192 screen renders (96 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **The server computes net salary**; mobile previews it from `/payroll/calculate` and adds only the extra deduction and bonus typed in, floored at zero like the server.
+- **Staff updates rewrite every field**, and `joining_date` is a non-null time, so the form always sends a date (today by default).
+- **Cancelling a payroll** refunds its payments and re-opens recovered advances and settled extras; the confirmation says so.
+
+**Fixed across the whole app in this phase: dates sent a day early.** Mobile was sending local midnight converted to UTC, which in India is 18:30 the previous day, so an invoice dated 1 Nov landed on 31 Oct in reports and filters. All 28 date fields now go through `apiDate`, which sends UTC midnight of the chosen day exactly like the web, and date-only values read back as the same calendar day. Tests run in UTC, India and US time zones.
 
 ### P8 — POS ☐
 - Open or close a session (opening cash, cash in/out movements, session summary)

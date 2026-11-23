@@ -1,18 +1,23 @@
 import '../api/json.dart';
 
 class StoreInfo {
-  const StoreInfo({required this.id, required this.name, this.code = '', this.city = ''});
+  const StoreInfo({
+    required this.id,
+    required this.name,
+    this.code = '',
+    this.city = '',
+  });
   final String id;
   final String name;
   final String code;
   final String city;
 
   factory StoreInfo.fromJson(JsonMap j) => StoreInfo(
-        id: asString(j['id']),
-        name: asString(j['name'], 'Store'),
-        code: asString(j['code']),
-        city: asString(j['city']),
-      );
+    id: asString(j['id']),
+    name: asString(j['name'], 'Store'),
+    code: asString(j['code']),
+    city: asString(j['city']),
+  );
 }
 
 class AppUser {
@@ -43,36 +48,47 @@ class AppUser {
   bool get canManageUsers => isSuperAdmin || role == 'admin';
 
   String get roleLabel => switch (role) {
-        'owner' || 'super_admin' => 'Super Admin',
-        'admin' => 'Admin',
-        'staff' => 'Staff',
-        'accountant' => 'Accountant',
-        'manager' => 'Manager',
-        _ => role,
-      };
+    'owner' || 'super_admin' => 'Super Admin',
+    'admin' => 'Admin',
+    'staff' => 'Staff',
+    'accountant' => 'Accountant',
+    'manager' => 'Manager',
+    _ => role,
+  };
 
   String get initials {
-    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts.first.substring(0, 1).toUpperCase();
     return (parts.first[0] + parts.last[0]).toUpperCase();
   }
 
   factory AppUser.fromJson(JsonMap j) => AppUser(
-        id: asString(j['id']),
-        name: asString(j['name']),
-        email: asString(j['email']),
-        phone: asString(j['phone']),
-        role: asString(j['role'], 'owner'),
-        storeId: asStringOrNull(j['store_id']) ?? asStringOrNull(pick(j, 'active_store.id')),
-        mustChangePassword: asBool(j['must_change_password']),
-        twoFactorEnabled: asBool(j['two_factor_enabled']),
-        businessName: asString(pick(j, 'business.name')),
-      );
+    id: asString(j['id']),
+    name: asString(j['name']),
+    email: asString(j['email']),
+    phone: asString(j['phone']),
+    role: asString(j['role'], 'owner'),
+    storeId:
+        asStringOrNull(j['store_id']) ??
+        asStringOrNull(pick(j, 'active_store.id')),
+    mustChangePassword: asBool(j['must_change_password']),
+    twoFactorEnabled: asBool(j['two_factor_enabled']),
+    businessName: asString(pick(j, 'business.name')),
+  );
 }
 
 class Session {
-  const Session({required this.token, required this.user, this.stores = const [], this.activeStoreId});
+  const Session({
+    required this.token,
+    required this.user,
+    this.stores = const [],
+    this.activeStoreId,
+  });
 
   final String token;
   final AppUser user;
@@ -89,12 +105,16 @@ class Session {
     return stores.isEmpty ? null : stores.first;
   }
 
-  Session copyWith({AppUser? user, List<StoreInfo>? stores, String? activeStoreId}) => Session(
-        token: token,
-        user: user ?? this.user,
-        stores: stores ?? this.stores,
-        activeStoreId: activeStoreId ?? this.activeStoreId,
-      );
+  Session copyWith({
+    AppUser? user,
+    List<StoreInfo>? stores,
+    String? activeStoreId,
+  }) => Session(
+    token: token,
+    user: user ?? this.user,
+    stores: stores ?? this.stores,
+    activeStoreId: activeStoreId ?? this.activeStoreId,
+  );
 }
 
 /// Thrown by login when the account has 2FA and no code was supplied.

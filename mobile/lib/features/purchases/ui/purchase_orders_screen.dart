@@ -51,11 +51,27 @@ class _ListState extends ConsumerState<PurchaseOrdersScreen> {
           resetKey: (_status, rev, store),
           fetch: (page) => repo.orders(page: page, status: _status),
           header: Padding(
-            padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
-            child: Wrap(spacing: Spacing.sm, children: [
-              for (final (v, l) in const [(null, 'All'), ('draft', 'Draft'), ('submitted', 'Submitted')])
-                ChoiceChip(label: Text(l), selected: _status == v, onSelected: (_) => setState(() => _status = v)),
-            ]),
+            padding: const EdgeInsets.fromLTRB(
+              Spacing.lg,
+              Spacing.sm,
+              Spacing.lg,
+              Spacing.sm,
+            ),
+            child: Wrap(
+              spacing: Spacing.sm,
+              children: [
+                for (final (v, l) in const [
+                  (null, 'All'),
+                  ('draft', 'Draft'),
+                  ('submitted', 'Submitted'),
+                ])
+                  ChoiceChip(
+                    label: Text(l),
+                    selected: _status == v,
+                    onSelected: (_) => setState(() => _status = v),
+                  ),
+              ],
+            ),
           ),
           empty: const EmptyState(
             icon: Icons.shopping_cart_checkout_rounded,
@@ -83,9 +99,17 @@ class PurchaseOrderDetailScreen extends ConsumerWidget {
   const PurchaseOrderDetailScreen({super.key, required this.orderId});
   final String orderId;
 
-  Future<void> _submit(BuildContext context, WidgetRef ref, PurchaseOrder o) async {
-    final ok = await confirmSheet(context,
-        title: 'Submit ${o.number}?', message: 'Submitted orders can no longer be deleted.', confirmLabel: 'Submit order');
+  Future<void> _submit(
+    BuildContext context,
+    WidgetRef ref,
+    PurchaseOrder o,
+  ) async {
+    final ok = await confirmSheet(
+      context,
+      title: 'Submit ${o.number}?',
+      message: 'Submitted orders can no longer be deleted.',
+      confirmLabel: 'Submit order',
+    );
     if (!ok) return;
     try {
       await ref.read(purchasesRepositoryProvider).submitOrder(o.id);
@@ -96,8 +120,17 @@ class PurchaseOrderDetailScreen extends ConsumerWidget {
     }
   }
 
-  Future<void> _delete(BuildContext context, WidgetRef ref, PurchaseOrder o) async {
-    final ok = await confirmSheet(context, title: 'Delete ${o.number}?', confirmLabel: 'Delete', destructive: true);
+  Future<void> _delete(
+    BuildContext context,
+    WidgetRef ref,
+    PurchaseOrder o,
+  ) async {
+    final ok = await confirmSheet(
+      context,
+      title: 'Delete ${o.number}?',
+      confirmLabel: 'Delete',
+      destructive: true,
+    );
     if (!ok) return;
     try {
       await ref.read(purchasesRepositoryProvider).deleteOrder(o.id);
@@ -117,56 +150,102 @@ class PurchaseOrderDetailScreen extends ConsumerWidget {
         title: Text(o?.number ?? 'Purchase order'),
         actions: [
           if (o != null && o.isDraft)
-            IconButton(tooltip: 'Delete', icon: const Icon(Icons.delete_outline), onPressed: () => _delete(context, ref, o)),
+            IconButton(
+              tooltip: 'Delete',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () => _delete(context, ref, o),
+            ),
         ],
       ),
-      bottomNavigationBar: o == null || !o.isDraft ? null : SaveBar(label: 'Submit order', onPressed: () => _submit(context, ref, o)),
+      bottomNavigationBar: o == null || !o.isDraft
+          ? null
+          : SaveBar(
+              label: 'Submit order',
+              onPressed: () => _submit(context, ref, o),
+            ),
       body: async.when(
         loading: () => const SkeletonList(count: 5),
-        error: (e, _) => ErrorView(error: e, onRetry: () => ref.invalidate(purchaseOrderProvider(orderId))),
+        error: (e, _) => ErrorView(
+          error: e,
+          onRetry: () => ref.invalidate(purchaseOrderProvider(orderId)),
+        ),
         data: (o) => ListView(
-          padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.xxl),
+          padding: const EdgeInsets.fromLTRB(
+            Spacing.lg,
+            Spacing.sm,
+            Spacing.lg,
+            Spacing.xxl,
+          ),
           children: [
             ContentWidth(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(Spacing.lg),
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                      Row(children: [
-                        Expanded(child: Text(o.party?.name ?? 'Vendor', style: context.text.titleMedium)),
-                        StatusChip(o.status),
-                      ]),
-                      const SizedBox(height: Spacing.sm),
-                      Text(money(o.totalAmount), style: context.text.headlineSmall?.copyWith(fontWeight: FontWeight.w700)),
-                      const SizedBox(height: Spacing.md),
-                      KeyValueRow('Order date', dateText(o.date)),
-                      if (o.expectedDate != null) KeyValueRow('Expected', dateText(o.expectedDate)),
-                    ]),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(Spacing.lg),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  o.party?.name ?? 'Vendor',
+                                  style: context.text.titleMedium,
+                                ),
+                              ),
+                              StatusChip(o.status),
+                            ],
+                          ),
+                          const SizedBox(height: Spacing.sm),
+                          Text(
+                            money(o.totalAmount),
+                            style: context.text.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: Spacing.md),
+                          KeyValueRow('Order date', dateText(o.date)),
+                          if (o.expectedDate != null)
+                            KeyValueRow('Expected', dateText(o.expectedDate)),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-                const SizedBox(height: Spacing.lg),
-                DocItemsCard(lines: o.items, showTax: true, showReceived: !o.isDraft),
-                const SizedBox(height: Spacing.lg),
-                SectionCard(
-                  title: 'Summary',
-                  child: Column(children: [
-                    KeyValueRow('Subtotal', money(o.subTotal)),
-                    KeyValueRow('GST', money(o.taxTotal)),
-                    KeyValueRow('Total', money(o.totalAmount), bold: true),
-                  ]),
-                ),
-                if (o.notes.isNotEmpty || o.terms.isNotEmpty) ...[
+                  const SizedBox(height: Spacing.lg),
+                  DocItemsCard(
+                    lines: o.items,
+                    showTax: true,
+                    showReceived: !o.isDraft,
+                  ),
                   const SizedBox(height: Spacing.lg),
                   SectionCard(
-                    title: 'Notes & terms',
-                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if (o.notes.isNotEmpty) Text(o.notes),
-                      if (o.terms.isNotEmpty) Text(o.terms, style: context.text.bodySmall),
-                    ]),
+                    title: 'Summary',
+                    child: Column(
+                      children: [
+                        KeyValueRow('Subtotal', money(o.subTotal)),
+                        KeyValueRow('GST', money(o.taxTotal)),
+                        KeyValueRow('Total', money(o.totalAmount), bold: true),
+                      ],
+                    ),
                   ),
+                  if (o.notes.isNotEmpty || o.terms.isNotEmpty) ...[
+                    const SizedBox(height: Spacing.lg),
+                    SectionCard(
+                      title: 'Notes & terms',
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (o.notes.isNotEmpty) Text(o.notes),
+                          if (o.terms.isNotEmpty)
+                            Text(o.terms, style: context.text.bodySmall),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
-              ]),
+              ),
             ),
           ],
         ),
@@ -213,20 +292,39 @@ class _FormState extends ConsumerState<PurchaseOrderFormScreen> {
       if (existing != null) {
         existing.quantity += 1;
       } else {
-        _lines.add(LineItem(productId: p.id, description: p.name, unitPrice: p.purchasePrice, unit: p.unit, taxRate: p.taxRate));
+        _lines.add(
+          LineItem(
+            productId: p.id,
+            description: p.name,
+            unitPrice: p.purchasePrice,
+            unit: p.unit,
+            taxRate: p.taxRate,
+          ),
+        );
       }
     });
   }
 
   Future<void> _addCustom() async {
     final line = LineItem(description: '');
-    final ok = await showLineEditor(context, line, isNew: true, showTax: true, showDiscount: false, priceLabel: 'Rate');
+    final ok = await showLineEditor(
+      context,
+      line,
+      isNew: true,
+      showTax: true,
+      showDiscount: false,
+      priceLabel: 'Rate',
+    );
     if (ok == true) setState(() => _lines.add(line));
   }
 
   Future<void> _save() async {
     if (_vendor == null || _lines.isEmpty) {
-      setState(() => _error = _vendor == null ? 'Choose a vendor.' : 'Add at least one item.');
+      setState(
+        () => _error = _vendor == null
+            ? 'Choose a vendor.'
+            : 'Add at least one item.',
+      );
       return;
     }
     setState(() {
@@ -234,7 +332,9 @@ class _FormState extends ConsumerState<PurchaseOrderFormScreen> {
       _error = null;
     });
     try {
-      final o = await ref.read(purchasesRepositoryProvider).createOrder(
+      final o = await ref
+          .read(purchasesRepositoryProvider)
+          .createOrder(
             partyId: _vendor!.id,
             date: _date,
             expected: _expected,
@@ -261,70 +361,97 @@ class _FormState extends ConsumerState<PurchaseOrderFormScreen> {
         label: 'Save order',
         busy: _busy,
         onPressed: _save,
-        leading: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('Total', style: context.text.labelSmall),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Text(money(_sub + _tax), style: context.text.titleLarge?.copyWith(fontWeight: FontWeight.w700)),
-          ),
-        ]),
+        leading: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Total', style: context.text.labelSmall),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                money(_sub + _tax),
+                style: context.text.titleLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
       body: ListView(
         padding: const EdgeInsets.all(Spacing.lg),
         children: [
           ContentWidth(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              if (_error != null) ErrorBanner(_error!),
-              FormSection(title: 'Vendor', children: [
-                PickerField(
-                  label: 'Order from',
-                  icon: Icons.storefront_rounded,
-                  value: _vendor?.name,
-                  onTap: () async {
-                    final p = await pickParty(context, type: 'vendor');
-                    if (p != null) setState(() => _vendor = p);
-                  },
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (_error != null) ErrorBanner(_error!),
+                FormSection(
+                  title: 'Vendor',
+                  children: [
+                    PickerField(
+                      label: 'Order from',
+                      icon: Icons.storefront_rounded,
+                      value: _vendor?.name,
+                      onTap: () async {
+                        final p = await pickParty(context, type: 'vendor');
+                        if (p != null) setState(() => _vendor = p);
+                      },
+                    ),
+                    FieldRow(
+                      children: [
+                        DateField(
+                          label: 'Order date',
+                          value: _date,
+                          onChanged: (d) => setState(() => _date = d ?? _date),
+                        ),
+                        DateField(
+                          label: 'Expected by',
+                          value: _expected,
+                          clearable: true,
+                          firstDate: _date,
+                          onChanged: (d) => setState(() => _expected = d),
+                        ),
+                      ],
+                    ),
+                  ],
                 ),
-                FieldRow(children: [
-                  DateField(label: 'Order date', value: _date, onChanged: (d) => setState(() => _date = d ?? _date)),
-                  DateField(
-                    label: 'Expected by',
-                    value: _expected,
-                    clearable: true,
-                    firstDate: _date,
-                    onChanged: (d) => setState(() => _expected = d),
-                  ),
-                ]),
-              ]),
-              FormSection(title: 'Items', children: [
-                LineItemsEditor(
-                  lines: _lines,
-                  showTax: true,
-                  showDiscount: false,
-                  priceLabel: 'Rate',
-                  onChanged: () => setState(() {}),
-                  onAddProduct: _addProduct,
-                  onAddCustom: _addCustom,
+                FormSection(
+                  title: 'Items',
+                  children: [
+                    LineItemsEditor(
+                      lines: _lines,
+                      showTax: true,
+                      showDiscount: false,
+                      priceLabel: 'Rate',
+                      onChanged: () => setState(() {}),
+                      onAddProduct: _addProduct,
+                      onAddCustom: _addCustom,
+                    ),
+                    KeyValueRow('Subtotal', money(_sub)),
+                    KeyValueRow('GST', money(_tax)),
+                    KeyValueRow('Total', money(_sub + _tax), bold: true),
+                  ],
                 ),
-                KeyValueRow('Subtotal', money(_sub)),
-                KeyValueRow('GST', money(_tax)),
-                KeyValueRow('Total', money(_sub + _tax), bold: true),
-              ]),
-              FormSection(title: 'Notes & terms', children: [
-                TextFormField(
-                  controller: _notes,
-                  maxLines: 2,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(labelText: 'Notes'),
+                FormSection(
+                  title: 'Notes & terms',
+                  children: [
+                    TextFormField(
+                      controller: _notes,
+                      maxLines: 2,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: const InputDecoration(labelText: 'Notes'),
+                    ),
+                    TextFormField(
+                      controller: _terms,
+                      maxLines: 2,
+                      textCapitalization: TextCapitalization.sentences,
+                      decoration: const InputDecoration(labelText: 'Terms'),
+                    ),
+                  ],
                 ),
-                TextFormField(
-                  controller: _terms,
-                  maxLines: 2,
-                  textCapitalization: TextCapitalization.sentences,
-                  decoration: const InputDecoration(labelText: 'Terms'),
-                ),
-              ]),
-            ]),
+              ],
+            ),
           ),
         ],
       ),

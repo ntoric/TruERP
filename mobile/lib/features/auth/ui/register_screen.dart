@@ -42,7 +42,9 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
       _error = null;
     });
     try {
-      await ref.read(sessionProvider.notifier).register(
+      await ref
+          .read(sessionProvider.notifier)
+          .register(
             name: _name.text,
             email: _email.text,
             password: _password.text,
@@ -65,7 +67,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
     return AuthLayout(
       showBack: true,
       title: 'Create your account',
-      subtitle: 'Start billing in minutes. You can add your business details later.',
+      subtitle:
+          'Start billing in minutes. You can add your business details later.',
       child: Form(
         key: _form,
         child: Column(
@@ -76,7 +79,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               textCapitalization: TextCapitalization.words,
               textInputAction: TextInputAction.next,
               autofillHints: const [AutofillHints.name],
-              decoration: const InputDecoration(labelText: 'Your name', prefixIcon: Icon(Icons.person_outline_rounded)),
+              decoration: const InputDecoration(
+                labelText: 'Your name',
+                prefixIcon: Icon(Icons.person_outline_rounded),
+              ),
               validator: (v) => Validators.required(v, 'Name'),
             ),
             const SizedBox(height: Spacing.md),
@@ -99,7 +105,10 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
               keyboardType: TextInputType.phone,
               textInputAction: TextInputAction.next,
               autofillHints: const [AutofillHints.telephoneNumber],
-              decoration: const InputDecoration(labelText: 'Phone (optional)', prefixIcon: Icon(Icons.phone_outlined)),
+              decoration: const InputDecoration(
+                labelText: 'Phone (optional)',
+                prefixIcon: Icon(Icons.phone_outlined),
+              ),
               validator: Validators.optionalPhone,
             ),
             const SizedBox(height: Spacing.md),
@@ -113,7 +122,11 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                 helperText: 'At least 6 characters',
                 prefixIcon: const Icon(Icons.lock_outline_rounded),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                  icon: Icon(
+                    _obscure
+                        ? Icons.visibility_outlined
+                        : Icons.visibility_off_outlined,
+                  ),
                   onPressed: () => setState(() => _obscure = !_obscure),
                 ),
               ),
@@ -124,7 +137,13 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
             FilledButton(
               onPressed: _busy ? null : _submit,
               child: _busy
-                  ? const SizedBox.square(dimension: 22, child: CircularProgressIndicator(strokeWidth: 2.4, color: Colors.white))
+                  ? const SizedBox.square(
+                      dimension: 22,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.4,
+                        color: Colors.white,
+                      ),
+                    )
                   : const Text('Create account'),
             ),
           ],

@@ -9,7 +9,11 @@ import 'paged_list.dart';
 
 /// Row of headline figures (e.g. Total · Paid · Unpaid) at the top of a list.
 class SummaryStrip extends StatelessWidget {
-  const SummaryStrip({super.key, required this.cells, this.countCells = const {}});
+  const SummaryStrip({
+    super.key,
+    required this.cells,
+    this.countCells = const {},
+  });
 
   /// (label, amount or null while loading, colour or null for default).
   final List<(String, double?, Color?)> cells;
@@ -21,26 +25,44 @@ class SummaryStrip extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: Spacing.lg, vertical: Spacing.md),
-        child: Row(children: [
-          for (final (i, (label, value, color)) in cells.indexed)
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(label, style: context.text.labelSmall, maxLines: 1, overflow: TextOverflow.ellipsis),
-                  const SizedBox(height: 2),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(value == null ? '—' : (countCells.contains(i) ? number(value) : moneyShort(value)),
+        padding: const EdgeInsets.symmetric(
+          horizontal: Spacing.lg,
+          vertical: Spacing.md,
+        ),
+        child: Row(
+          children: [
+            for (final (i, (label, value, color)) in cells.indexed)
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: context.text.labelSmall,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        value == null
+                            ? '—'
+                            : (countCells.contains(i)
+                                  ? number(value)
+                                  : moneyShort(value)),
                         style: context.text.titleSmall?.copyWith(
-                            color: color ?? context.colors.onSurface, fontWeight: FontWeight.w700)),
-                  ),
-                ],
+                          color: color ?? context.colors.onSurface,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-        ]),
+          ],
+        ),
       ),
     );
   }
@@ -48,7 +70,12 @@ class SummaryStrip extends StatelessWidget {
 
 /// Read-only list of saved document lines.
 class DocItemsCard extends StatelessWidget {
-  const DocItemsCard({super.key, required this.lines, this.showTax = false, this.showReceived = false});
+  const DocItemsCard({
+    super.key,
+    required this.lines,
+    this.showTax = false,
+    this.showReceived = false,
+  });
   final List<DocLine> lines;
   final bool showTax;
   final bool showReceived;
@@ -58,20 +85,30 @@ class DocItemsCard extends StatelessWidget {
     return SectionCard(
       title: 'Items (${lines.length})',
       padding: const EdgeInsets.fromLTRB(0, Spacing.xs, 0, Spacing.sm),
-      child: Column(children: [
-        for (final it in lines)
-          ListTile(
-            dense: true,
-            title: Text(it.description, style: const TextStyle(fontWeight: FontWeight.w500)),
-            subtitle: Text([
-              '${qty(it.quantity)}${it.unit.isEmpty ? '' : ' ${it.unit}'} × ${money(it.unitPrice)}',
-              if (it.discount > 0) '${qty(it.discount)}% off',
-              if (showTax && it.taxRate > 0) 'GST ${qty(it.taxRate)}%',
-              if (showReceived) 'received ${qty(it.receivedQty)}',
-            ].join(' · ')),
-            trailing: Text(money(it.total > 0 ? it.total : it.quantity * it.unitPrice), style: context.text.labelLarge),
-          ),
-      ]),
+      child: Column(
+        children: [
+          for (final it in lines)
+            ListTile(
+              dense: true,
+              title: Text(
+                it.description,
+                style: const TextStyle(fontWeight: FontWeight.w500),
+              ),
+              subtitle: Text(
+                [
+                  '${qty(it.quantity)}${it.unit.isEmpty ? '' : ' ${it.unit}'} × ${money(it.unitPrice)}',
+                  if (it.discount > 0) '${qty(it.discount)}% off',
+                  if (showTax && it.taxRate > 0) 'GST ${qty(it.taxRate)}%',
+                  if (showReceived) 'received ${qty(it.receivedQty)}',
+                ].join(' · '),
+              ),
+              trailing: Text(
+                money(it.total > 0 ? it.total : it.quantity * it.unitPrice),
+                style: context.text.labelLarge,
+              ),
+            ),
+        ],
+      ),
     );
   }
 }
@@ -111,30 +148,44 @@ class ListFilters extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+      padding: const EdgeInsets.fromLTRB(
+        Spacing.lg,
+        Spacing.sm,
+        Spacing.lg,
+        Spacing.sm,
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (summary != null) ...[summary!, const SizedBox(height: Spacing.md)],
-          Row(children: [
-            Expanded(child: SearchField(hint: searchHint, onChanged: onSearch)),
-            if (onRange != null) ...[
-              const SizedBox(width: Spacing.sm),
-              IconButton.outlined(
-                tooltip: 'Date range',
-                isSelected: range != null,
-                onPressed: () => _pick(context),
-                icon: const Icon(Icons.date_range_rounded),
+          if (summary != null) ...[
+            summary!,
+            const SizedBox(height: Spacing.md),
+          ],
+          Row(
+            children: [
+              Expanded(
+                child: SearchField(hint: searchHint, onChanged: onSearch),
               ),
+              if (onRange != null) ...[
+                const SizedBox(width: Spacing.sm),
+                IconButton.outlined(
+                  tooltip: 'Date range',
+                  isSelected: range != null,
+                  onPressed: () => _pick(context),
+                  icon: const Icon(Icons.date_range_rounded),
+                ),
+              ],
             ],
-          ]),
+          ),
           if (range != null && onRange != null)
             Padding(
               padding: const EdgeInsets.only(top: Spacing.sm),
               child: Align(
                 alignment: Alignment.centerLeft,
                 child: InputChip(
-                  label: Text('${dateShort(range!.start)} – ${dateShort(range!.end)}'),
+                  label: Text(
+                    '${dateShort(range!.start)} – ${dateShort(range!.end)}',
+                  ),
                   onDeleted: () => onRange!(null),
                   onPressed: () => _pick(context),
                 ),
@@ -144,9 +195,14 @@ class ListFilters extends StatelessWidget {
             const SizedBox(height: Spacing.sm),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
-              child: Row(children: [
-                for (final c in chips) ...[c, const SizedBox(width: Spacing.sm)],
-              ]),
+              child: Row(
+                children: [
+                  for (final c in chips) ...[
+                    c,
+                    const SizedBox(width: Spacing.sm),
+                  ],
+                ],
+              ),
             ),
           ],
         ],
@@ -191,19 +247,29 @@ class MoneyTile extends StatelessWidget {
       selectedTileColor: context.colors.primaryContainer.withValues(alpha: 0.5),
       onTap: onTap,
       leading: IconBadge(icon, color: struck ? StatusColors.neutral : accent),
-      title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.w500)),
+      title: Text(
+        title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontWeight: FontWeight.w500),
+      ),
       subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          Text(money(amount),
-              style: context.text.labelLarge?.copyWith(
-                color: struck ? null : amountColor,
-                decoration: struck ? TextDecoration.lineThrough : null,
-                fontFeatures: const [FontFeature.tabularFigures()],
-              )),
-          if (status != null) ...[const SizedBox(height: 2), StatusChip(status!, label: statusLabel)],
+          Text(
+            money(amount),
+            style: context.text.labelLarge?.copyWith(
+              color: struck ? null : amountColor,
+              decoration: struck ? TextDecoration.lineThrough : null,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          if (status != null) ...[
+            const SizedBox(height: 2),
+            StatusChip(status!, label: statusLabel),
+          ],
         ],
       ),
     );
@@ -220,13 +286,28 @@ class ChipsHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-          if (note != null) ...[Text(note!, style: context.text.bodySmall), const SizedBox(height: Spacing.sm)],
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(children: [for (final c in chips) ...[c, const SizedBox(width: Spacing.sm)]]),
+    padding: const EdgeInsets.fromLTRB(
+      Spacing.lg,
+      Spacing.sm,
+      Spacing.lg,
+      Spacing.sm,
+    ),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (note != null) ...[
+          Text(note!, style: context.text.bodySmall),
+          const SizedBox(height: Spacing.sm),
+        ],
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final c in chips) ...[c, const SizedBox(width: Spacing.sm)],
+            ],
           ),
-        ]),
-      );
+        ),
+      ],
+    ),
+  );
 }

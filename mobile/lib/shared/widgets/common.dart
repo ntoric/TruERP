@@ -34,25 +34,41 @@ class InitialsAvatar extends StatelessWidget {
   final double size;
 
   static const _palette = [
-    Color(0xFF7C3AED), Color(0xFF2563EB), Color(0xFF0891B2), Color(0xFF16A34A),
-    Color(0xFFEA580C), Color(0xFFDB2777), Color(0xFFCA8A04), Color(0xFF0F766E),
+    Color(0xFF7C3AED),
+    Color(0xFF2563EB),
+    Color(0xFF0891B2),
+    Color(0xFF16A34A),
+    Color(0xFFEA580C),
+    Color(0xFFDB2777),
+    Color(0xFFCA8A04),
+    Color(0xFF0F766E),
   ];
 
   @override
   Widget build(BuildContext context) {
-    final parts = name.trim().split(RegExp(r'\s+')).where((p) => p.isNotEmpty).toList();
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
     final initials = parts.isEmpty
         ? '?'
         : parts.length == 1
-            ? parts.first[0].toUpperCase()
-            : (parts.first[0] + parts.last[0]).toUpperCase();
+        ? parts.first[0].toUpperCase()
+        : (parts.first[0] + parts.last[0]).toUpperCase();
     final c = color ?? _palette[name.hashCode.abs() % _palette.length];
     final dark = Theme.of(context).brightness == Brightness.dark;
     return CircleAvatar(
       radius: size / 2,
       backgroundColor: c.withValues(alpha: dark ? 0.25 : 0.14),
-      child: Text(initials,
-          style: TextStyle(color: c, fontWeight: FontWeight.w600, fontSize: size * 0.36)),
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: c,
+          fontWeight: FontWeight.w600,
+          fontSize: size * 0.36,
+        ),
+      ),
     );
   }
 }
@@ -81,7 +97,12 @@ class SectionCard extends StatelessWidget {
         children: [
           if (title != null)
             Padding(
-              padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.md, Spacing.sm, 0),
+              padding: const EdgeInsets.fromLTRB(
+                Spacing.lg,
+                Spacing.md,
+                Spacing.sm,
+                0,
+              ),
               child: Row(
                 children: [
                   Expanded(child: Text(title!, style: context.text.titleSmall)),
@@ -131,26 +152,43 @@ class StatTile extends StatelessWidget {
                 children: [
                   IconBadge(icon, color: accent, size: 32),
                   const Spacer(),
-                  if (onTap != null) Icon(Icons.chevron_right_rounded, size: 18, color: context.colors.onSurfaceVariant),
+                  if (onTap != null)
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 18,
+                      color: context.colors.onSurfaceVariant,
+                    ),
                 ],
               ),
               const SizedBox(height: Spacing.md),
               FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
-                child: Text(value,
-                    style: context.text.titleLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                      fontFeatures: const [FontFeature.tabularFigures()],
-                    )),
+                child: Text(
+                  value,
+                  style: context.text.titleLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
               ),
               const SizedBox(height: 2),
-              Text(label, style: context.text.bodySmall, maxLines: 1, overflow: TextOverflow.ellipsis),
+              Text(
+                label,
+                style: context.text.bodySmall,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
               if (caption != null)
-                Text(caption!,
-                    style: context.text.labelSmall?.copyWith(color: accent, fontWeight: FontWeight.w600),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis),
+                Text(
+                  caption!,
+                  style: context.text.labelSmall?.copyWith(
+                    color: accent,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
             ],
           ),
         ),
@@ -226,7 +264,13 @@ class StatusChip extends StatelessWidget {
 
 /// Label/value row for detail screens.
 class KeyValueRow extends StatelessWidget {
-  const KeyValueRow(this.label, this.value, {super.key, this.bold = false, this.valueColor});
+  const KeyValueRow(
+    this.label,
+    this.value, {
+    super.key,
+    this.bold = false,
+    this.valueColor,
+  });
   final String label;
   final String value;
   final bool bold;
@@ -240,13 +284,25 @@ class KeyValueRow extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(child: Text(label, style: bold ? style : context.text.bodyMedium?.copyWith(color: context.colors.onSurfaceVariant))),
+          Expanded(
+            child: Text(
+              label,
+              style: bold
+                  ? style
+                  : context.text.bodyMedium?.copyWith(
+                      color: context.colors.onSurfaceVariant,
+                    ),
+            ),
+          ),
           const SizedBox(width: Spacing.md),
           Flexible(
             child: Text(
               value,
               textAlign: TextAlign.right,
-              style: style?.copyWith(color: valueColor, fontFeatures: const [FontFeature.tabularFigures()]),
+              style: style?.copyWith(
+                color: valueColor,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
           ),
         ],
@@ -256,7 +312,13 @@ class KeyValueRow extends StatelessWidget {
 }
 
 class EmptyState extends StatelessWidget {
-  const EmptyState({super.key, required this.icon, required this.title, this.message, this.action});
+  const EmptyState({
+    super.key,
+    required this.icon,
+    required this.title,
+    this.message,
+    this.action,
+  });
   final IconData icon;
   final String title;
   final String? message;
@@ -272,16 +334,36 @@ class EmptyState extends StatelessWidget {
           children: [
             Container(
               padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(color: context.colors.primaryContainer, shape: BoxShape.circle),
-              child: Icon(icon, size: 34, color: context.colors.onPrimaryContainer),
+              decoration: BoxDecoration(
+                color: context.colors.primaryContainer,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                icon,
+                size: 34,
+                color: context.colors.onPrimaryContainer,
+              ),
             ),
             const SizedBox(height: Spacing.lg),
-            Text(title, style: context.text.titleMedium, textAlign: TextAlign.center),
+            Text(
+              title,
+              style: context.text.titleMedium,
+              textAlign: TextAlign.center,
+            ),
             if (message != null) ...[
               const SizedBox(height: Spacing.sm),
-              Text(message!, style: context.text.bodyMedium?.copyWith(color: context.colors.onSurfaceVariant), textAlign: TextAlign.center),
+              Text(
+                message!,
+                style: context.text.bodyMedium?.copyWith(
+                  color: context.colors.onSurfaceVariant,
+                ),
+                textAlign: TextAlign.center,
+              ),
             ],
-            if (action != null) ...[const SizedBox(height: Spacing.lg), action!],
+            if (action != null) ...[
+              const SizedBox(height: Spacing.lg),
+              action!,
+            ],
           ],
         ),
       ),
@@ -303,7 +385,11 @@ class ErrorView extends StatelessWidget {
       message: errorMessage(error),
       action: onRetry == null
           ? null
-          : OutlinedButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh_rounded), label: const Text('Try again')),
+          : OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('Try again'),
+            ),
     );
   }
 }
@@ -319,8 +405,14 @@ class SkeletonList extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.colors.surfaceContainerHigh;
-    Widget bar(double w, double h) =>
-        Container(width: w, height: h, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(6)));
+    Widget bar(double w, double h) => Container(
+      width: w,
+      height: h,
+      decoration: BoxDecoration(
+        color: c,
+        borderRadius: BorderRadius.circular(6),
+      ),
+    );
     return ClipRect(
       child: OverflowBox(
         alignment: Alignment.topCenter,
@@ -335,12 +427,23 @@ class SkeletonList extends StatelessWidget {
                   padding: EdgeInsets.only(top: i == 0 ? 0 : Spacing.lg),
                   child: Row(
                     children: [
-                      Container(width: 40, height: 40, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(12))),
+                      Container(
+                        width: 40,
+                        height: 40,
+                        decoration: BoxDecoration(
+                          color: c,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
                       const SizedBox(width: Spacing.md),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [bar(160, 12), const SizedBox(height: 8), bar(100, 10)],
+                          children: [
+                            bar(160, 12),
+                            const SizedBox(height: 8),
+                            bar(100, 10),
+                          ],
                         ),
                       ),
                       bar(56, 12),
@@ -359,7 +462,12 @@ class SkeletonList extends StatelessWidget {
 /// tiles never overflow on narrow phones or with large text. Cells in a row
 /// share the tallest cell's height.
 class ResponsiveGrid extends StatelessWidget {
-  const ResponsiveGrid({super.key, required this.children, required this.columns, this.spacing = Spacing.md});
+  const ResponsiveGrid({
+    super.key,
+    required this.children,
+    required this.columns,
+    this.spacing = Spacing.md,
+  });
   final List<Widget> children;
   final int columns;
   final double spacing;
@@ -368,23 +476,33 @@ class ResponsiveGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final rows = <Widget>[];
     for (var i = 0; i < children.length; i += columns) {
-      final cells = children.sublist(i, (i + columns).clamp(0, children.length));
-      rows.add(IntrinsicHeight(
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            for (var j = 0; j < columns; j++) ...[
-              if (j > 0) SizedBox(width: spacing),
-              Expanded(child: j < cells.length ? cells[j] : const SizedBox.shrink()),
+      final cells = children.sublist(
+        i,
+        (i + columns).clamp(0, children.length),
+      );
+      rows.add(
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (var j = 0; j < columns; j++) ...[
+                if (j > 0) SizedBox(width: spacing),
+                Expanded(
+                  child: j < cells.length ? cells[j] : const SizedBox.shrink(),
+                ),
+              ],
             ],
-          ],
+          ),
         ),
-      ));
+      );
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        for (var i = 0; i < rows.length; i++) ...[if (i > 0) SizedBox(height: spacing), rows[i]],
+        for (var i = 0; i < rows.length; i++) ...[
+          if (i > 0) SizedBox(height: spacing),
+          rows[i],
+        ],
       ],
     );
   }
@@ -393,10 +511,12 @@ class ResponsiveGrid extends StatelessWidget {
 void showSnack(BuildContext context, String message, {bool error = false}) {
   final messenger = ScaffoldMessenger.maybeOf(context);
   messenger?.hideCurrentSnackBar();
-  messenger?.showSnackBar(SnackBar(
-    content: Text(message),
-    backgroundColor: error ? StatusColors.danger : null,
-  ));
+  messenger?.showSnackBar(
+    SnackBar(
+      content: Text(message),
+      backgroundColor: error ? StatusColors.danger : null,
+    ),
+  );
 }
 
 /// Bottom-sheet confirmation; returns true when confirmed.
@@ -411,7 +531,12 @@ Future<bool> confirmSheet(
     context: context,
     builder: (ctx) => SafeArea(
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(Spacing.xl, 0, Spacing.xl, Spacing.xl),
+        padding: const EdgeInsets.fromLTRB(
+          Spacing.xl,
+          0,
+          Spacing.xl,
+          Spacing.xl,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -419,16 +544,26 @@ Future<bool> confirmSheet(
             Text(title, style: ctx.text.titleMedium),
             if (message != null) ...[
               const SizedBox(height: Spacing.sm),
-              Text(message, style: ctx.text.bodyMedium?.copyWith(color: ctx.colors.onSurfaceVariant)),
+              Text(
+                message,
+                style: ctx.text.bodyMedium?.copyWith(
+                  color: ctx.colors.onSurfaceVariant,
+                ),
+              ),
             ],
             const SizedBox(height: Spacing.xl),
             FilledButton(
-              style: destructive ? FilledButton.styleFrom(backgroundColor: StatusColors.danger) : null,
+              style: destructive
+                  ? FilledButton.styleFrom(backgroundColor: StatusColors.danger)
+                  : null,
               onPressed: () => Navigator.pop(ctx, true),
               child: Text(confirmLabel),
             ),
             const SizedBox(height: Spacing.sm),
-            OutlinedButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+            OutlinedButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
           ],
         ),
       ),
@@ -445,9 +580,12 @@ class ContentWidth extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Align(
-        alignment: Alignment.topCenter,
-        child: ConstrainedBox(constraints: BoxConstraints(maxWidth: maxWidth), child: child),
-      );
+    alignment: Alignment.topCenter,
+    child: ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth),
+      child: child,
+    ),
+  );
 }
 
 /// Inline red banner for form-level errors.
@@ -467,9 +605,18 @@ class ErrorBanner extends StatelessWidget {
       ),
       child: Row(
         children: [
-          const Icon(Icons.error_outline_rounded, color: StatusColors.danger, size: 20),
+          const Icon(
+            Icons.error_outline_rounded,
+            color: StatusColors.danger,
+            size: 20,
+          ),
           const SizedBox(width: Spacing.sm),
-          Expanded(child: Text(message, style: const TextStyle(color: StatusColors.danger))),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(color: StatusColors.danger),
+            ),
+          ),
         ],
       ),
     );
