@@ -7,7 +7,18 @@ import '../../features/auth/ui/forgot_password_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/auth/ui/register_screen.dart';
 import '../../features/dashboard/ui/home_screen.dart';
+import '../../features/invoices/ui/invoice_detail_screen.dart';
+import '../../features/invoices/ui/invoice_form_screen.dart';
+import '../../features/invoices/ui/invoices_screen.dart';
 import '../../features/more/more_screen.dart';
+import '../../features/parties/ui/parties_screen.dart';
+import '../../features/parties/ui/party_detail_screen.dart';
+import '../../features/parties/ui/party_form_screen.dart';
+import '../../features/payments/ui/payment_in_form_screen.dart';
+import '../../features/payments/ui/payments_in_screen.dart';
+import '../../features/products/ui/product_detail_screen.dart';
+import '../../features/products/ui/product_form_screen.dart';
+import '../../features/products/ui/products_screen.dart';
 import '../../features/shell/responsive_shell.dart';
 import '../../features/shell/splash_screen.dart';
 import '../auth/session_controller.dart';
@@ -55,17 +66,40 @@ final routerProvider = Provider<GoRouter>((ref) {
         branches: [
           StatefulShellBranch(routes: [GoRoute(path: '/home', builder: (_, __) => const HomeScreen())]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/tab/sales', builder: (_, __) => const ComingSoonScreen(moduleId: 'invoices')),
+            GoRoute(path: '/tab/sales', builder: (_, __) => const InvoicesScreen(isTab: true)),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(path: '/tab/purchases', builder: (_, __) => const ComingSoonScreen(moduleId: 'purchase-bills')),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/tab/parties', builder: (_, __) => const ComingSoonScreen(moduleId: 'parties')),
+            GoRoute(path: '/tab/parties', builder: (_, __) => const PartiesScreen(isTab: true)),
           ]),
           StatefulShellBranch(routes: [GoRoute(path: '/more', builder: (_, __) => const MoreScreen())]),
         ],
       ),
+      // Parties
+      _page('/parties', (s) => PartiesScreen(
+            initialType: s.uri.queryParameters['type'],
+            initialBalance: s.uri.queryParameters['balance'],
+          )),
+      _page('/parties/new', (s) => PartyFormScreen(initialType: s.uri.queryParameters['type'])),
+      _page('/parties/:id', (s) => PartyDetailScreen(partyId: s.pathParameters['id']!)),
+      _page('/parties/:id/edit', (s) => PartyFormScreen(partyId: s.pathParameters['id'])),
+      // Products
+      _page('/products', (_) => const ProductsScreen()),
+      _page('/products/new', (_) => const ProductFormScreen()),
+      _page('/products/:id', (s) => ProductDetailScreen(productId: s.pathParameters['id']!)),
+      _page('/products/:id/edit', (s) => ProductFormScreen(productId: s.pathParameters['id'])),
+      // Invoices
+      _page('/invoices', (_) => const InvoicesScreen()),
+      _page('/invoices/new', (s) => InvoiceFormScreen(partyId: s.uri.queryParameters['party'])),
+      _page('/invoices/:id', (s) => InvoiceDetailScreen(invoiceId: s.pathParameters['id']!)),
+      // Payment in
+      _page('/payments-in', (_) => const PaymentsInScreen()),
+      _page('/payments-in/new', (s) => PaymentInFormScreen(
+            partyId: s.uri.queryParameters['party'],
+            invoiceId: s.uri.queryParameters['invoice'],
+          )),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,
@@ -74,3 +108,10 @@ final routerProvider = Provider<GoRouter>((ref) {
     ],
   );
 });
+
+/// Full-screen page above the tab shell (hides the bottom bar).
+GoRoute _page(String path, Widget Function(GoRouterState) build) => GoRoute(
+      path: path,
+      parentNavigatorKey: _rootKey,
+      builder: (_, state) => build(state),
+    );

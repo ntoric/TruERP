@@ -309,6 +309,9 @@ class ErrorView extends StatelessWidget {
 }
 
 /// Grey placeholder rows shown while a list loads.
+///
+/// Not a scrolling list: it must report an intrinsic height (it sits inside
+/// SliverFillRemaining) and it clips instead of overflowing in short boxes.
 class SkeletonList extends StatelessWidget {
   const SkeletonList({super.key, this.count = 8});
   final int count;
@@ -318,24 +321,71 @@ class SkeletonList extends StatelessWidget {
     final c = context.colors.surfaceContainerHigh;
     Widget bar(double w, double h) =>
         Container(width: w, height: h, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(6)));
-    return ListView.separated(
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.all(Spacing.lg),
-      itemCount: count,
-      separatorBuilder: (_, __) => const SizedBox(height: Spacing.lg),
-      itemBuilder: (_, __) => Row(
-        children: [
-          Container(width: 40, height: 40, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(12))),
-          const SizedBox(width: Spacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [bar(160, 12), const SizedBox(height: 8), bar(100, 10)],
-            ),
+    return ClipRect(
+      child: OverflowBox(
+        alignment: Alignment.topCenter,
+        maxHeight: double.infinity,
+        child: Padding(
+          padding: const EdgeInsets.all(Spacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < count; i++)
+                Padding(
+                  padding: EdgeInsets.only(top: i == 0 ? 0 : Spacing.lg),
+                  child: Row(
+                    children: [
+                      Container(width: 40, height: 40, decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(12))),
+                      const SizedBox(width: Spacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [bar(160, 12), const SizedBox(height: 8), bar(100, 10)],
+                        ),
+                      ),
+                      bar(56, 12),
+                    ],
+                  ),
+                ),
+            ],
           ),
-          bar(64, 12),
-        ],
+        ),
       ),
+    );
+  }
+}
+
+/// Grid whose cells take their natural height (no fixed aspect ratio), so
+/// tiles never overflow on narrow phones or with large text. Cells in a row
+/// share the tallest cell's height.
+class ResponsiveGrid extends StatelessWidget {
+  const ResponsiveGrid({super.key, required this.children, required this.columns, this.spacing = Spacing.md});
+  final List<Widget> children;
+  final int columns;
+  final double spacing;
+
+  @override
+  Widget build(BuildContext context) {
+    final rows = <Widget>[];
+    for (var i = 0; i < children.length; i += columns) {
+      final cells = children.sublist(i, (i + columns).clamp(0, children.length));
+      rows.add(IntrinsicHeight(
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (var j = 0; j < columns; j++) ...[
+              if (j > 0) SizedBox(width: spacing),
+              Expanded(child: j < cells.length ? cells[j] : const SizedBox.shrink()),
+            ],
+          ],
+        ),
+      ));
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < rows.length; i++) ...[if (i > 0) SizedBox(height: spacing), rows[i]],
+      ],
     );
   }
 }

@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'tokens.dart';
 
 abstract final class AppTheme {
+  /// Tests turn this off so no font is fetched over the network.
+  static bool useGoogleFonts = true;
+
   static ThemeData light() => _build(Brightness.light);
   static ThemeData dark() => _build(Brightness.dark);
 
@@ -34,7 +37,8 @@ abstract final class AppTheme {
     );
 
     final base = ThemeData(useMaterial3: true, colorScheme: scheme, brightness: b);
-    final textTheme = GoogleFonts.poppinsTextTheme(base.textTheme).apply(bodyColor: text, displayColor: text);
+    final textTheme = (useGoogleFonts ? GoogleFonts.poppinsTextTheme(base.textTheme) : base.textTheme)
+        .apply(bodyColor: text, displayColor: text);
 
     final inputBorder = OutlineInputBorder(
       borderRadius: BorderRadius.circular(Radii.control),

@@ -46,7 +46,7 @@ class ModuleGroup {
 
 /// Phase that is fully built. Modules above it show a "coming soon" page.
 /// Bumped as each roadmap phase lands.
-const int builtPhase = 0;
+const int builtPhase = 1;
 
 const moduleGroups = <ModuleGroup>[
   ModuleGroup('Parties', Color(0xFF7C3AED), Icons.groups_rounded, [
