@@ -80,11 +80,17 @@ class InvoiceDetailScreen extends ConsumerWidget {
                 if (v == 'wa') _whatsapp(context, ref, inv);
                 if (v == 'cancel') _cancel(context, ref, inv);
                 if (v == 'party' && inv.party != null) context.push('/parties/${inv.party!.id}');
+                if (v == 'return') context.push('/sales-returns/new?invoice=${inv.id}');
+                if (v == 'credit') context.push('/credit-notes/new?invoice=${inv.id}');
               },
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'wa', child: ListTile(leading: Icon(Icons.chat_outlined), title: Text('Send on WhatsApp'))),
                 if (inv.party != null)
                   const PopupMenuItem(value: 'party', child: ListTile(leading: Icon(Icons.person_outline), title: Text('Open customer'))),
+                if (!inv.isCancelled && inv.items.isNotEmpty) ...[
+                  const PopupMenuItem(value: 'return', child: ListTile(leading: Icon(Icons.assignment_return_outlined), title: Text('Return items'))),
+                  const PopupMenuItem(value: 'credit', child: ListTile(leading: Icon(Icons.note_add_outlined), title: Text('Credit note'))),
+                ],
                 if (!inv.isCancelled)
                   const PopupMenuItem(
                     value: 'cancel',

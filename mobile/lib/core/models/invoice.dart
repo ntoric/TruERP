@@ -3,6 +3,7 @@ import 'party.dart';
 
 class InvoiceItem {
   const InvoiceItem({
+    this.id = '',
     this.productId,
     required this.description,
     this.quantity = 1,
@@ -14,6 +15,8 @@ class InvoiceItem {
     this.total = 0,
   });
 
+  /// Line id — returns and credit notes reference it.
+  final String id;
   final String? productId;
   final String description;
   final double quantity;
@@ -29,6 +32,7 @@ class InvoiceItem {
   final double total;
 
   factory InvoiceItem.fromJson(JsonMap j) => InvoiceItem(
+        id: asString(j['id']),
         productId: asStringOrNull(j['product_id']),
         description: asStringOrNull(j['description']) ?? asString(pick(j, 'product.name')),
         quantity: asDouble(j['quantity'], 1),

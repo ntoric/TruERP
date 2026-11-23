@@ -206,3 +206,24 @@ class MoneyTile extends StatelessWidget {
     );
   }
 }
+
+/// A horizontally scrolling row of filter chips, used as a list header.
+class ChipsHeader extends StatelessWidget {
+  const ChipsHeader({super.key, required this.chips, this.note});
+  final List<Widget> chips;
+
+  /// Optional hint shown above the chips.
+  final String? note;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.fromLTRB(Spacing.lg, Spacing.sm, Spacing.lg, Spacing.sm),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          if (note != null) ...[Text(note!, style: context.text.bodySmall), const SizedBox(height: Spacing.sm)],
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: [for (final c in chips) ...[c, const SizedBox(width: Spacing.sm)]]),
+          ),
+        ]),
+      );
+}

@@ -206,12 +206,22 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - **Bill editing stays on the web**, for the same reason as invoices.
 - **Returns use the discounted price.** Mobile returns lines at the price actually paid (after the line discount). The web return form uses the full price, which over-credits discounted lines.
 
-### P3 — Other sales documents ☐ (deferred; P5 built first)
-- Estimates/Quotations: list, create/edit, approve/accept/reject, convert to invoice, PDF
-- Delivery challans: list, create/edit, view
-- Sales returns: list, create from an invoice, process
-- Credit notes and debit notes: list, create, issue, cancel
-- Discount transactions log
+### P3 — Other sales documents ☑ (built after P5 and P6)
+- ☑ **Estimates**: list with status chips (draft, sent, accepted, rejected, converted) and expiry shown; detail with summary, share (HTML), email to customer, mark accepted/rejected (with reason), delete; **Convert to invoice** sheet with optional payment received; create/edit with customer, number, validity, items, discount and charges, notes and terms.
+- ☑ **Delivery challans**: list (pending / delivered / cancelled), detail with transport details and link to its invoice, Mark delivered, cancel, delete; create with customer, number, dates, items, transport mode and vehicle.
+- ☑ **Sales returns, credit notes, debit notes** (one set of screens configured per kind): lists with status chips; detail spelling out exactly what processing/issuing will do; create from the source invoice or bill by picking quantities ("everything" shortcut) and a settlement mode; sales-return credit can be applied to another open invoice of the same customer; process / issue, cancel with reason, delete draft returns.
+- ☑ **Discount log**: every discount across invoices, estimates, purchases and payments, with total, type chips and search; rows open their document.
+- ☑ Entry points: invoice ⋯ Return items / Credit note; purchase bill ⋯ Debit note; customer ⋯ New estimate / New delivery challan.
+- ☑ Tests: 66 unit tests, 154 screen renders (77 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **Estimates use the invoice rule** (tax-free, paise rounding), so the preview matches the saved total.
+- **Estimate updates overwrite** signature, place of supply, reverse charge, inter-state and payment terms, so the edit form sends the existing values back unchanged. Itemised charges are kept when omitted; if an estimate has them, the charges amount is read-only on mobile.
+- **Accepted or converted estimates can't be edited** (server rule); the edit action is hidden for them.
+- **The estimate "PDF" endpoint returns HTML**, so mobile shares an `.html` file that prints from any browser.
+- **Challan updates rewrite every header field**, so "Mark delivered" resends notes, terms, signature, vehicle, transport and due date. Items can't be changed after creation. Challans don't touch stock.
+- **Only processing a sales return moves stock.** Credit and debit notes change balances only, and the confirmation text says which.
+- **Returns and notes use the discounted price** actually charged or paid for each line, same as purchase returns.
 
 ### P4 — Inventory ☐
 - Stock overview (`/inventory/stocks`, `/inventory/stats`), low-stock alerts

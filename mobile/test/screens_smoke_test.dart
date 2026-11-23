@@ -42,6 +42,10 @@ import 'package:truerp_mobile/features/reports/ui/business_reports.dart';
 import 'package:truerp_mobile/features/reports/ui/gst_screen.dart';
 import 'package:truerp_mobile/features/reports/ui/reports_hub_screen.dart';
 import 'package:truerp_mobile/features/reports/ui/stock_party_reports.dart';
+import 'package:truerp_mobile/features/sales_docs/ui/challans_screens.dart';
+import 'package:truerp_mobile/features/sales_docs/ui/discounts_screen.dart';
+import 'package:truerp_mobile/features/sales_docs/ui/estimates_screens.dart';
+import 'package:truerp_mobile/features/sales_docs/ui/returns_screens.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bill_detail_screen.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bill_form_screen.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bills_screen.dart';
@@ -66,8 +70,8 @@ final _invoice = {
   'invoice_discount': 50, 'additional_charges': 100, 'round_off': 0.05, 'total_amount': 4706, 'amount_paid': 2000,
   'payment_mode': 'upi', 'notes': 'Thanks for your business', 'terms': 'Goods once sold will not be taken back.',
   'items': [
-    {'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'unit': 'BAG', 'unit_price': 2450.5,
-     'discount': 5, 'total': 4655.95},
+    {'id': 'ii1', 'product_id': 'pr1', 'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'unit': 'BAG',
+     'unit_price': 2450.5, 'discount': 5, 'total': 4655.95},
   ],
 };
 final _payment = {
@@ -138,6 +142,26 @@ final _periodReport = {
   ],
   'expense_lines': [{'category': 'Electricity & Utilities', 'description': 'November electricity bill for the main warehouse', 'amount': 11800, 'date': '2026-11-20'}],
 };
+
+final _quote = {
+  'id': 'q1', 'quotation_number': 'EST-2026-000045', 'status': 'sent', 'date': '2026-11-20T00:00:00Z',
+  'valid_until': '2026-11-01T00:00:00Z', 'party_id': 'p1', 'party': _party, 'sub_total': 4901, 'discount_total': 245.05,
+  'quotation_discount': 100, 'additional_charges': 250, 'additional_charge_items': [{'label': 'Freight', 'amount': 250}],
+  'total_amount': 4805.95, 'notes': 'Prices valid for 15 days', 'terms': '50% advance', 'version': 2,
+  'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'unit': 'BAG', 'unit_price': 2450.5, 'discount': 5, 'total': 4655.95}],
+};
+final _challan = {
+  'id': 'c1', 'challan_number': 'DC-0012', 'status': 'draft', 'date': '2026-11-21T00:00:00Z', 'party_id': 'p1', 'party': _party,
+  'sub_total': 4901, 'total_quantity': 2, 'vehicle_number': 'KA01AB1234', 'transport_mode': 'road', 'notes': 'Handle with care',
+  'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'unit': 'BAG', 'unit_price': 2450.5, 'total': 4901}],
+};
+final _returnItems = [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 1, 'unit_price': 2327.98, 'total': 2327.98}];
+final _salesReturn = {'id': 'sr1', 'return_number': 'SR-0004', 'status': 'draft', 'date': '2026-11-22T00:00:00Z', 'amount': 2327.98,
+  'party': _party, 'invoice_id': 'i1', 'invoice': {'invoice_number': 'INV-2026-000123'}, 'refund_mode': 'credit_note', 'reason': 'Damaged', 'items': _returnItems};
+final _creditNote = {'id': 'cn1', 'credit_note_number': 'CN-0002', 'status': 'issued', 'date': '2026-11-22T00:00:00Z', 'total_amount': 500,
+  'party': _party, 'invoice_id': 'i1', 'refund_mode': 'cash', 'items': _returnItems};
+final _debitNote = {'id': 'dn1', 'debit_note_number': 'DN-0001', 'status': 'cancelled', 'cancel_reason': 'Raised by mistake', 'date': '2026-11-22T00:00:00Z',
+  'total_amount': 2205, 'party': _vendor, 'purchase_bill_id': 'b1', 'refund_mode': 'debit_note', 'items': _returnItems};
 
 class FakeApi extends ApiClient {
   FakeApi(super.config, super.tokens);
@@ -287,6 +311,14 @@ class FakeApi extends ApiClient {
       return [{'invoice_id': 'i1', 'invoice_number': 'INV-2026-000123', 'irn': 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd', 'status': 'generated', 'generated_at': '2026-11-20T10:00:00Z'}];
     }
     if (path == '/gst/ewaybill/history') return const [];
+    if (path == '/quotations/next-number') return {'quotation_number': 'EST-2026-000046'};
+    if (path.startsWith('/quotations/')) return _quote;
+    if (path == '/delivery-challans/next-number') return {'challan_number': 'DC-0013'};
+    if (path.startsWith('/delivery-challans/')) return _challan;
+    if (path.startsWith('/sales-returns/')) return _salesReturn;
+    if (path.startsWith('/credit-notes/')) return _creditNote;
+    if (path.startsWith('/debit-notes/')) return _debitNote;
+    if (path == '/discounts/transactions') return {'summary': {'total_discount': 12345.5}};
     if (path == '/payments/next-number') return {'payment_in_number': 'PIN-00043'};
     if (path == '/cash-bank/accounts') {
       return [{'id': 'b1', 'account_name': 'HDFC Current', 'account_number': '50100012345678', 'is_primary': true, 'is_active': true}];
@@ -320,6 +352,15 @@ class FakeApi extends ApiClient {
       '/accounting/journal' => {'data': [
           {'id': 'j1', 'entry_number': 'JE-0001', 'entry_date': '2026-11-20T00:00:00Z', 'description': 'Sales invoice INV-1', 'total_debit': 4706, 'total_credit': 4706, 'status': 'posted',
            'lines': [{'account': {'code': '1100', 'name': 'Accounts Receivable'}, 'debit': 4706}, {'account': {'code': '4000', 'name': 'Sales'}, 'credit': 4706}]},
+        ], 'total': 1, 'page': 1, 'per_page': 25},
+      '/quotations' => [_quote, {..._quote, 'id': 'q2', 'status': 'converted', 'converted_to_invoice_id': 'i1'}],
+      '/delivery-challans' => [_challan, {..._challan, 'id': 'c2', 'status': 'delivered'}],
+      '/sales-returns' => {'data': [_salesReturn]},
+      '/credit-notes' => {'data': [_creditNote]},
+      '/debit-notes' => {'data': [_debitNote]},
+      '/discounts/transactions' => {'transactions': [
+          {'id': 'i1', 'type': 'sale_invoice', 'type_label': 'Sale Invoice', 'reference': 'INV-2026-000123', 'date': '2026-11-20',
+           'party_name': 'Sharma General Stores Private Limited', 'total_discount': 345.05, 'document_total': 4706},
         ], 'total': 1, 'page': 1, 'per_page': 25},
       '/payments' => {'payments': [_payment, {..._payment, 'id': 'pay2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
       _ => const <dynamic>[],
@@ -409,6 +450,23 @@ void main() {
     'categories report': () => const RankReportScreen(kind: RankKind.categories),
     'payments analytics': () => const PaymentsAnalyticsScreen(),
     'gst': () => const GstScreen(),
+    'estimates': () => const EstimatesScreen(),
+    'estimate detail': () => const EstimateDetailScreen(estimateId: 'q1'),
+    'estimate form (new)': () => const EstimateFormScreen(partyId: 'p1'),
+    'estimate form (edit)': () => const EstimateFormScreen(estimateId: 'q1'),
+    'challans': () => const ChallansScreen(),
+    'challan detail': () => const ChallanDetailScreen(challanId: 'c1'),
+    'challan form': () => const ChallanFormScreen(partyId: 'p1'),
+    'sales returns': () => const ReturnDocsScreen(kind: ReturnKind.salesReturn),
+    'sales return detail': () => const ReturnDocDetailScreen(kind: ReturnKind.salesReturn, docId: 'sr1'),
+    'sales return form': () => const ReturnDocFormScreen(kind: ReturnKind.salesReturn, sourceId: 'i1'),
+    'credit notes': () => const ReturnDocsScreen(kind: ReturnKind.creditNote),
+    'credit note detail': () => const ReturnDocDetailScreen(kind: ReturnKind.creditNote, docId: 'cn1'),
+    'credit note form': () => const ReturnDocFormScreen(kind: ReturnKind.creditNote, sourceId: 'i1'),
+    'debit notes': () => const ReturnDocsScreen(kind: ReturnKind.debitNote),
+    'debit note detail': () => const ReturnDocDetailScreen(kind: ReturnKind.debitNote, docId: 'dn1'),
+    'debit note form': () => const ReturnDocFormScreen(kind: ReturnKind.debitNote, sourceId: 'b1'),
+    'discounts': () => const DiscountsScreen(),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};

@@ -40,6 +40,10 @@ import '../../features/reports/ui/business_reports.dart';
 import '../../features/reports/ui/gst_screen.dart';
 import '../../features/reports/ui/reports_hub_screen.dart';
 import '../../features/reports/ui/stock_party_reports.dart';
+import '../../features/sales_docs/ui/challans_screens.dart';
+import '../../features/sales_docs/ui/discounts_screen.dart';
+import '../../features/sales_docs/ui/estimates_screens.dart';
+import '../../features/sales_docs/ui/returns_screens.dart';
 import '../../features/shell/responsive_shell.dart';
 import '../../features/shell/splash_screen.dart';
 import '../auth/session_controller.dart';
@@ -173,6 +177,23 @@ final routerProvider = Provider<GoRouter>((ref) {
       _page('/reports/categories', (_) => const RankReportScreen(kind: RankKind.categories)),
       _page('/reports/payments', (_) => const PaymentsAnalyticsScreen()),
       _page('/gst', (_) => const GstScreen()),
+      // Other sales documents
+      _page('/estimates', (_) => const EstimatesScreen()),
+      _page('/estimates/new', (s) => EstimateFormScreen(partyId: s.uri.queryParameters['party'])),
+      _page('/estimates/:id', (s) => EstimateDetailScreen(estimateId: s.pathParameters['id']!)),
+      _page('/estimates/:id/edit', (s) => EstimateFormScreen(estimateId: s.pathParameters['id'])),
+      _page('/delivery-challans', (_) => const ChallansScreen()),
+      _page('/delivery-challans/new', (s) => ChallanFormScreen(partyId: s.uri.queryParameters['party'])),
+      _page('/delivery-challans/:id', (s) => ChallanDetailScreen(challanId: s.pathParameters['id']!)),
+      for (final k in ReturnKind.values) ...[
+        _page('/${k.route}', (_) => ReturnDocsScreen(kind: k)),
+        _page('/${k.route}/new', (s) => ReturnDocFormScreen(
+              kind: k,
+              sourceId: s.uri.queryParameters[k.fromBill ? 'bill' : 'invoice'] ?? '',
+            )),
+        _page('/${k.route}/:id', (s) => ReturnDocDetailScreen(kind: k, docId: s.pathParameters['id']!)),
+      ],
+      _page('/discounts', (_) => const DiscountsScreen()),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,

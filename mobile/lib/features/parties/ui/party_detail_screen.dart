@@ -68,13 +68,19 @@ class PartyDetailScreen extends ConsumerWidget {
             PopupMenuButton<String>(
               onSelected: (v) {
                 if (v == 'delete') _delete(context, ref, party);
+                if (v == 'estimate') context.push('/estimates/new?party=${party.id}');
+                if (v == 'challan') context.push('/delivery-challans/new?party=${party.id}');
                 if (v == 'pdf') {
                   sharePdf(context, ref.read(apiClientProvider), '/parties/${party.id}/ledger/pdf', 'Ledger_${party.name}.pdf');
                 }
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf_outlined), title: Text('Share ledger PDF'))),
-                PopupMenuItem(
+              itemBuilder: (_) => [
+                if (!party.isVendor) ...const [
+                  PopupMenuItem(value: 'estimate', child: ListTile(leading: Icon(Icons.request_quote_outlined), title: Text('New estimate'))),
+                  PopupMenuItem(value: 'challan', child: ListTile(leading: Icon(Icons.local_shipping_outlined), title: Text('New delivery challan'))),
+                ],
+                const PopupMenuItem(value: 'pdf', child: ListTile(leading: Icon(Icons.picture_as_pdf_outlined), title: Text('Share ledger PDF'))),
+                const PopupMenuItem(
                     value: 'delete',
                     child: ListTile(leading: Icon(Icons.delete_outline, color: StatusColors.danger), title: Text('Delete'))),
               ],

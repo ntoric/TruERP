@@ -54,10 +54,10 @@ void main() {
     expect(fyStart(DateTime(2026, 4, 1)), DateTime(2026, 4, 1));
   });
 
-  test('phase 5 modules are built while 3 and 4 are not', () {
+  test('built phases are tracked as a set, not "up to N"', () {
     expect(moduleById('cash-bank')!.isBuilt, isTrue);
     expect(moduleById('accounting')!.isBuilt, isTrue);
-    expect(moduleById('estimates')!.isBuilt, isFalse);
-    expect(moduleById('stock')!.isBuilt, isFalse);
+    expect(moduleById('estimates')!.isBuilt, isTrue, reason: 'phase 3');
+    expect(moduleById('stock')!.isBuilt, isFalse, reason: 'phase 4 not built yet');
   });
 }

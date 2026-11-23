@@ -78,12 +78,15 @@ class PurchaseBillDetailScreen extends ConsumerWidget {
             PopupMenuButton<String>(
               onSelected: (v) {
                 if (v == 'return') context.push('/purchase-returns/new?bill=${b.id}');
+                if (v == 'debit') context.push('/debit-notes/new?bill=${b.id}');
                 if (v == 'vendor') context.push('/parties/${b.partyId}');
                 if (v == 'delete') _delete(context, ref, b);
               },
               itemBuilder: (_) => [
                 if (!b.isDraft && b.items.isNotEmpty)
                   const PopupMenuItem(value: 'return', child: ListTile(leading: Icon(Icons.undo_rounded), title: Text('Return items'))),
+                if (!b.isDraft && b.items.isNotEmpty)
+                  const PopupMenuItem(value: 'debit', child: ListTile(leading: Icon(Icons.note_alt_outlined), title: Text('Debit note'))),
                 const PopupMenuItem(value: 'vendor', child: ListTile(leading: Icon(Icons.storefront_outlined), title: Text('Open vendor'))),
                 if (isSuperAdmin)
                   const PopupMenuItem(
