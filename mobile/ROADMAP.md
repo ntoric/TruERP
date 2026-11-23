@@ -287,10 +287,19 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 
 **Fixed across the whole app in this phase: dates sent a day early.** Mobile was sending local midnight converted to UTC, which in India is 18:30 the previous day, so an invoice dated 1 Nov landed on 31 Oct in reports and filters. All 28 date fields now go through `apiDate`, which sends UTC midnight of the chosen day exactly like the web, and date-only values read back as the same calendar day. Tests run in UTC, India and US time zones.
 
-### P8 — POS ☐
-- Open or close a session (opening cash, cash in/out movements, session summary)
-- Fast billing screen: product grid and search, barcode scan, cart, quick customer, split tender. Uses `is_pos=true` and `client_sale_id`.
-- POS drafts (hold or resume a bill), session history
+### P8 — POS ☑
+- ☑ **Sessions**: open with counted opening cash; cash in / cash out with a reason; close by entering the counted cash (prefilled with the expected figure, over/short shown); session history with summary and cash movements.
+- ☑ **Billing counter**: product list with search and category chips, tap to add, in-cart quantity badge, barcode / QR scan (`mobile_scanner`, exact item code or SKU match). Phones get a sticky cart bar and a cart sheet; tablets (≥ 900 px) show products and cart side by side.
+- ☑ **Cart**: quantity stepper, swipe to remove, optional customer (walk-in by default), bill discount, whole-rupee round-off.
+- ☑ **Checkout**: single mode with cash received, quick note buttons and change due, or split tender across modes. Leaving a balance unpaid needs a named customer. Then a receipt sheet: share PDF, WhatsApp, new sale.
+- ☑ **Held bills**: hold the cart, resume (replaces the cart after confirming), discard. Uses the web's `cart_data` format so bills held on either side open on the other.
+- ☑ POS added to the home quick actions (in place of Expenses, still under Purchases).
+- ☑ Tests: 8 unit tests (rounding, discount, expected cash, held-bill formats, sale payloads, no-session 404); 3 more screen renders × phone/tablet. 287 tests pass. Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **A POS sale is a normal `POST /invoices`** with `is_pos`, `pos_session_id`, `session_opening_cash` and `client_sale_id`; the same id goes in `Idempotency-Key`, one per checkout, so a retry after a dropped response can't charge twice. No party means the server's walk-in customer.
+- **The session keeps one running sales total across all payment modes**, so "expected in drawer" assumes everything was cash. The close sheet says so; the web closes with that figure automatically, while mobile asks for the counted amount.
+- **No active session returns 404**, which the app treats as "open a session".
 
 ### P9 — Engagement ☐
 - Loyalty: settings, stats, customers, transactions, point adjustment, card lookup

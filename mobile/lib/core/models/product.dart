@@ -102,6 +102,24 @@ class Product {
     purchasePriceWithTax: asBool(j['purchase_price_with_tax'], true),
   );
 
+  /// Compact copy stored inside POS held bills (same keys as the API, so
+  /// the web POS can read bills held on mobile and vice versa).
+  JsonMap toSnapshot() => {
+    'id': id,
+    'name': name,
+    'sku': sku,
+    'item_code': itemCode,
+    'category': category,
+    'item_type': itemType,
+    'unit': unit,
+    'sale_price': salePrice,
+    'purchase_price': purchasePrice,
+    'mrp': mrp,
+    'tax_rate': taxRate,
+    'hsn_code': hsnCode,
+    'stock_qty': stockQty,
+  };
+
   /// Body for create/update. [openingStock] is only honoured on create.
   JsonMap toJson({double openingStock = 0}) => {
     'name': name.trim(),

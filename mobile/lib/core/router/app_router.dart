@@ -19,6 +19,8 @@ import '../../features/expenses/ui/expenses_screen.dart';
 import '../../features/hr/ui/attendance_screen.dart';
 import '../../features/hr/ui/payroll_screens.dart';
 import '../../features/hr/ui/staff_screens.dart';
+import '../../features/pos/ui/pos_screen.dart';
+import '../../features/pos/ui/sessions_screen.dart';
 import '../../features/inventory/ui/categories_screen.dart';
 import '../../features/inventory/ui/inventory_screen.dart';
 import '../../features/inventory/ui/movements_screen.dart';
@@ -363,6 +365,8 @@ final routerProvider = Provider<GoRouter>((ref) {
       ),
       _page('/attendance', (_) => const AttendanceScreen()),
       _page('/attendance-reminder', (_) => const AttendanceReminderScreen()),
+      _page('/pos', (_) => const PosScreen()),
+      _page('/pos/sessions', (_) => const PosSessionsScreen()),
       _page('/payroll', (_) => const PayrollScreen()),
       _page(
         '/payroll/new',

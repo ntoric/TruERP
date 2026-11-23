@@ -48,6 +48,7 @@ dependencies:
   path_provider: ^2.1.5
   flutter_localizations:
     sdk: flutter
+  mobile_scanner: ^7.5.0
 
 dev_dependencies:
   flutter_test:

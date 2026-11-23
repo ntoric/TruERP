@@ -107,10 +107,11 @@ void main() {
     expect(moduleById('accounting')!.isBuilt, isTrue);
     expect(moduleById('estimates')!.isBuilt, isTrue, reason: 'phase 3');
     expect(moduleById('stock')!.isBuilt, isTrue, reason: 'phase 4');
+    expect(moduleById('pos')!.isBuilt, isTrue, reason: 'phase 8');
     expect(
-      moduleById('pos')!.isBuilt,
+      moduleById('loyalty')!.isBuilt,
       isFalse,
-      reason: 'phase 8 not built yet',
+      reason: 'phase 9 not built yet',
     );
   });
 }

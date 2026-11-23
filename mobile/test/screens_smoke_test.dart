@@ -25,7 +25,10 @@ import 'package:truerp_mobile/features/expenses/ui/expense_form_screen.dart';
 import 'package:truerp_mobile/features/expenses/ui/expenses_screen.dart';
 import 'package:truerp_mobile/features/hr/ui/attendance_screen.dart';
 import 'package:truerp_mobile/features/hr/ui/payroll_screens.dart';
+import 'package:truerp_mobile/core/api/api_exception.dart';
 import 'package:truerp_mobile/features/hr/ui/staff_screens.dart';
+import 'package:truerp_mobile/features/pos/ui/pos_screen.dart';
+import 'package:truerp_mobile/features/pos/ui/sessions_screen.dart';
 import 'package:truerp_mobile/features/inventory/ui/categories_screen.dart';
 import 'package:truerp_mobile/features/inventory/ui/inventory_screen.dart';
 import 'package:truerp_mobile/features/inventory/ui/movements_screen.dart';
@@ -573,6 +576,19 @@ final _payroll = {
       'payment_mode': 'bank_transfer',
     },
   ],
+};
+
+var _posClosed = false;
+
+const _posSession = {
+  'id': 'ps1',
+  'status': 'open',
+  'opening_cash': 2000,
+  'total_sales': 9000,
+  'total_invoices': 14,
+  'cash_in_total': 500,
+  'cash_out_total': 200,
+  'opened_at': '2026-11-24T03:30:00Z',
 };
 
 class FakeApi extends ApiClient {
@@ -1327,6 +1343,39 @@ class FakeApi extends ApiClient {
         },
       ];
     }
+    if (path == '/pos/sessions/active') {
+      if (_posClosed) throw ApiException('No active session', statusCode: 404);
+      return _posSession;
+    }
+    if (path == '/pos/sessions') {
+      return [
+        _posSession,
+        {
+          ..._posSession,
+          'id': 'ps0',
+          'status': 'closed',
+          'closing_cash': 10980,
+          'closed_at': '2026-11-23T21:10:00Z',
+          'notes': 'Short by twenty',
+        },
+      ];
+    }
+    if (path.endsWith('/cash-movements')) {
+      return [
+        {'type': 'cash_in', 'amount': 500, 'reason': 'Change from bank', 'created_at': '2026-11-24T05:00:00Z'},
+        {'type': 'cash_out', 'amount': 200, 'reason': '', 'created_at': '2026-11-24T08:00:00Z'},
+      ];
+    }
+    if (path == '/pos/drafts') {
+      return [
+        {
+          'id': 'd1',
+          'title': 'Ravi',
+          'cart_data': '{"items":[{"product":{"id":"pr1","name":"Cement 50kg","sale_price":420},"quantity":2,"total":840}]}',
+          'created_at': '2026-11-24T06:00:00Z',
+        },
+      ];
+    }
     return <String, dynamic>{};
   }
 
@@ -1738,6 +1787,15 @@ void main() {
     'payroll': () => const PayrollScreen(),
     'payroll detail': () => const PayrollDetailScreen(payrollId: 'pay-r1'),
     'payroll form': () => const PayrollFormScreen(staffId: 'st1'),
+    'pos counter': () {
+      _posClosed = false;
+      return const PosScreen();
+    },
+    'pos open session': () {
+      _posClosed = true;
+      return const PosScreen();
+    },
+    'pos sessions': () => const PosSessionsScreen(),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};

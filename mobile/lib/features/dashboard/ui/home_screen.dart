@@ -445,8 +445,8 @@ class _QuickActions extends StatelessWidget {
     ];
     // Only built modules; later phases can swap their own in.
     final modules = [
+      'pos',
       'purchase-bills',
-      'expenses',
       'cash-bank',
       'reports',
     ].map(moduleById).whereType<AppModule>().toList();

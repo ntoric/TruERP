@@ -48,7 +48,7 @@ class ModuleGroup {
 
 /// Roadmap phases that are built. Modules from other phases open a
 /// "coming soon" page. Phases don't land strictly in order.
-const builtPhases = {0, 1, 2, 3, 4, 5, 6, 7};
+const builtPhases = {0, 1, 2, 3, 4, 5, 6, 7, 8};
 
 const moduleGroups = <ModuleGroup>[
   ModuleGroup('Parties', Color(0xFF7C3AED), Icons.groups_rounded, [
