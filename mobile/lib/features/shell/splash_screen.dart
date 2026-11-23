@@ -34,12 +34,16 @@ class SplashScreen extends ConsumerWidget {
                     ),
                   ],
                 )
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
+              // Logo exactly centred at 96dp, like the native splash, so the
+              // hand-off from the OS splash doesn't jump. Spinner sits below.
+              : Stack(
+                  alignment: Alignment.center,
                   children: [
-                    Image.asset('assets/logo.png', height: 80),
-                    const SizedBox(height: Spacing.xl),
-                    const SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2.6)),
+                    Image.asset('assets/logo.png', width: 96, height: 96),
+                    const Padding(
+                      padding: EdgeInsets.only(top: 96 + Spacing.xxl * 2),
+                      child: SizedBox.square(dimension: 24, child: CircularProgressIndicator(strokeWidth: 2.6)),
+                    ),
                   ],
                 ),
         ),
