@@ -226,26 +226,24 @@ class _Actions extends StatelessWidget {
           const SizedBox(width: Spacing.sm),
           contact(Icons.mail_outline_rounded, 'Email', p.email.isEmpty ? null : () => sendEmail(context, p.email)),
         ]),
-        if (!p.isVendor) ...[
-          const SizedBox(height: Spacing.sm),
-          Row(children: [
-            Expanded(
-              child: FilledButton.icon(
-                onPressed: () => context.push('/invoices/new?party=${p.id}'),
-                icon: const Icon(Icons.receipt_long_rounded),
-                label: const Text('New invoice'),
-              ),
+        const SizedBox(height: Spacing.sm),
+        Row(children: [
+          Expanded(
+            child: FilledButton.icon(
+              onPressed: () => context.push(p.isVendor ? '/purchases/new?party=${p.id}' : '/invoices/new?party=${p.id}'),
+              icon: Icon(p.isVendor ? Icons.shopping_bag_rounded : Icons.receipt_long_rounded),
+              label: Text(p.isVendor ? 'New purchase' : 'New invoice'),
             ),
-            const SizedBox(width: Spacing.sm),
-            Expanded(
-              child: FilledButton.tonalIcon(
-                onPressed: () => context.push('/payments-in/new?party=${p.id}'),
-                icon: const Icon(Icons.call_received_rounded),
-                label: const Text('Receive'),
-              ),
+          ),
+          const SizedBox(width: Spacing.sm),
+          Expanded(
+            child: FilledButton.tonalIcon(
+              onPressed: () => context.push(p.isVendor ? '/payments-out/new?party=${p.id}' : '/payments-in/new?party=${p.id}'),
+              icon: Icon(p.isVendor ? Icons.call_made_rounded : Icons.call_received_rounded),
+              label: Text(p.isVendor ? 'Pay' : 'Receive'),
             ),
-          ]),
-        ],
+          ),
+        ]),
       ],
     );
   }
@@ -282,9 +280,7 @@ class _LedgerView extends StatelessWidget {
         for (final e in entries.take(50))
           ListTile(
             dense: true,
-            onTap: e.refId != null && e.type.toLowerCase().contains('invoice') && !e.type.toLowerCase().contains('purchase')
-                ? () => context.push('/invoices/${e.refId}')
-                : null,
+            onTap: _ledgerRoute(e) == null ? null : () => context.push(_ledgerRoute(e)!),
             title: Text(e.voucher.isNotEmpty ? e.voucher : titleCase(e.type), style: const TextStyle(fontWeight: FontWeight.w500)),
             subtitle: Text([dateText(e.date), if (e.refNumber.isNotEmpty) e.refNumber, if (e.paymentMode.isNotEmpty) titleCase(e.paymentMode)].join(' · ')),
             trailing: Column(
@@ -359,4 +355,17 @@ class _DetailsCard extends StatelessWidget {
           : Column(children: [for (final r in rows) KeyValueRow(r.$1, r.$2)]),
     );
   }
+}
+
+/// Screen for a ledger row's source document, if mobile has one.
+String? _ledgerRoute(LedgerEntry e) {
+  final id = e.refId;
+  if (id == null || id.isEmpty) return null;
+  return switch (e.type) {
+    'invoice' => '/invoices/$id',
+    'purchase_bill' => '/purchases/$id',
+    'purchase_return' => '/purchase-returns/$id',
+    'expense' => '/expenses/$id',
+    _ => null,
+  };
 }

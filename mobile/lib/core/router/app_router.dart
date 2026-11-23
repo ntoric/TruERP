@@ -7,6 +7,10 @@ import '../../features/auth/ui/forgot_password_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/auth/ui/register_screen.dart';
 import '../../features/dashboard/ui/home_screen.dart';
+import '../../features/expenses/ui/expense_categories_screen.dart';
+import '../../features/expenses/ui/expense_detail_screen.dart';
+import '../../features/expenses/ui/expense_form_screen.dart';
+import '../../features/expenses/ui/expenses_screen.dart';
 import '../../features/invoices/ui/invoice_detail_screen.dart';
 import '../../features/invoices/ui/invoice_form_screen.dart';
 import '../../features/invoices/ui/invoices_screen.dart';
@@ -15,10 +19,17 @@ import '../../features/parties/ui/parties_screen.dart';
 import '../../features/parties/ui/party_detail_screen.dart';
 import '../../features/parties/ui/party_form_screen.dart';
 import '../../features/payments/ui/payment_in_form_screen.dart';
+import '../../features/payments/ui/payment_out_form_screen.dart';
 import '../../features/payments/ui/payments_in_screen.dart';
+import '../../features/payments/ui/payments_out_screen.dart';
 import '../../features/products/ui/product_detail_screen.dart';
 import '../../features/products/ui/product_form_screen.dart';
 import '../../features/products/ui/products_screen.dart';
+import '../../features/purchases/ui/purchase_bill_detail_screen.dart';
+import '../../features/purchases/ui/purchase_bill_form_screen.dart';
+import '../../features/purchases/ui/purchase_bills_screen.dart';
+import '../../features/purchases/ui/purchase_orders_screen.dart';
+import '../../features/purchases/ui/purchase_returns_screen.dart';
 import '../../features/shell/responsive_shell.dart';
 import '../../features/shell/splash_screen.dart';
 import '../auth/session_controller.dart';
@@ -69,7 +80,7 @@ final routerProvider = Provider<GoRouter>((ref) {
             GoRoute(path: '/tab/sales', builder: (_, __) => const InvoicesScreen(isTab: true)),
           ]),
           StatefulShellBranch(routes: [
-            GoRoute(path: '/tab/purchases', builder: (_, __) => const ComingSoonScreen(moduleId: 'purchase-bills')),
+            GoRoute(path: '/tab/purchases', builder: (_, __) => const PurchaseBillsScreen(isTab: true)),
           ]),
           StatefulShellBranch(routes: [
             GoRoute(path: '/tab/parties', builder: (_, __) => const PartiesScreen(isTab: true)),
@@ -100,6 +111,28 @@ final routerProvider = Provider<GoRouter>((ref) {
             partyId: s.uri.queryParameters['party'],
             invoiceId: s.uri.queryParameters['invoice'],
           )),
+      // Purchases
+      _page('/purchases', (_) => const PurchaseBillsScreen()),
+      _page('/purchases/new', (s) => PurchaseBillFormScreen(partyId: s.uri.queryParameters['party'])),
+      _page('/purchases/:id', (s) => PurchaseBillDetailScreen(billId: s.pathParameters['id']!)),
+      _page('/purchase-returns', (_) => const PurchaseReturnsScreen()),
+      _page('/purchase-returns/new', (s) => PurchaseReturnFormScreen(billId: s.uri.queryParameters['bill'] ?? '')),
+      _page('/purchase-returns/:id', (s) => PurchaseReturnDetailScreen(returnId: s.pathParameters['id']!)),
+      _page('/purchase-orders', (_) => const PurchaseOrdersScreen()),
+      _page('/purchase-orders/new', (_) => const PurchaseOrderFormScreen()),
+      _page('/purchase-orders/:id', (s) => PurchaseOrderDetailScreen(orderId: s.pathParameters['id']!)),
+      // Payment out
+      _page('/payments-out', (_) => const PaymentsOutScreen()),
+      _page('/payments-out/new', (s) => PaymentOutFormScreen(
+            partyId: s.uri.queryParameters['party'],
+            billId: s.uri.queryParameters['bill'],
+          )),
+      // Expenses
+      _page('/expenses', (_) => const ExpensesScreen()),
+      _page('/expenses/new', (_) => const ExpenseFormScreen()),
+      _page('/expenses/categories', (_) => const ExpenseCategoriesScreen()),
+      _page('/expenses/:id', (s) => ExpenseDetailScreen(expenseId: s.pathParameters['id']!)),
+      _page('/expenses/:id/edit', (s) => ExpenseFormScreen(expenseId: s.pathParameters['id'])),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,

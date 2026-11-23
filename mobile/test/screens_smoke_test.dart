@@ -14,6 +14,10 @@ import 'package:truerp_mobile/core/auth/session_controller.dart';
 import 'package:truerp_mobile/core/config/app_config.dart';
 import 'package:truerp_mobile/core/theme/app_theme.dart';
 import 'package:truerp_mobile/features/dashboard/ui/home_screen.dart';
+import 'package:truerp_mobile/features/expenses/ui/expense_categories_screen.dart';
+import 'package:truerp_mobile/features/expenses/ui/expense_detail_screen.dart';
+import 'package:truerp_mobile/features/expenses/ui/expense_form_screen.dart';
+import 'package:truerp_mobile/features/expenses/ui/expenses_screen.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoice_detail_screen.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoice_form_screen.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoices_screen.dart';
@@ -22,10 +26,17 @@ import 'package:truerp_mobile/features/parties/ui/parties_screen.dart';
 import 'package:truerp_mobile/features/parties/ui/party_detail_screen.dart';
 import 'package:truerp_mobile/features/parties/ui/party_form_screen.dart';
 import 'package:truerp_mobile/features/payments/ui/payment_in_form_screen.dart';
+import 'package:truerp_mobile/features/payments/ui/payment_out_form_screen.dart';
 import 'package:truerp_mobile/features/payments/ui/payments_in_screen.dart';
+import 'package:truerp_mobile/features/payments/ui/payments_out_screen.dart';
 import 'package:truerp_mobile/features/products/ui/product_detail_screen.dart';
 import 'package:truerp_mobile/features/products/ui/product_form_screen.dart';
 import 'package:truerp_mobile/features/products/ui/products_screen.dart';
+import 'package:truerp_mobile/features/purchases/ui/purchase_bill_detail_screen.dart';
+import 'package:truerp_mobile/features/purchases/ui/purchase_bill_form_screen.dart';
+import 'package:truerp_mobile/features/purchases/ui/purchase_bills_screen.dart';
+import 'package:truerp_mobile/features/purchases/ui/purchase_orders_screen.dart';
+import 'package:truerp_mobile/features/purchases/ui/purchase_returns_screen.dart';
 
 const _party = {
   'id': 'p1', 'name': 'Sharma General Stores Private Limited', 'party_type': 'customer', 'phone': '9876543210',
@@ -52,6 +63,36 @@ final _invoice = {
 final _payment = {
   'id': 'pay1', 'payment_in_number': 'PIN-00042', 'amount_received': 2000, 'mode': 'upi', 'date': '2026-11-21T00:00:00Z',
   'party': _party, 'invoice_id': 'i1', 'invoice': {'invoice_number': 'INV-2026-000123'}, 'reference': 'UTR123',
+};
+
+final _bill = {
+  'id': 'b1', 'bill_number': 'VND/2026-27/000981', 'status': 'partial', 'stock_status': 'approved',
+  'bill_date': '2026-11-18T00:00:00Z', 'due_date': '2026-12-18T00:00:00Z', 'party_id': 'p2', 'party': _vendor,
+  'items': [
+    {'id': 'bi1', 'product_id': 'pr1', 'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 40,
+     'unit': 'BAG', 'unit_price': 2100, 'discount': 2.5, 'tax_rate': 5, 'tax_amount': 4095, 'total': 85995},
+  ],
+  'sub_total': 84000, 'tax_total': 4095, 'invoice_discount': 500, 'additional_charges': 1200,
+  'total_amount': 86795, 'paid_amount': 50000, 'balance_due': 36795, 'payment_mode': 'bank_transfer', 'notes': 'Truck no. KA-01-AB-1234',
+};
+final _paymentOut = {
+  'id': 'po1', 'payment_out_number': 'POUT-0012', 'amount_paid': 50000, 'mode': 'bank_transfer',
+  'date': '2026-11-19T00:00:00Z', 'party': _vendor, 'purchase_bill_id': 'b1', 'purchase_bill': {'bill_number': 'VND/2026-27/000981'},
+};
+final _expense = {
+  'id': 'e1', 'expense_number': 'EXP-0042', 'category': 'Electricity & Utilities', 'description': 'November electricity bill for the main warehouse',
+  'amount': 11800, 'sub_total': 10000, 'tax_total': 1800, 'with_gst': true, 'tax_rate': 18, 'date': '2026-11-20T00:00:00Z',
+  'vendor': 'BESCOM', 'payment_mode': 'upi', 'items': [{'description': 'Electricity', 'quantity': 1, 'unit_price': 10000, 'total': 11800}],
+};
+final _return = {
+  'id': 'r1', 'return_number': 'PR-0003', 'status': 'draft', 'date': '2026-11-21', 'amount': 4410, 'refund_mode': 'credit_note',
+  'party': _vendor, 'purchase_bill_id': 'b1', 'purchase_bill': {'bill_number': 'VND/2026-27/000981'}, 'reason': 'Damaged bags',
+  'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'unit_price': 2100, 'tax_rate': 5, 'total': 4410}],
+};
+final _order = {
+  'id': 'o1', 'order_number': 'PO-0007', 'status': 'submitted', 'order_date': '2026-11-15T00:00:00Z', 'party': _vendor,
+  'sub_total': 105000, 'tax_total': 5250, 'total_amount': 110250, 'notes': 'Deliver before Diwali',
+  'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 50, 'received_qty': 40, 'unit_price': 2100, 'tax_rate': 5, 'total': 110250}],
 };
 
 class FakeApi extends ApiClient {
@@ -94,6 +135,14 @@ class FakeApi extends ApiClient {
     if (path.startsWith('/inventory/stocks/products/')) return {'data': [{'available_qty': 4}]};
     if (path == '/products/pr2') return _service;
     if (path.startsWith('/products/')) return _product;
+    if (path == '/purchase/bills/stats') return {'total_purchase': 7654321, 'paid': 5000000, 'unpaid': 2654321};
+    if (path.startsWith('/purchase/bills/')) return _bill;
+    if (path.startsWith('/purchase-returns/')) return _return;
+    if (path.startsWith('/purchase/orders/')) return _order;
+    if (path == '/expense-categories') {
+      return [{'id': 'c1', 'name': 'Electricity & Utilities', 'is_active': true}, {'id': 'c2', 'name': 'Rent', 'is_active': false}];
+    }
+    if (path.startsWith('/expenses/')) return _expense;
     if (path == '/payments/next-number') return {'payment_in_number': 'PIN-00043'};
     if (path == '/cash-bank/accounts') {
       return [{'id': 'b1', 'account_name': 'HDFC Current', 'account_number': '50100012345678', 'is_primary': true, 'is_active': true}];
@@ -114,6 +163,11 @@ class FakeApi extends ApiClient {
       '/parties' => _route(path),
       '/products' => {'products': [_product, _service], 'total': 2, 'page': 1, 'per_page': 25},
       '/invoices' => {'invoices': [_invoice, {..._invoice, 'id': 'i2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
+      '/purchase/bills' => {'bills': [_bill, {..._bill, 'id': 'b2', 'status': 'draft'}], 'total': 2, 'page': 1, 'per_page': 25},
+      '/payment-outs' => {'payment_outs': [_paymentOut, {..._paymentOut, 'id': 'po2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
+      '/expenses' => [_expense, {..._expense, 'id': 'e2', 'status': 'cancelled'}],
+      '/purchase-returns' => {'data': [_return, {..._return, 'id': 'r2', 'status': 'processed'}]},
+      '/purchase/orders' => {'data': [_order, {..._order, 'id': 'o2', 'status': 'draft'}]},
       '/payments' => {'payments': [_payment, {..._payment, 'id': 'pay2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
       _ => const <dynamic>[],
     };
@@ -159,6 +213,22 @@ void main() {
     'product form (new)': () => const ProductFormScreen(),
     'payments in': () => const PaymentsInScreen(),
     'payment in form': () => const PaymentInFormScreen(partyId: 'p1', invoiceId: 'i1'),
+    'purchases': () => const PurchaseBillsScreen(isTab: true),
+    'purchase detail': () => const PurchaseBillDetailScreen(billId: 'b1'),
+    'purchase form': () => const PurchaseBillFormScreen(partyId: 'p2'),
+    'payments out': () => const PaymentsOutScreen(),
+    'payment out form': () => const PaymentOutFormScreen(partyId: 'p2', billId: 'b1'),
+    'expenses': () => const ExpensesScreen(),
+    'expense detail': () => const ExpenseDetailScreen(expenseId: 'e1'),
+    'expense form (new)': () => const ExpenseFormScreen(),
+    'expense form (edit)': () => const ExpenseFormScreen(expenseId: 'e1'),
+    'expense categories': () => const ExpenseCategoriesScreen(),
+    'purchase returns': () => const PurchaseReturnsScreen(),
+    'purchase return detail': () => const PurchaseReturnDetailScreen(returnId: 'r1'),
+    'purchase return form': () => const PurchaseReturnFormScreen(billId: 'b1'),
+    'purchase orders': () => const PurchaseOrdersScreen(),
+    'purchase order detail': () => const PurchaseOrderDetailScreen(orderId: 'o1'),
+    'purchase order form': () => const PurchaseOrderFormScreen(),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};

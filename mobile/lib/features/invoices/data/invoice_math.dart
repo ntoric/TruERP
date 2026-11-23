@@ -1,50 +1,16 @@
+import '../../../core/models/line_item.dart';
+
+export '../../../core/models/line_item.dart';
+
+/// Kept as an alias so sales code reads naturally.
+typedef InvoiceLine = LineItem;
+
 /// Mirrors `CreateInvoice` in backend/controllers/invoice.go so the form's
 /// preview matches what the server will save.
 ///
 /// The backend currently bills tax-free: item tax rates are ignored. Line
 /// discount is a percentage. The total is rounded to paise (to whole rupees
 /// for POS sales).
-class InvoiceLine {
-  InvoiceLine({
-    this.productId,
-    required this.description,
-    this.quantity = 1,
-    this.unitPrice = 0,
-    this.discountPct = 0,
-    this.unit = '',
-    this.hsnCode = '',
-    this.taxRate = 0,
-    this.stockQty,
-  });
-
-  String? productId;
-  String description;
-  double quantity;
-  double unitPrice;
-  double discountPct;
-  String unit;
-  String hsnCode;
-  double taxRate;
-
-  /// Stock at the time the product was picked (for the low-stock hint).
-  double? stockQty;
-
-  double get gross => quantity * unitPrice;
-  double get discountAmount => gross * (discountPct / 100);
-  double get net => gross - discountAmount;
-
-  Map<String, dynamic> toJson() => {
-        if (productId != null) 'product_id': productId,
-        'description': description.trim(),
-        'quantity': quantity,
-        'unit_price': unitPrice,
-        'discount': discountPct,
-        'tax_rate': taxRate,
-        'unit': unit,
-        'hsn_code': hsnCode,
-      };
-}
-
 class InvoiceTotals {
   const InvoiceTotals({
     required this.subTotal,

@@ -70,7 +70,7 @@ class InvoiceDraft {
       'terms': terms.trim(),
       'invoice_discount': invoiceDiscount,
       'additional_charges': additionalCharges,
-      'items': lines.map((l) => l.toJson()).toList(),
+      'items': lines.map((l) => l.toInvoiceJson()).toList(),
     };
   }
 }

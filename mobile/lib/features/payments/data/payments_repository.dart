@@ -5,6 +5,7 @@ import '../../../core/api/json.dart';
 import '../../../core/api/paged.dart';
 import '../../../core/auth/session_controller.dart';
 import '../../../core/models/payment.dart';
+import '../../../core/models/purchase.dart';
 
 class PaymentInDraft {
   PaymentInDraft({
@@ -46,6 +47,42 @@ class PaymentInDraft {
       };
 }
 
+class PaymentOutDraft {
+  PaymentOutDraft({
+    required this.partyId,
+    required this.amount,
+    required this.date,
+    this.mode = 'cash',
+    this.purchaseBillId,
+    this.bankAccountId,
+    this.discount = 0,
+    this.reference = '',
+    this.notes = '',
+  });
+
+  String partyId;
+  double amount;
+  DateTime date;
+  String mode;
+  String? purchaseBillId;
+  String? bankAccountId;
+  double discount;
+  String reference;
+  String notes;
+
+  JsonMap toJson() => {
+        'party_id': partyId,
+        if (purchaseBillId != null) 'purchase_bill_id': purchaseBillId,
+        'amount_paid': amount,
+        'payment_out_discount': discount,
+        'mode': mode,
+        'bank_account_id': mode == 'cash' ? null : bankAccountId,
+        'date': date.toUtc().toIso8601String(),
+        'reference': reference.trim(),
+        'notes': notes.trim(),
+      };
+}
+
 class PaymentsRepository {
   PaymentsRepository(this._api);
   final ApiClient _api;
@@ -73,6 +110,26 @@ class PaymentsRepository {
       PaymentIn.fromJson(asMap(await _api.post('/payments', body: d.toJson())));
 
   Future<void> cancel(String id, String reason) => _api.post('/payments/$id/cancel', body: {'reason': reason.trim()});
+
+  Future<Paged<PaymentOut>> listOut({
+    int page = 1,
+    String? search,
+    String? partyId,
+    String? purchaseBillId,
+    String? mode,
+  }) =>
+      _api.getPaged('/payment-outs', PaymentOut.fromJson, key: 'payment_outs', page: page, query: {
+        'search': search,
+        'party_id': partyId,
+        'purchase_bill_id': purchaseBillId,
+        'mode': mode,
+      });
+
+  Future<PaymentOut> createOut(PaymentOutDraft d) async =>
+      PaymentOut.fromJson(asMap(await _api.post('/payment-outs', body: d.toJson())));
+
+  Future<void> cancelOut(String id, String reason) =>
+      _api.post('/payment-outs/$id/cancel', body: {'reason': reason.trim()});
 
   Future<List<BankAccount>> bankAccounts() async {
     final res = await _api.get('/cash-bank/accounts');

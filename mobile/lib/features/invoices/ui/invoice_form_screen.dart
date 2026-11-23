@@ -14,6 +14,7 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/utils/validators.dart';
 import '../../../shared/widgets/common.dart';
 import '../../../shared/widgets/form_widgets.dart';
+import '../../../shared/widgets/line_items.dart';
 import '../../../shared/widgets/pickers.dart';
 import '../../parties/data/parties_repository.dart';
 import '../../payments/data/payments_repository.dart';
@@ -122,18 +123,13 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
 
   Future<void> _addCustom() async {
     final line = InvoiceLine(description: '');
-    final ok = await _editLine(line, isNew: true);
-    if (ok == true) setState(() => _lines.add(line));
-  }
-
-  Future<bool?> _editLine(InvoiceLine line, {bool isNew = false}) async {
-    final result = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (_) => _LineEditor(line: line, isNew: isNew),
-    );
-    if (result == true) setState(_syncReceived);
-    return result;
+    final ok = await showLineEditor(context, line, isNew: true);
+    if (ok == true) {
+      setState(() {
+        _lines.add(line);
+        _syncReceived();
+      });
+    }
   }
 
   Future<void> _save() async {
@@ -257,48 +253,12 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
                     title: 'Items',
                     trailing: _lines.isEmpty ? null : Text('${_lines.length}', style: context.text.labelLarge),
                     children: [
-                      if (_lines.isEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: Spacing.sm),
-                          child: Text('No items yet. Add products from your catalogue.', style: context.text.bodySmall),
-                        ),
-                      for (final (i, l) in _lines.indexed)
-                        Dismissible(
-                          key: ObjectKey(l),
-                          direction: DismissDirection.endToStart,
-                          background: Container(
-                            alignment: Alignment.centerRight,
-                            padding: const EdgeInsets.only(right: Spacing.lg),
-                            decoration: BoxDecoration(
-                              color: StatusColors.danger.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(Radii.control),
-                            ),
-                            child: const Icon(Icons.delete_outline, color: StatusColors.danger),
-                          ),
-                          onDismissed: (_) => setState(() {
-                            _lines.removeAt(i);
-                            _syncReceived();
-                          }),
-                          child: _LineTile(
-                            line: l,
-                            onTap: () => _editLine(l),
-                            onQty: (q) => setState(() {
-                              l.quantity = q;
-                              _syncReceived();
-                            }),
-                          ),
-                        ),
-                      Row(children: [
-                        Expanded(
-                          child: FilledButton.tonalIcon(
-                            onPressed: _addProduct,
-                            icon: const Icon(Icons.add_shopping_cart_rounded),
-                            label: const Text('Add item'),
-                          ),
-                        ),
-                        const SizedBox(width: Spacing.sm),
-                        OutlinedButton(onPressed: _addCustom, child: const Text('Custom line')),
-                      ]),
+                      LineItemsEditor(
+                        lines: _lines,
+                        onChanged: () => setState(_syncReceived),
+                        onAddProduct: _addProduct,
+                        onAddCustom: _addCustom,
+                      ),
                     ],
                   ),
                   FormSection(
@@ -416,188 +376,6 @@ class _InvoiceFormScreenState extends ConsumerState<InvoiceFormScreen> {
                 ],
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _LineTile extends StatelessWidget {
-  const _LineTile({required this.line, required this.onTap, required this.onQty});
-  final InvoiceLine line;
-  final VoidCallback onTap;
-  final ValueChanged<double> onQty;
-
-  @override
-  Widget build(BuildContext context) {
-    final l = line;
-    final short = l.stockQty != null && l.quantity > l.stockQty!;
-    return Card(
-      margin: const EdgeInsets.only(bottom: Spacing.sm),
-      color: context.colors.surfaceContainerLow,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(Radii.card),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(Spacing.md, Spacing.sm, Spacing.xs, Spacing.sm),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(l.description, maxLines: 2, overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w500)),
-                    Text(
-                      [
-                        '${money(l.unitPrice)}${l.unit.isEmpty ? '' : ' / ${l.unit}'}',
-                        if (l.discountPct > 0) '${qty(l.discountPct)}% off',
-                      ].join(' · '),
-                      style: context.text.bodySmall,
-                    ),
-                    if (short)
-                      Text('Only ${qty(l.stockQty)} in stock',
-                          style: context.text.labelSmall?.copyWith(color: StatusColors.warning)),
-                    const SizedBox(height: 2),
-                    Text(money(l.net), style: context.text.titleSmall),
-                  ],
-                ),
-              ),
-              _Stepper(value: l.quantity, onChanged: onQty),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _Stepper extends StatelessWidget {
-  const _Stepper({required this.value, required this.onChanged});
-  final double value;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Decrease',
-          onPressed: value > 1 ? () => onChanged(value - 1) : null,
-          icon: const Icon(Icons.remove_circle_outline_rounded),
-        ),
-        ConstrainedBox(
-          constraints: const BoxConstraints(minWidth: 28),
-          child: Text(qty(value), textAlign: TextAlign.center, style: context.text.titleSmall),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: 'Increase',
-          onPressed: () => onChanged(value + 1),
-          icon: const Icon(Icons.add_circle_outline_rounded),
-        ),
-      ],
-    );
-  }
-}
-
-/// Bottom sheet to edit one line. Pops true when applied.
-class _LineEditor extends StatefulWidget {
-  const _LineEditor({required this.line, required this.isNew});
-  final InvoiceLine line;
-  final bool isNew;
-
-  @override
-  State<_LineEditor> createState() => _LineEditorState();
-}
-
-class _LineEditorState extends State<_LineEditor> {
-  final _form = GlobalKey<FormState>();
-  late final _desc = TextEditingController(text: widget.line.description);
-  late final _qty = TextEditingController(text: NumberField.text(widget.line.quantity));
-  late final _price = TextEditingController(text: NumberField.text(widget.line.unitPrice));
-  late final _disc = TextEditingController(text: NumberField.text(widget.line.discountPct));
-
-  @override
-  void dispose() {
-    for (final c in [_desc, _qty, _price, _disc]) {
-      c.dispose();
-    }
-    super.dispose();
-  }
-
-  void _apply() {
-    if (!_form.currentState!.validate()) return;
-    widget.line
-      ..description = _desc.text.trim()
-      ..quantity = NumberField.parse(_qty)
-      ..unitPrice = NumberField.parse(_price)
-      ..discountPct = NumberField.parse(_disc);
-    Navigator.pop(context, true);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final preview = InvoiceLine(
-      description: '',
-      quantity: NumberField.parse(_qty),
-      unitPrice: NumberField.parse(_price),
-      discountPct: NumberField.parse(_disc),
-    );
-    return Padding(
-      padding: EdgeInsets.fromLTRB(Spacing.xl, 0, Spacing.xl, MediaQuery.viewInsetsOf(context).bottom + Spacing.xl),
-      child: Form(
-        key: _form,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text(widget.isNew ? 'Custom line' : 'Edit item', style: context.text.titleMedium),
-            const SizedBox(height: Spacing.lg),
-            TextFormField(
-              controller: _desc,
-              autofocus: widget.isNew,
-              textCapitalization: TextCapitalization.sentences,
-              decoration: const InputDecoration(labelText: 'Description'),
-              validator: (v) => Validators.required(v, 'Description'),
-            ),
-            const SizedBox(height: Spacing.md),
-            FieldRow(breakpoint: 300, children: [
-              NumberField(
-                controller: _qty,
-                label: 'Quantity',
-                money: false,
-                suffix: widget.line.unit.isEmpty ? null : widget.line.unit,
-                onChanged: (_) => setState(() {}),
-                validator: (v) => Validators.number(v, required: true, allowZero: false, field: 'Quantity'),
-              ),
-              NumberField(
-                controller: _price,
-                label: 'Price',
-                onChanged: (_) => setState(() {}),
-                validator: (v) => Validators.number(v, required: true, field: 'Price'),
-              ),
-            ]),
-            const SizedBox(height: Spacing.md),
-            NumberField(
-              controller: _disc,
-              label: 'Discount',
-              money: false,
-              suffix: '%',
-              onChanged: (_) => setState(() {}),
-              validator: (v) {
-                final e = Validators.number(v, field: 'Discount');
-                if (e != null) return e;
-                return (double.tryParse(v ?? '') ?? 0) > 100 ? 'Can\'t exceed 100%' : null;
-              },
-            ),
-            const SizedBox(height: Spacing.lg),
-            KeyValueRow('Line total', money(preview.net), bold: true),
-            const SizedBox(height: Spacing.md),
-            FilledButton(onPressed: _apply, child: Text(widget.isNew ? 'Add line' : 'Apply')),
           ],
         ),
       ),

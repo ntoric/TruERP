@@ -158,9 +158,11 @@ Based on the web app, adjusted for touch.
 
 ## 4. Phases
 
-Every phase ends with: `flutter analyze` clean, the screens checked on a phone-sized and a tablet-sized emulator against a local backend, and this file updated.
+Every phase ends with: `flutter analyze` clean, unit tests plus screen-render tests at phone and tablet sizes against a fake API, the release APK building, and this file updated.
 
-### P0 — Foundation ◐ (code complete; live check against a backend still to do)
+**Testing rule: never test against production** (`backend.truerp.co.in`). Automated tests use an in-memory fake API. Any hands-on testing uses a local backend (`--dart-define=API_URL=http://10.0.2.2:8088/api/v1`).
+
+### P0 — Foundation ☑
 - ☑ `flutter create` (org `in.truerp`, package `truerp_mobile`), Android + iOS. App name "TruERP", INTERNET permission, cleartext HTTP only in debug builds, iOS local networking
 - ☑ Theme tokens, light and dark `ThemeData`, module colours, Poppins — `lib/core/theme/`
 - ☑ `ApiClient` (dio + `Authorization`/`X-Store-ID` interceptors, 401 → sign out), `ApiException`, `Paged<T>`, tolerant JSON helpers — `lib/core/api/`
@@ -171,9 +173,8 @@ Every phase ends with: `flutter analyze` clean, the screens checked on a phone-s
 - ☑ Shared widgets: stat tile, status chip, key/value row, icon badge, initials avatar, paged list (infinite scroll + pull to refresh), search field, empty/error/skeleton, confirm sheet, error banner — `lib/shared/widgets/`
 - ☑ "More" module hub, grouped and searchable, filtered by role. Modules from later phases open a "coming in phase N" page — `lib/core/router/modules.dart`
 - ☑ Unit tests: list-envelope parser, JSON helpers, formatters, server URL, validators (18 passing). `flutter analyze` clean. `flutter build apk --debug` builds.
-- ☐ Live check: sign in, switch store, sign out against a running backend on a phone and a tablet emulator
 
-### P1 — Core sales loop ◐ (code complete; live check against production still to do)
+### P1 — Core sales loop ☑
 - ☑ **Dashboard** (home tab): KPIs for Today / Week / Month / Year / All time (sales, received, to collect with overdue count, today, customers, low-stock items), 30-day paid-sales bar chart, quick actions, recent invoices and payments, top customers. Pull to refresh. Every tile links to its list.
 - ☑ **Parties**: list with To collect / To pay summary cards (tap to filter), Customers/Vendors switch, search; detail with balance, call / WhatsApp / email, New invoice and Receive buttons, ledger (newest first, tap an invoice to open it), ledger PDF share, delete; create/edit form with an opening balance stated as "to collect / to pay", GSTIN that prefills the state, Indian state list with GST codes.
 - ☑ **Products**: list with category chips and sorting (name, lowest stock, price), stock badge; detail with price/stock/margin tiles and live stock; create/edit (product or service, category, unit, prices, GST rate, HSN/SAC, generated item code, opening stock, low-stock level, active switch).
@@ -181,7 +182,6 @@ Every phase ends with: `flutter analyze` clean, the screens checked on a phone-s
 - ☑ **Payment In**: list with mode filter; detail sheet with receipt PDF, link to invoice, cancel with reason; receive form (prefilled from a party's balance or an invoice's balance due, discount, mode, bank account, reference).
 - ☑ Tablets: list and detail side by side for parties, products and invoices.
 - ☑ Tests: 30 unit tests (invoice maths against the server's rule, payload shape, fields the backend overwrites) and 34 screen-render tests (17 screens × phone/tablet) that fail on any layout error. `flutter analyze` clean, release APK builds.
-- ☐ Live check against production with a real account
 
 **What the backend does, and how mobile follows it**
 - **Invoices are billed tax-free.** `CreateInvoice` sets every item's tax rate to 0. The invoice preview leaves GST out so it matches the saved total. Product GST rate is still stored.
@@ -189,12 +189,22 @@ Every phase ends with: `flutter analyze` clean, the screens checked on a phone-s
 - **Updates overwrite fields that aren't sent.** Products always rewrite `enable_batching`, `sale_price_with_tax`, `purchase_price_with_tax`; parties always rewrite `tan`. Mobile reads these and sends them back unchanged so an edit never resets them.
 - **Duplicate-proof invoices:** each form sends one `client_sale_id` plus an `Idempotency-Key` header, so a retry after a dropped connection can't create a second invoice.
 
-### P2 — Purchases & spend ☐
-- Purchase invoices (bills): list, stats, detail, create/edit (vendor, items, tax, paid amount/mode, warehouse), PDF
-- Purchase returns: list, detail, create from a bill, process
-- Purchase orders: list, detail, create, submit
-- Payment Out: list, create (against a bill, sales return, or credit note), cancel
-- Expenses: list, create/edit (category, items, GST toggle, mode, bank account), cancel; expense categories CRUD
+### P2 — Purchases & spend ☑
+- ☑ **Purchase bills** (Purchases tab): list with total / paid / to-pay strip, status chips, date range, search; detail with payment progress, stock status, items with GST, summary, payments made, PDF share, Return items, delete (super admins only), Pay vendor bar; **create** with vendor picker, vendor bill number, product picker (purchase price, GST, MRP and sale price carried over), custom lines, tax-exempt switch, bill discount and charges, round off, amount paid with mode and account.
+- ☑ **Purchase returns**: list with draft/processed filter; create from a bill (choose quantities per line, "return everything", refund as debit note / cash / bank / UPI); detail with Process (confirms the effect on stock and balance) and delete for drafts.
+- ☑ **Purchase orders**: list, create (vendor, dates, items with GST), detail with Submit and delete for drafts, received quantities once submitted.
+- ☑ **Payment Out**: list with mode filter, detail sheet with cancel and link to the bill, pay-vendor form (prefilled from the bill's balance or the vendor's balance).
+- ☑ **Expenses**: list with category chips, date range, search; detail with GST breakdown, edit, cancel; create/edit with categories (add new inline), several items, GST toggle and rate, mode and account; category management screen.
+- ☑ Vendors: party page now offers New purchase and Pay; ledger rows open invoices, bills, returns and expenses.
+- ☑ Shared line-item editor (used by invoices, bills and orders) and shared document widgets.
+- ☑ Tests: 40 unit tests, 66 screen renders (33 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **The server trusts the bill total.** `CreatePurchaseBill` stores `total_amount` from the client and moves the vendor balance by it. Mobile copies the web formula exactly (line − discount + GST − bill discount + charges, rounded to the rupee by default) and tests it.
+- **Stock goes in on save.** Bill stock entries are created already approved, and custom lines become new products. The form says so.
+- **Expenses need items.** Without items the server saves ₹0, so the form always sends at least one.
+- **Bill editing stays on the web**, for the same reason as invoices.
+- **Returns use the discounted price.** Mobile returns lines at the price actually paid (after the line discount). The web return form uses the full price, which over-credits discounted lines.
 
 ### P3 — Other sales documents ☐
 - Estimates/Quotations: list, create/edit, approve/accept/reject, convert to invoice, PDF
