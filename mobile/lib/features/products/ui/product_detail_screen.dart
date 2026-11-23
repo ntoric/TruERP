@@ -9,6 +9,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/tokens.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../shared/widgets/common.dart';
+import '../../inventory/ui/inventory_screen.dart';
 import '../data/products_repository.dart';
 import 'products_screen.dart';
 
@@ -143,6 +144,26 @@ class _Body extends StatelessWidget {
             ),
           ],
         ),
+        if (!p.isService) ...[
+          const SizedBox(height: Spacing.md),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () => showProductStockSheet(context, productId: p.id, productName: p.name),
+                icon: const Icon(Icons.domain_rounded),
+                label: const Text('By warehouse'),
+              ),
+            ),
+            const SizedBox(width: Spacing.sm),
+            Expanded(
+              child: FilledButton.tonalIcon(
+                onPressed: () => showAdjustStockSheet(context, productId: p.id, productName: p.name),
+                icon: const Icon(Icons.tune_rounded),
+                label: const Text('Adjust stock'),
+              ),
+            ),
+          ]),
+        ],
         const SizedBox(height: Spacing.lg),
         SectionCard(
           title: 'Details',

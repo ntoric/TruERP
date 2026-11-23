@@ -9,10 +9,13 @@ import 'paged_list.dart';
 
 /// Row of headline figures (e.g. Total · Paid · Unpaid) at the top of a list.
 class SummaryStrip extends StatelessWidget {
-  const SummaryStrip({super.key, required this.cells});
+  const SummaryStrip({super.key, required this.cells, this.countCells = const {}});
 
   /// (label, amount or null while loading, colour or null for default).
   final List<(String, double?, Color?)> cells;
+
+  /// Indices of cells that hold a plain count rather than money.
+  final Set<int> countCells;
 
   @override
   Widget build(BuildContext context) {
@@ -20,7 +23,7 @@ class SummaryStrip extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: Spacing.lg, vertical: Spacing.md),
         child: Row(children: [
-          for (final (label, value, color) in cells)
+          for (final (i, (label, value, color)) in cells.indexed)
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -30,7 +33,7 @@ class SummaryStrip extends StatelessWidget {
                   FittedBox(
                     fit: BoxFit.scaleDown,
                     alignment: Alignment.centerLeft,
-                    child: Text(value == null ? '—' : moneyShort(value),
+                    child: Text(value == null ? '—' : (countCells.contains(i) ? number(value) : moneyShort(value)),
                         style: context.text.titleSmall?.copyWith(
                             color: color ?? context.colors.onSurface, fontWeight: FontWeight.w700)),
                   ),

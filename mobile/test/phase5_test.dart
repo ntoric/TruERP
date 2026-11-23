@@ -58,6 +58,7 @@ void main() {
     expect(moduleById('cash-bank')!.isBuilt, isTrue);
     expect(moduleById('accounting')!.isBuilt, isTrue);
     expect(moduleById('estimates')!.isBuilt, isTrue, reason: 'phase 3');
-    expect(moduleById('stock')!.isBuilt, isFalse, reason: 'phase 4 not built yet');
+    expect(moduleById('stock')!.isBuilt, isTrue, reason: 'phase 4');
+    expect(moduleById('pos')!.isBuilt, isFalse, reason: 'phase 8 not built yet');
   });
 }

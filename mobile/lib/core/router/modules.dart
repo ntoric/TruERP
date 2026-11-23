@@ -48,7 +48,7 @@ class ModuleGroup {
 
 /// Roadmap phases that are built. Modules from other phases open a
 /// "coming soon" page. Phases don't land strictly in order.
-const builtPhases = {0, 1, 2, 3, 5, 6};
+const builtPhases = {0, 1, 2, 3, 4, 5, 6};
 
 const moduleGroups = <ModuleGroup>[
   ModuleGroup('Parties', Color(0xFF7C3AED), Icons.groups_rounded, [
@@ -81,6 +81,7 @@ const moduleGroups = <ModuleGroup>[
     AppModule(id: 'categories', name: 'Categories', icon: Icons.sell_rounded, route: '/categories', phase: 4),
     AppModule(id: 'stock', name: 'Stock', icon: Icons.warehouse_rounded, route: '/stock', phase: 4),
     AppModule(id: 'movements', name: 'Stock Movement', icon: Icons.swap_horiz_rounded, route: '/stock/movements', phase: 4),
+    AppModule(id: 'transfers', name: 'Stock Transfers', icon: Icons.local_shipping_outlined, route: '/stock/transfers', phase: 4),
     AppModule(id: 'warehouses', name: 'Warehouses', icon: Icons.domain_rounded, route: '/warehouses', phase: 4),
   ]),
   ModuleGroup('Money', Color(0xFF16A34A), Icons.account_balance_wallet_rounded, [

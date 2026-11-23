@@ -223,11 +223,20 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - **Only processing a sales return moves stock.** Credit and debit notes change balances only, and the confirmation text says which.
 - **Returns and notes use the discounted price** actually charged or paid for each line, same as purchase returns.
 
-### P4 — Inventory ☐
-- Stock overview (`/inventory/stocks`, `/inventory/stats`), low-stock alerts
-- Stock movements with type and date filters, plus a summary
-- Stock adjust (in/out with reason), stock entries approve/reject
-- Categories CRUD; Warehouses CRUD with per-warehouse stock; stock transfers (create, submit, receive)
+### P4 — Inventory ☑
+- ☑ **Stock** (`/stock`): stock value and low-stock count; tabs for **All stock** (product × warehouse × batch, with search, warehouse chips, "in stock only", expiry warnings), **Low stock** (shortfall per product) and **Approvals** (approve / reject with reason / approve all).
+- ☑ **Adjust stock** sheet: product, warehouse (default preselected), add or remove, quantity, reason chips plus note. Also on the product page, next to a **By warehouse** breakdown.
+- ☑ **Stock movements**: current month by default, date range, type chips, search; opening / in / out / closing totals; rows open their invoice, bill or return.
+- ☑ **Transfers**: list (draft / in transit / received), detail with product names, Mark sent / Mark received, create with route and items.
+- ☑ **Warehouses**: list with default and inactive badges; detail with stock and total value; create/edit (default, active, address, contact); delete (not the default).
+- ☑ **Categories**: list, add/edit (name, description, active), delete.
+- ☑ Tests: 72 unit tests, 174 screen renders (87 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **Adjustments are signed and immediate**: positive adds, negative removes, and a reason is required.
+- **Transfers don't move stock.** Submit and receive only change the status and sent/received quantities; no stock entries are created. Every transfer screen says so, and points to adjusting stock per warehouse. Worth fixing on the backend.
+- **Transfer endpoints return product ids only**, so the detail screen looks names up from the stock endpoint in one request.
+- **Category and warehouse updates rewrite every field**, so the forms always send all of them (category parent is kept as-is).
 
 ### P5 — Money ☑ (built ahead of P3 and P4, on request)
 - ☑ **Cash & Bank**: total balance with cash-in-hand and bank split, owner's equity; quick Add / Reduce / Transfer; accounts list (primary star, inactive section); account screen with balance, actions and its transactions; bank account create/edit (opening balance on create only, active switch), make primary, delete; all transactions with type chips, date range and search; payment routing (which account each payment mode deposits into; initial investment fixed to owner's equity).

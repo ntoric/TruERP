@@ -16,6 +16,11 @@ import '../../features/expenses/ui/expense_categories_screen.dart';
 import '../../features/expenses/ui/expense_detail_screen.dart';
 import '../../features/expenses/ui/expense_form_screen.dart';
 import '../../features/expenses/ui/expenses_screen.dart';
+import '../../features/inventory/ui/categories_screen.dart';
+import '../../features/inventory/ui/inventory_screen.dart';
+import '../../features/inventory/ui/movements_screen.dart';
+import '../../features/inventory/ui/transfers_screens.dart';
+import '../../features/inventory/ui/warehouses_screens.dart';
 import '../../features/invoices/ui/invoice_detail_screen.dart';
 import '../../features/invoices/ui/invoice_form_screen.dart';
 import '../../features/invoices/ui/invoices_screen.dart';
@@ -194,6 +199,17 @@ final routerProvider = Provider<GoRouter>((ref) {
         _page('/${k.route}/:id', (s) => ReturnDocDetailScreen(kind: k, docId: s.pathParameters['id']!)),
       ],
       _page('/discounts', (_) => const DiscountsScreen()),
+      // Inventory
+      _page('/stock', (_) => const InventoryScreen()),
+      _page('/stock/movements', (_) => const MovementsScreen()),
+      _page('/stock/transfers', (_) => const TransfersScreen()),
+      _page('/stock/transfers/new', (_) => const TransferFormScreen()),
+      _page('/stock/transfers/:id', (s) => TransferDetailScreen(transferId: s.pathParameters['id']!)),
+      _page('/warehouses', (_) => const WarehousesScreen()),
+      _page('/warehouses/new', (_) => const WarehouseFormScreen()),
+      _page('/warehouses/:id', (s) => WarehouseDetailScreen(warehouseId: s.pathParameters['id']!)),
+      _page('/warehouses/:id/edit', (s) => WarehouseFormScreen(warehouseId: s.pathParameters['id'])),
+      _page('/categories', (_) => const CategoriesScreen()),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,

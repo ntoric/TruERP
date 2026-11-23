@@ -262,7 +262,7 @@ class _ProductFormState extends ConsumerState<_ProductForm> {
                         ),
                       ]),
                       if (_e != null)
-                        Text('Change stock levels from Inventory → Stock adjustments.', style: context.text.bodySmall),
+                        Text('Change stock levels with Adjust stock on the product page.', style: context.text.bodySmall),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Low stock alert'),

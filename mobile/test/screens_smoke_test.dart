@@ -23,6 +23,11 @@ import 'package:truerp_mobile/features/expenses/ui/expense_categories_screen.dar
 import 'package:truerp_mobile/features/expenses/ui/expense_detail_screen.dart';
 import 'package:truerp_mobile/features/expenses/ui/expense_form_screen.dart';
 import 'package:truerp_mobile/features/expenses/ui/expenses_screen.dart';
+import 'package:truerp_mobile/features/inventory/ui/categories_screen.dart';
+import 'package:truerp_mobile/features/inventory/ui/inventory_screen.dart';
+import 'package:truerp_mobile/features/inventory/ui/movements_screen.dart';
+import 'package:truerp_mobile/features/inventory/ui/transfers_screens.dart';
+import 'package:truerp_mobile/features/inventory/ui/warehouses_screens.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoice_detail_screen.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoice_form_screen.dart';
 import 'package:truerp_mobile/features/invoices/ui/invoices_screen.dart';
@@ -162,6 +167,14 @@ final _creditNote = {'id': 'cn1', 'credit_note_number': 'CN-0002', 'status': 'is
   'party': _party, 'invoice_id': 'i1', 'refund_mode': 'cash', 'items': _returnItems};
 final _debitNote = {'id': 'dn1', 'debit_note_number': 'DN-0001', 'status': 'cancelled', 'cancel_reason': 'Raised by mistake', 'date': '2026-11-22T00:00:00Z',
   'total_amount': 2205, 'party': _vendor, 'purchase_bill_id': 'b1', 'refund_mode': 'debit_note', 'items': _returnItems};
+
+const _wh = {'id': 'w1', 'name': 'Main Godown, Peenya Industrial Area', 'code': 'MAIN', 'city': 'Bengaluru', 'state': 'Karnataka', 'is_default': true, 'is_active': true};
+const _wh2 = {'id': 'w2', 'name': 'Shop Floor', 'code': 'SHOP', 'is_active': true};
+final _stockRow = {
+  'id': 's1', 'product_id': 'pr1', 'product': {'name': 'Basmati Rice Premium Long Grain 25kg Bag', 'unit': 'BAG'}, 'outlet_id': 'w1',
+  'outlet_name': 'Main Godown, Peenya Industrial Area', 'batch_no': 'B-2026-11', 'available_qty': 104, 'reserved_qty': 4,
+  'average_cost': 2100, 'exp_date': '2026-12-01T00:00:00Z',
+};
 
 class FakeApi extends ApiClient {
   FakeApi(super.config, super.tokens);
@@ -319,6 +332,21 @@ class FakeApi extends ApiClient {
     if (path.startsWith('/credit-notes/')) return _creditNote;
     if (path.startsWith('/debit-notes/')) return _debitNote;
     if (path == '/discounts/transactions') return {'summary': {'total_discount': 12345.5}};
+    if (path == '/inventory/stats') return {'total_value': 2456789, 'total_qty': 12345, 'product_count': 456, 'outlet_count': 2, 'low_stock_count': 12};
+    if (path == '/inventory/stocks') return [_stockRow];
+    if (path == '/inventory/movements/summary') {
+      return {'summary': {'opening_qty': 1200, 'opening_value': 2345678, 'in_qty': 400, 'out_qty': 360, 'closing_qty': 1240, 'closing_value': 2456789}};
+    }
+    if (path == '/warehouses') return [_wh, _wh2, {'id': 'w3', 'name': 'Old store', 'code': 'OLD', 'is_active': false}];
+    if (path.endsWith('/stock') && path.startsWith('/warehouses/')) {
+      return {'items': [{'item_name': 'Basmati Rice Premium Long Grain 25kg Bag', 'stock_qty': 104, 'cost_price': 2100, 'value': 218400}], 'total_value': 218400};
+    }
+    if (path.startsWith('/inventory/transfers/')) {
+      return {'id': 't1', 'from_outlet_id': 'w1', 'to_outlet_id': 'w2', 'status': 'submitted', 'total_items': 1, 'total_quantity': 10,
+        'sent_date': '2026-11-22T00:00:00Z', 'created_at': '2026-11-21T00:00:00Z', 'notes': 'For weekend sale',
+        'items': [{'product_id': 'pr1', 'quantity': 10, 'sent_quantity': 10}]};
+    }
+    if (path == '/categories') return [{'id': 'c1', 'name': 'Grocery', 'description': 'Rice, dal, oil', 'is_active': true}, {'id': 'c2', 'name': 'Old', 'is_active': false}];
     if (path == '/payments/next-number') return {'payment_in_number': 'PIN-00043'};
     if (path == '/cash-bank/accounts') {
       return [{'id': 'b1', 'account_name': 'HDFC Current', 'account_number': '50100012345678', 'is_primary': true, 'is_active': true}];
@@ -361,6 +389,22 @@ class FakeApi extends ApiClient {
       '/discounts/transactions' => {'transactions': [
           {'id': 'i1', 'type': 'sale_invoice', 'type_label': 'Sale Invoice', 'reference': 'INV-2026-000123', 'date': '2026-11-20',
            'party_name': 'Sharma General Stores Private Limited', 'total_discount': 345.05, 'document_total': 4706},
+        ], 'total': 1, 'page': 1, 'per_page': 25},
+      '/inventory/stocks' => {'data': [_stockRow, {..._stockRow, 'id': 's2', 'available_qty': 0, 'exp_date': null, 'batch_no': ''}], 'total': 2, 'page': 1, 'per_page': 25},
+      '/inventory/alerts/low-stock' => {'data': [
+          {'product_id': 'pr1', 'product_name': 'Basmati Rice Premium Long Grain 25kg Bag', 'current_stock': 4, 'min_stock': 10, 'outlet_name': 'Main'},
+          {'product_id': 'pr3', 'product_name': 'Sugar', 'current_stock': 0, 'min_stock': 5},
+        ], 'total': 2, 'page': 1, 'per_page': 25},
+      '/inventory/entries' => {'data': [
+          {'id': 'e1', 'item_name': 'Basmati Rice Premium Long Grain 25kg Bag', 'entry_type': 'purchase', 'quantity': 40, 'approval_status': 'pending', 'outlet_name': 'Main Godown', 'entry_date': '2026-11-20T00:00:00Z'},
+        ], 'total': 1, 'page': 1, 'per_page': 25},
+      '/inventory/movements' => {'data': [
+          {'id': 'm1', 'date': '2026-11-20', 'product_id': 'pr1', 'product_name': 'Basmati Rice Premium Long Grain 25kg Bag', 'transaction_type': 'purchase',
+           'type_label': 'Purchase', 'document_no': 'VND/2026-27/000981', 'reference_type': 'purchase_bill', 'reference_id': 'b1', 'qty_in': 40, 'stock': 104, 'unit': 'BAG', 'outlet_name': 'Main Godown'},
+          {'id': 'm2', 'date': '2026-11-21', 'product_id': 'pr1', 'product_name': 'Basmati Rice', 'transaction_type': 'sale', 'type_label': 'Sale', 'qty_out': 2, 'stock': 102},
+        ], 'total': 2, 'page': 1, 'per_page': 50},
+      '/inventory/transfers' => {'data': [
+          {'id': 't1', 'from_outlet_id': 'w1', 'to_outlet_id': 'w2', 'status': 'submitted', 'total_items': 1, 'total_quantity': 10, 'created_at': '2026-11-21T00:00:00Z'},
         ], 'total': 1, 'page': 1, 'per_page': 25},
       '/payments' => {'payments': [_payment, {..._payment, 'id': 'pay2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
       _ => const <dynamic>[],
@@ -467,6 +511,16 @@ void main() {
     'debit note detail': () => const ReturnDocDetailScreen(kind: ReturnKind.debitNote, docId: 'dn1'),
     'debit note form': () => const ReturnDocFormScreen(kind: ReturnKind.debitNote, sourceId: 'b1'),
     'discounts': () => const DiscountsScreen(),
+    'inventory': () => const InventoryScreen(),
+    'movements': () => const MovementsScreen(),
+    'transfers': () => const TransfersScreen(),
+    'transfer detail': () => const TransferDetailScreen(transferId: 't1'),
+    'transfer form': () => const TransferFormScreen(),
+    'warehouses': () => const WarehousesScreen(),
+    'warehouse detail': () => const WarehouseDetailScreen(warehouseId: 'w1'),
+    'warehouse form (new)': () => const WarehouseFormScreen(),
+    'warehouse form (edit)': () => const WarehouseFormScreen(warehouseId: 'w1'),
+    'categories': () => const CategoriesScreen(),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};
