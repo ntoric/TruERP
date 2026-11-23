@@ -2,10 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/accounting/ui/accounting_reports.dart';
+import '../../features/accounting/ui/accounting_screen.dart';
 import '../../features/auth/ui/change_password_required_screen.dart';
 import '../../features/auth/ui/forgot_password_screen.dart';
 import '../../features/auth/ui/login_screen.dart';
 import '../../features/auth/ui/register_screen.dart';
+import '../../features/cash_bank/ui/bank_account_form_screen.dart';
+import '../../features/cash_bank/ui/cash_bank_screen.dart';
+import '../../features/cash_bank/ui/payment_routing_screen.dart';
 import '../../features/dashboard/ui/home_screen.dart';
 import '../../features/expenses/ui/expense_categories_screen.dart';
 import '../../features/expenses/ui/expense_detail_screen.dart';
@@ -23,6 +28,7 @@ import '../../features/payments/ui/payment_out_form_screen.dart';
 import '../../features/payments/ui/payments_in_screen.dart';
 import '../../features/payments/ui/payments_out_screen.dart';
 import '../../features/products/ui/product_detail_screen.dart';
+import '../../features/profit/ui/profit_distribution_screen.dart';
 import '../../features/products/ui/product_form_screen.dart';
 import '../../features/products/ui/products_screen.dart';
 import '../../features/purchases/ui/purchase_bill_detail_screen.dart';
@@ -133,6 +139,22 @@ final routerProvider = Provider<GoRouter>((ref) {
       _page('/expenses/categories', (_) => const ExpenseCategoriesScreen()),
       _page('/expenses/:id', (s) => ExpenseDetailScreen(expenseId: s.pathParameters['id']!)),
       _page('/expenses/:id/edit', (s) => ExpenseFormScreen(expenseId: s.pathParameters['id'])),
+      // Cash & bank
+      _page('/cash-bank', (_) => const CashBankScreen()),
+      _page('/cash-bank/transactions', (_) => const CashTransactionsScreen()),
+      _page('/cash-bank/routing', (_) => const PaymentRoutingScreen()),
+      _page('/cash-bank/accounts/new', (_) => const BankAccountFormScreen()),
+      _page('/cash-bank/accounts/:id/edit', (s) => BankAccountFormScreen(accountId: s.pathParameters['id'])),
+      _page('/cash-bank/account/:id', (s) => CashAccountScreen(accountId: s.pathParameters['id']!)),
+      // Profit distribution
+      _page('/profit-distribution', (_) => const ProfitDistributionScreen()),
+      _page('/profit-distribution/new', (_) => const ProfitPayoutFormScreen()),
+      // Accounting (read-only)
+      _page('/accounting', (_) => const AccountingScreen()),
+      _page('/accounting/trial-balance', (_) => const TrialBalanceScreen()),
+      _page('/accounting/profit-loss', (_) => const ProfitLossScreen()),
+      _page('/accounting/balance-sheet', (_) => const BalanceSheetScreen()),
+      _page('/accounting/ledger/:id', (s) => GeneralLedgerScreen(accountId: s.pathParameters['id']!)),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,

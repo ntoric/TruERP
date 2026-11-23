@@ -29,6 +29,8 @@ class AppModule {
   final bool userManagementOnly;
   final String keywords;
 
+  bool get isBuilt => builtPhases.contains(phase);
+
   bool visibleTo(AppUser? user) {
     if (superAdminOnly && !(user?.isSuperAdmin ?? false)) return false;
     if (userManagementOnly && !(user?.canManageUsers ?? false)) return false;
@@ -44,9 +46,9 @@ class ModuleGroup {
   final List<AppModule> modules;
 }
 
-/// Phase that is fully built. Modules above it show a "coming soon" page.
-/// Bumped as each roadmap phase lands.
-const int builtPhase = 2;
+/// Roadmap phases that are built. Modules from other phases open a
+/// "coming soon" page. Phases don't land strictly in order.
+const builtPhases = {0, 1, 2, 5};
 
 const moduleGroups = <ModuleGroup>[
   ModuleGroup('Parties', Color(0xFF7C3AED), Icons.groups_rounded, [

@@ -13,6 +13,11 @@ import 'package:truerp_mobile/core/auth/session.dart';
 import 'package:truerp_mobile/core/auth/session_controller.dart';
 import 'package:truerp_mobile/core/config/app_config.dart';
 import 'package:truerp_mobile/core/theme/app_theme.dart';
+import 'package:truerp_mobile/features/accounting/ui/accounting_reports.dart';
+import 'package:truerp_mobile/features/accounting/ui/accounting_screen.dart';
+import 'package:truerp_mobile/features/cash_bank/ui/bank_account_form_screen.dart';
+import 'package:truerp_mobile/features/cash_bank/ui/cash_bank_screen.dart';
+import 'package:truerp_mobile/features/cash_bank/ui/payment_routing_screen.dart';
 import 'package:truerp_mobile/features/dashboard/ui/home_screen.dart';
 import 'package:truerp_mobile/features/expenses/ui/expense_categories_screen.dart';
 import 'package:truerp_mobile/features/expenses/ui/expense_detail_screen.dart';
@@ -30,6 +35,7 @@ import 'package:truerp_mobile/features/payments/ui/payment_out_form_screen.dart'
 import 'package:truerp_mobile/features/payments/ui/payments_in_screen.dart';
 import 'package:truerp_mobile/features/payments/ui/payments_out_screen.dart';
 import 'package:truerp_mobile/features/products/ui/product_detail_screen.dart';
+import 'package:truerp_mobile/features/profit/ui/profit_distribution_screen.dart';
 import 'package:truerp_mobile/features/products/ui/product_form_screen.dart';
 import 'package:truerp_mobile/features/products/ui/products_screen.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bill_detail_screen.dart';
@@ -95,6 +101,26 @@ final _order = {
   'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 50, 'received_qty': 40, 'unit_price': 2100, 'tax_rate': 5, 'total': 110250}],
 };
 
+const _hdfc = {
+  'id': 'b1', 'account_name': 'HDFC Current Account Main Branch', 'bank_name': 'HDFC Bank', 'account_number': '50100012345678',
+  'ifsc_code': 'HDFC0001234', 'account_type': 'current', 'balance': 1234567.89, 'is_primary': true, 'is_active': true,
+};
+const _sbi = {'id': 'b2', 'account_name': 'SBI Savings', 'bank_name': 'SBI', 'account_number': '30001234', 'balance': -2500, 'is_active': true};
+const _old = {'id': 'b3', 'account_name': 'Old ICICI', 'bank_name': 'ICICI', 'account_number': '1', 'balance': 0, 'is_active': false};
+final _cashTxns = [
+  {'id': 't1', 'transaction_type': 'add', 'amount': 50000, 'date': '2026-11-20T00:00:00Z', 'description': 'Owner capital introduced for Diwali stock', 'account_id': 'b1', 'account': _hdfc},
+  {'id': 't2', 'transaction_type': 'reduce', 'amount': 1200, 'date': '2026-11-21T00:00:00Z', 'reference': 'CHG-NOV'},
+  {'id': 't3', 'transaction_type': 'transfer_out', 'amount': 10000, 'date': '2026-11-22T00:00:00Z', 'account_id': 'b1', 'account': _hdfc, 'is_linked': true},
+];
+const _partner = {'id': 'pt1', 'name': 'Rahul Mehta', 'phone': '9876500000', 'pan': 'ABCDE1234F', 'is_active': true};
+final _accounts = [
+  {'id': 'a1', 'code': '1000', 'name': 'Cash in Hand', 'account_type': 'asset', 'sub_type': 'current_asset', 'balance': 45000},
+  {'id': 'a2', 'code': '2000', 'name': 'Accounts Payable', 'account_type': 'liability', 'balance': 120000},
+  {'id': 'a3', 'code': '4000', 'name': 'Sales', 'account_type': 'income', 'balance': 9876543},
+  {'id': 'a4', 'code': '5100', 'name': 'General Expenses', 'account_type': 'expense', 'balance': 23456},
+];
+const _row = {'account_id': 'a1', 'account_code': '1000', 'account_name': 'Cash in Hand', 'debit': 45000, 'credit': 0, 'amount': 45000};
+
 class FakeApi extends ApiClient {
   FakeApi(super.config, super.tokens);
 
@@ -143,6 +169,33 @@ class FakeApi extends ApiClient {
       return [{'id': 'c1', 'name': 'Electricity & Utilities', 'is_active': true}, {'id': 'c2', 'name': 'Rent', 'is_active': false}];
     }
     if (path.startsWith('/expenses/')) return _expense;
+    if (path == '/cash-bank/summary') {
+      return {'total_balance': 1277067.89, 'cash_in_hand': 45000, 'initial_investment': 500000, 'bank_accounts': [_hdfc, _sbi, _old]};
+    }
+    if (path == '/cash-bank/payment-method-mappings') {
+      return {'mappings': [
+        {'payment_method': 'cash', 'label': 'Cash'},
+        {'payment_method': 'upi', 'label': 'UPI', 'bank_account_id': 'b1'},
+        {'payment_method': 'card', 'label': 'Card', 'bank_account_id': 'gone'},
+        {'payment_method': 'initial_investment', 'label': 'Initial Investment'},
+      ]};
+    }
+    if (path == '/partners') return [_partner, {'id': 'pt2', 'name': 'Priya Shah', 'is_active': false}];
+    if (path == '/accounting/stats') {
+      return {'total_assets': 2345678, 'total_liabilities': 120000, 'total_equity': 500000, 'total_income': 9876543, 'total_expense': 23456, 'net_profit': 9853087};
+    }
+    if (path == '/accounting/accounts') return _accounts;
+    if (path == '/accounting/trial-balance') return {'items': [_row, {..._row, 'account_id': 'a3', 'account_name': 'Sales', 'debit': 0, 'credit': 45000}], 'total_debit': 45000, 'total_credit': 45000, 'is_balanced': true};
+    if (path == '/accounting/profit-loss') return {'income': [_row], 'expenses': const [], 'total_income': 45000, 'total_expense': 0, 'net_profit': 45000};
+    if (path == '/accounting/balance-sheet') {
+      return {'assets': [_row], 'liabilities': const [], 'equity': const [], 'total_assets': 45000, 'total_liabilities': 0, 'total_equity': 40000, 'is_balanced': false};
+    }
+    if (path.startsWith('/accounting/general-ledger/')) {
+      return {'account': _accounts.first, 'opening_balance': 1000, 'closing_balance': 45000, 'entries': [
+        {'transaction_date': '2026-11-20T00:00:00Z', 'transaction_type': 'invoice', 'reference_number': 'INV-1', 'description': 'Sale', 'debit': 4706, 'balance': 5706},
+        {'transaction_date': '2026-11-21T00:00:00Z', 'transaction_type': 'expense', 'credit': 706, 'balance': 5000},
+      ]};
+    }
     if (path == '/payments/next-number') return {'payment_in_number': 'PIN-00043'};
     if (path == '/cash-bank/accounts') {
       return [{'id': 'b1', 'account_name': 'HDFC Current', 'account_number': '50100012345678', 'is_primary': true, 'is_active': true}];
@@ -168,6 +221,15 @@ class FakeApi extends ApiClient {
       '/expenses' => [_expense, {..._expense, 'id': 'e2', 'status': 'cancelled'}],
       '/purchase-returns' => {'data': [_return, {..._return, 'id': 'r2', 'status': 'processed'}]},
       '/purchase/orders' => {'data': [_order, {..._order, 'id': 'o2', 'status': 'draft'}]},
+      '/cash-bank/transactions' => {'transactions': _cashTxns, 'total': 3, 'page': 1, 'per_page': 25},
+      '/profit-distributions' => [
+          {'id': 'd1', 'distribution_number': 'PD-0001', 'amount': 250000, 'date': '2026-10-01T00:00:00Z', 'partner': _partner, 'account': _hdfc, 'description': 'H1 profit share'},
+          {'id': 'd2', 'distribution_number': 'PD-0002', 'amount': 5000, 'date': '2026-11-01T00:00:00Z', 'partner': _partner},
+        ],
+      '/accounting/journal' => {'data': [
+          {'id': 'j1', 'entry_number': 'JE-0001', 'entry_date': '2026-11-20T00:00:00Z', 'description': 'Sales invoice INV-1', 'total_debit': 4706, 'total_credit': 4706, 'status': 'posted',
+           'lines': [{'account': {'code': '1100', 'name': 'Accounts Receivable'}, 'debit': 4706}, {'account': {'code': '4000', 'name': 'Sales'}, 'credit': 4706}]},
+        ], 'total': 1, 'page': 1, 'per_page': 25},
       '/payments' => {'payments': [_payment, {..._payment, 'id': 'pay2', 'status': 'cancelled'}], 'total': 2, 'page': 1, 'per_page': 25},
       _ => const <dynamic>[],
     };
@@ -229,6 +291,20 @@ void main() {
     'purchase orders': () => const PurchaseOrdersScreen(),
     'purchase order detail': () => const PurchaseOrderDetailScreen(orderId: 'o1'),
     'purchase order form': () => const PurchaseOrderFormScreen(),
+    'cash & bank': () => const CashBankScreen(),
+    'cash transactions': () => const CashTransactionsScreen(),
+    'cash account (bank)': () => const CashAccountScreen(accountId: 'b1'),
+    'cash account (cash)': () => const CashAccountScreen(accountId: 'cash'),
+    'bank account form (new)': () => const BankAccountFormScreen(),
+    'bank account form (edit)': () => const BankAccountFormScreen(accountId: 'b1'),
+    'payment routing': () => const PaymentRoutingScreen(),
+    'profit distribution': () => const ProfitDistributionScreen(),
+    'profit payout form': () => const ProfitPayoutFormScreen(),
+    'accounting': () => const AccountingScreen(),
+    'trial balance': () => const TrialBalanceScreen(),
+    'profit & loss': () => const ProfitLossScreen(),
+    'balance sheet': () => const BalanceSheetScreen(),
+    'general ledger': () => const GeneralLedgerScreen(accountId: 'a1'),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};

@@ -206,7 +206,7 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - **Bill editing stays on the web**, for the same reason as invoices.
 - **Returns use the discounted price.** Mobile returns lines at the price actually paid (after the line discount). The web return form uses the full price, which over-credits discounted lines.
 
-### P3 — Other sales documents ☐
+### P3 — Other sales documents ☐ (deferred; P5 built first)
 - Estimates/Quotations: list, create/edit, approve/accept/reject, convert to invoice, PDF
 - Delivery challans: list, create/edit, view
 - Sales returns: list, create from an invoice, process
@@ -219,10 +219,19 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - Stock adjust (in/out with reason), stock entries approve/reject
 - Categories CRUD; Warehouses CRUD with per-warehouse stock; stock transfers (create, submit, receive)
 
-### P5 — Money ☐
-- Cash & Bank: summary card, accounts (create, edit, set primary), transactions, add money / reduce money / transfer
-- Profit distribution: partners CRUD, distributions list and create
-- Accounting, read-only: chart of accounts, journal entries, trial balance, P&L, balance sheet, general ledger
+### P5 — Money ☑ (built ahead of P3 and P4, on request)
+- ☑ **Cash & Bank**: total balance with cash-in-hand and bank split, owner's equity; quick Add / Reduce / Transfer; accounts list (primary star, inactive section); account screen with balance, actions and its transactions; bank account create/edit (opening balance on create only, active switch), make primary, delete; all transactions with type chips, date range and search; payment routing (which account each payment mode deposits into; initial investment fixed to owner's equity).
+- ☑ **Profit distribution**: payouts list with totals (overall and this year) and partner filter; partners tab with amount paid out per partner; partner add/edit/delete; payout form from cash or a bank account. Long-press a payout to delete it.
+- ☑ **Accounting** (read-only): headline figures, chart of accounts grouped by type, journal with entry details, trial balance, profit & loss (defaults to the current financial year from 1 April), balance sheet, general ledger per account with date range. Every report row opens its account's ledger.
+- ☑ Module hub and dashboard quick actions only send people to built modules (phases are tracked as a set now, since they don't land in order).
+- ☑ Tests: 48 unit tests, 94 screen renders (47 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **Transfers are bank-to-bank only.** Cash in hand is changed with Add / Reduce (no account). The transfer form only lists bank accounts and checks the source balance, as the server does.
+- **Money in vs out** uses the server's rule: only `add` and `transfer_in` count as money in.
+- **Deleting transactions** is offered only to super admins (the endpoint requires it), and only for hand-entered add/reduce rows. Rows created by invoices, payments or expenses belong to those documents.
+- **Bank account edits rewrite every field**, including active status, so the form always sends all of them. The opening balance can't be edited after creation.
+- **Profit payouts from a bank account can't exceed its balance** (server rule), so the form checks it first.
 
 ### P6 — Reports & GST ☐
 - Reports hub (cards like `/reports/index`)

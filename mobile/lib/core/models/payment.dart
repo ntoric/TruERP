@@ -34,32 +34,44 @@ class BankAccount {
     required this.accountName,
     this.bankName = '',
     this.accountNumber = '',
+    this.ifscCode = '',
+    this.accountType = 'savings',
+    this.openingBalance = 0,
     this.balance = 0,
     this.isPrimary = false,
     this.isActive = true,
+    this.notes = '',
   });
 
   final String id;
   final String accountName;
   final String bankName;
   final String accountNumber;
+  final String ifscCode;
+  final String accountType;
+  final double openingBalance;
   final double balance;
   final bool isPrimary;
   final bool isActive;
+  final String notes;
 
-  String get label {
-    final tail = accountNumber.length > 4 ? ' ••${accountNumber.substring(accountNumber.length - 4)}' : '';
-    return '${accountName.isNotEmpty ? accountName : bankName}$tail';
-  }
+  String get maskedNumber =>
+      accountNumber.length > 4 ? '••${accountNumber.substring(accountNumber.length - 4)}' : accountNumber;
+
+  String get label => '${accountName.isNotEmpty ? accountName : bankName}${accountNumber.length > 4 ? ' $maskedNumber' : ''}';
 
   factory BankAccount.fromJson(JsonMap j) => BankAccount(
         id: asString(j['id']),
         accountName: asString(j['account_name']),
         bankName: asString(j['bank_name']),
         accountNumber: asString(j['account_number']),
+        ifscCode: asString(j['ifsc_code']),
+        accountType: asString(j['account_type'], 'savings'),
+        openingBalance: asDouble(j['opening_balance']),
         balance: asDouble(j['balance']),
         isPrimary: asBool(j['is_primary']),
         isActive: asBool(j['is_active'], true),
+        notes: asString(j['notes']),
       );
 }
 

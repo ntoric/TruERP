@@ -12,7 +12,7 @@ import '../shell/account_sheet.dart';
 
 /// Opens a module: its real route once built, otherwise the placeholder.
 void openModule(BuildContext context, AppModule m) {
-  if (m.phase <= builtPhase) {
+  if (m.isBuilt) {
     context.push(m.route);
   } else {
     context.push('/m/${m.id}');
@@ -102,7 +102,7 @@ class _ModuleTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final soon = module.phase > builtPhase;
+    final soon = !module.isBuilt;
     return Card(
       clipBehavior: Clip.antiAlias,
       child: InkWell(

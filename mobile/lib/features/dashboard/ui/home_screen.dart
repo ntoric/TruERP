@@ -346,7 +346,8 @@ class _QuickActions extends StatelessWidget {
       ('Add party', Icons.person_add_alt_rounded, const Color(0xFF7C3AED), '/parties/new'),
       ('Add product', Icons.add_box_rounded, const Color(0xFF0891B2), '/products/new'),
     ];
-    final modules = ['purchase-bills', 'expenses', 'pos', 'reports']
+    // Only built modules; later phases can swap their own in.
+    final modules = ['purchase-bills', 'expenses', 'cash-bank', 'accounting']
         .map(moduleById)
         .whereType<AppModule>()
         .toList();
