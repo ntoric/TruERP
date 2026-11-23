@@ -233,11 +233,26 @@ Every phase ends with: `flutter analyze` clean, unit tests plus screen-render te
 - **Bank account edits rewrite every field**, including active status, so the form always sends all of them. The opening balance can't be edited after creation.
 - **Profit payouts from a bank account can't exceed its balance** (server rule), so the form checks it first.
 
-### P6 — Reports & GST ☐
-- Reports hub (cards like `/reports/index`)
-- Daily report (one date or a period), Daily profit, Profit & Loss, Billwise profit, Stock report, Party balances. Each has a date range, summary tiles and a breakdown list, and a "Share PDF/Excel" option that uses the existing server export endpoints.
-- Analytics: sales, tax, outstanding, customer-wise, product-wise, category-wise, payments
-- GST: summary, GSTR-1, GSTR-3B, GSTR-2 views; e-invoice and e-way-bill history
+### P6 — Reports & GST ☑
+- ☑ **Reports hub** grouped into Business, Stock & parties, Analytics and GST.
+- ☑ **Shared period bar** for dated reports: Day / Week / Month / Year / Custom, with ‹ › to step between periods (never into the future), labelled with the server's own period label.
+- ☑ **Day & period summary**: sales, profit, money in/out tiles; activity (sales, returns, notes, purchases, expenses, payouts, GST collected, payments, net cash flow, payables); payment-mode table; expense lines. Shares PDF or CSV.
+- ☑ **Profit & loss** (trading account): opening/closing stock, purchases, sales, returns, gross profit, other income and indirect expenses with their lines, net profit. Shares PDF or Excel.
+- ☑ **Daily profit**: totals and one expandable row per day (up to 400 days per request). Shares PDF or Excel.
+- ☑ **Bill-wise profit**: search, four sort orders, each bill's profit and margin, item breakdown sheet, link to the invoice. Shares PDF or Excel.
+- ☑ **Stock report**: opening/closing value and change, per-product opening/in/out/closing, "only items that moved" filter, search. Shares PDF or Excel.
+- ☑ **Party balances** as of any date: customers/vendors filter, hide settled, search, to collect / to pay totals. Shares PDF or Excel.
+- ☑ **Outstanding & aging**: total, aging buckets with bars, by customer, overdue invoices.
+- ☑ **Analytics** (last 30 days / 12 weeks / 12 months / 5 years): top customers, top products, categories (ranked with share bars), payments by mode.
+- ☑ **GST** by month: summary (output GST, input credit, net liability, breakdown), GSTR-3B, GSTR-1, GSTR-2, e-invoice and e-way bill history.
+- ☑ Tests: 59 unit tests, 120 screen renders (60 screens × phone/tablet). Release APK builds.
+
+**What the backend does, and how mobile follows it**
+- **All dated reports share one set of query params** (`period`, `date`, `start_date`, `end_date`), and each has `/pdf` and `/excel` exports (the period summary exports PDF and CSV). The share menu downloads them with the same params and opens the system share sheet.
+- **Sales GST will read as zero** while invoices are billed tax-free (see P1). GST paid on purchases and input credit still appear.
+- **GSTR-2 is built from purchase receipts**, not purchase bills, so it's often empty. The screen says so.
+- **Analytics use rolling windows**, not calendar periods, so their chips read "Last 12 months" and so on.
+- Filing returns and generating e-invoices / e-way bills stay on the web.
 
 ### P7 — HR & Payroll ☐
 - Staff: list, detail (balance, attendance, advances, deductions, extras), create/edit

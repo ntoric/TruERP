@@ -38,6 +38,10 @@ import 'package:truerp_mobile/features/products/ui/product_detail_screen.dart';
 import 'package:truerp_mobile/features/profit/ui/profit_distribution_screen.dart';
 import 'package:truerp_mobile/features/products/ui/product_form_screen.dart';
 import 'package:truerp_mobile/features/products/ui/products_screen.dart';
+import 'package:truerp_mobile/features/reports/ui/business_reports.dart';
+import 'package:truerp_mobile/features/reports/ui/gst_screen.dart';
+import 'package:truerp_mobile/features/reports/ui/reports_hub_screen.dart';
+import 'package:truerp_mobile/features/reports/ui/stock_party_reports.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bill_detail_screen.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bill_form_screen.dart';
 import 'package:truerp_mobile/features/purchases/ui/purchase_bills_screen.dart';
@@ -121,6 +125,20 @@ final _accounts = [
 ];
 const _row = {'account_id': 'a1', 'account_code': '1000', 'account_name': 'Cash in Hand', 'debit': 45000, 'credit': 0, 'amount': 45000};
 
+Map<String, dynamic> _m(num amount, [int count = 0]) => {'total_amount': amount, 'count': count};
+final _periodReport = {
+  'label': 'November 2026', 'start_date': '2026-11-01', 'end_date': '2026-11-30',
+  'sales': _m(9876543.21, 1234), 'purchases': _m(4567890, 210), 'expenses': _m(123456, 40), 'payments_in': _m(8765432, 900),
+  'payments_out': _m(4000000, 150), 'sales_returns': _m(12000, 3), 'purchase_returns': _m(5000, 1), 'credit_notes': _m(0),
+  'debit_notes': _m(0), 'profit_distributions': _m(250000, 1), 'accounts_payable': _m(56789, 4), 'accounts_payable_total': 345678,
+  'gst_collected': 0, 'net_cash_flow': 4765432, 'daily_profit': 1234567, 'product_profit': 2345678,
+  'payments_by_method': [
+    {'method': 'cash', 'label': 'Cash', 'in': _m(1234567, 300), 'out': _m(345678, 20)},
+    {'method': 'bank_transfer', 'label': 'Bank Transfer', 'in': _m(7530865, 600), 'out': _m(3654322, 130)},
+  ],
+  'expense_lines': [{'category': 'Electricity & Utilities', 'description': 'November electricity bill for the main warehouse', 'amount': 11800, 'date': '2026-11-20'}],
+};
+
 class FakeApi extends ApiClient {
   FakeApi(super.config, super.tokens);
 
@@ -196,6 +214,79 @@ class FakeApi extends ApiClient {
         {'transaction_date': '2026-11-21T00:00:00Z', 'transaction_type': 'expense', 'credit': 706, 'balance': 5000},
       ]};
     }
+    if (path == '/dashboard/periodic-report') return _periodReport;
+    if (path == '/dashboard/profit-loss-report') {
+      return {'label': 'November 2026', 'sales': _m(9876543, 1234), 'sales_returns': _m(12000), 'purchases': _m(4567890, 210),
+        'purchase_returns': _m(5000), 'opening_stock': 2345678, 'closing_stock': 2456789, 'gross_profit': 5412345,
+        'other_income': _m(1000), 'indirect_expenses': _m(2000), 'expenses': _m(123456, 40), 'net_profit': -5000,
+        'other_income_lines': [{'name': 'Interest received from fixed deposit', 'amount': 1000}],
+        'indirect_expense_lines': [{'name': 'Bank charges', 'amount': 2000}],
+        'expense_lines': _periodReport['expense_lines']};
+    }
+    if (path == '/dashboard/daily-profit-report') {
+      Map<String, dynamic> row(String d, num n) => {'date': d, 'sales': 123456.78, 'cogs': 100000, 'gross_profit': 23456.78, 'expenses': 1200, 'net_profit': n};
+      return {'label': 'November 2026', 'total_days': 2, 'rows': [row('2026-11-23', 22256.78), row('2026-11-22', -1500)], 'totals': row('', 20756.78)};
+    }
+    if (path == '/dashboard/billwise-profit-report') {
+      return {'label': 'November 2026', 'bill_count': 2, 'sale_amount': 9000, 'cost_amount': 7000, 'profit': 2000, 'margin_pct': 22.2,
+        'bills': [
+          {'invoice_id': 'i1', 'invoice_number': 'INV-2026-000123', 'date': '2026-11-20', 'party_name': 'Sharma General Stores Private Limited',
+           'sale_amount': 4655.95, 'cost_amount': 4200, 'profit': 455.95, 'margin_pct': 9.8,
+           'items': [{'description': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity': 2, 'sale_amount': 4655.95, 'cost_amount': 4200, 'profit': 455.95}]},
+          {'invoice_id': 'i2', 'invoice_number': 'INV-2', 'date': '2026-11-21', 'party_name': '', 'sale_amount': 100, 'cost_amount': 150, 'profit': -50, 'margin_pct': -50},
+        ]};
+    }
+    if (path == '/dashboard/stock-report') {
+      return {'label': 'November 2026', 'opening_stock': 2345678, 'closing_stock': 2456789, 'stock_change': 111111, 'lines': [
+        {'product_id': 'pr1', 'product_name': 'Basmati Rice Premium Long Grain 25kg Bag', 'category': 'Grocery', 'unit': 'BAG',
+         'opening_qty': 100, 'in_qty': 40, 'out_qty': 36, 'closing_qty': 104, 'closing_value': 218400},
+        {'product_id': 'pr2', 'product_name': 'Idle item', 'closing_qty': 5, 'closing_value': 50},
+      ]};
+    }
+    if (path == '/dashboard/party-balance-report') {
+      return {'closing_receivable': 1234567, 'closing_payable': -45000, 'net_closing': 1189567, 'lines': [
+        {'party_id': 'p1', 'party_name': 'Sharma General Stores Private Limited', 'party_type': 'customer', 'debit': 2000000, 'credit': 765432, 'closing_balance': 1234567.89},
+        {'party_id': 'p2', 'party_name': 'Acme Supplies', 'party_type': 'vendor', 'closing_balance': -45000},
+        {'party_id': 'p3', 'party_name': 'Settled Co', 'closing_balance': 0},
+      ]};
+    }
+    if (path == '/reports/outstanding') {
+      return {'summary': {'total_outstanding': 4444444, 'overdue_count': 5},
+        'aging': {'current': 1000000, 'days_1_30': 2000000, 'days_31_60': 444444, 'days_61_90': 500000, 'days_90_plus': 500000},
+        'by_party': [{'party_id': 'p1', 'party_name': 'Sharma General Stores Private Limited', 'invoice_count': 12, 'outstanding': 1234567}],
+        'invoices': [{'id': 'i1', 'invoice_number': 'INV-2026-000123', 'party_name': 'Sharma General Stores Private Limited', 'date': '2026-10-01', 'outstanding': 2706, 'days_overdue': 53}]};
+    }
+    if (path == '/reports/customers') {
+      return {'summary': {'customer_count': 2, 'total_paid_sales': 1500000}, 'customers': [
+        {'party_id': 'p1', 'name': 'Sharma General Stores Private Limited', 'invoice_count': 42, 'total_sales': 999999.99, 'total_outstanding': 1234567},
+        {'party_id': 'p9', 'name': 'Walk-in', 'invoice_count': 1, 'total_sales': 500}]};
+    }
+    if (path == '/reports/products') {
+      return {'summary': {'product_count': 1, 'total_revenue': 999999}, 'products': [
+        {'product_id': 'pr1', 'name': 'Basmati Rice Premium Long Grain 25kg Bag', 'quantity_sold': 412.5, 'unit': 'BAG', 'revenue': 999999, 'share_percent': 100}]};
+    }
+    if (path == '/reports/categories') {
+      return {'summary': {'category_count': 2, 'total_revenue': 1000}, 'categories': [
+        {'category': 'Grocery', 'product_count': 12, 'quantity_sold': 40, 'revenue': 900, 'share_percent': 90}, {'category': '', 'revenue': 100}]};
+    }
+    if (path == '/reports/payments') {
+      return {'summary': {'total_in': 900, 'total_out': 300}, 'by_mode': [
+        {'mode': 'cash', 'direction': 'in', 'total': 500}, {'mode': 'bank_transfer', 'direction': 'out', 'total': 300}, {'mode': '', 'direction': 'in', 'total': 400}]};
+    }
+    if (path == '/gst/summary') {
+      return {'summary': {'total_sales': 9876543, 'total_purchases': 4567890, 'cgst': 0, 'sgst': 0, 'igst': 0, 'total_tax': 0, 'liability': -234567},
+        'details': {'sales': {'taxable_value': 9876543}, 'purchases': {'taxable_value': 4300000, 'cgst': 117283.5, 'sgst': 117283.5, 'igst': 0}, 'itc': {'total_itc': 234567}}};
+    }
+    if (path == '/gst/gstr1') {
+      return {'data': [{'invoice_number': 'INV-2026-000123', 'invoice_date': '2026-11-20', 'party_name': 'Sharma General Stores Private Limited',
+        'party_gstin': '29ABCDE1234F1Z5', 'invoice_value': 4706, 'taxable_value': 4706}]};
+    }
+    if (path == '/gst/gstr2') return {'data': const []};
+    if (path == '/gst/gstr3b') return {'total_tax_liability': 0, 'total_itc': 234567, 'tax_payable': 0};
+    if (path == '/gst/einvoice/history') {
+      return [{'invoice_id': 'i1', 'invoice_number': 'INV-2026-000123', 'irn': 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6abcd', 'status': 'generated', 'generated_at': '2026-11-20T10:00:00Z'}];
+    }
+    if (path == '/gst/ewaybill/history') return const [];
     if (path == '/payments/next-number') return {'payment_in_number': 'PIN-00043'};
     if (path == '/cash-bank/accounts') {
       return [{'id': 'b1', 'account_name': 'HDFC Current', 'account_number': '50100012345678', 'is_primary': true, 'is_active': true}];
@@ -305,6 +396,19 @@ void main() {
     'profit & loss': () => const ProfitLossScreen(),
     'balance sheet': () => const BalanceSheetScreen(),
     'general ledger': () => const GeneralLedgerScreen(accountId: 'a1'),
+    'reports hub': () => const ReportsHubScreen(),
+    'period report': () => const PeriodReportScreen(),
+    'profit & loss report': () => const ProfitLossReportScreen(),
+    'daily profit': () => const DailyProfitScreen(),
+    'billwise profit': () => const BillwiseProfitScreen(),
+    'stock report': () => const StockReportScreen(),
+    'party balances': () => const PartyBalanceReportScreen(),
+    'outstanding': () => const OutstandingScreen(),
+    'top customers': () => const RankReportScreen(kind: RankKind.customers),
+    'top products': () => const RankReportScreen(kind: RankKind.products),
+    'categories report': () => const RankReportScreen(kind: RankKind.categories),
+    'payments analytics': () => const PaymentsAnalyticsScreen(),
+    'gst': () => const GstScreen(),
   };
 
   const sizes = {'phone': Size(360, 780), 'tablet': Size(1280, 800)};

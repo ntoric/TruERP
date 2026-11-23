@@ -36,6 +36,10 @@ import '../../features/purchases/ui/purchase_bill_form_screen.dart';
 import '../../features/purchases/ui/purchase_bills_screen.dart';
 import '../../features/purchases/ui/purchase_orders_screen.dart';
 import '../../features/purchases/ui/purchase_returns_screen.dart';
+import '../../features/reports/ui/business_reports.dart';
+import '../../features/reports/ui/gst_screen.dart';
+import '../../features/reports/ui/reports_hub_screen.dart';
+import '../../features/reports/ui/stock_party_reports.dart';
 import '../../features/shell/responsive_shell.dart';
 import '../../features/shell/splash_screen.dart';
 import '../auth/session_controller.dart';
@@ -155,6 +159,20 @@ final routerProvider = Provider<GoRouter>((ref) {
       _page('/accounting/profit-loss', (_) => const ProfitLossScreen()),
       _page('/accounting/balance-sheet', (_) => const BalanceSheetScreen()),
       _page('/accounting/ledger/:id', (s) => GeneralLedgerScreen(accountId: s.pathParameters['id']!)),
+      // Reports & GST
+      _page('/reports', (_) => const ReportsHubScreen()),
+      _page('/reports/daily', (_) => const PeriodReportScreen()),
+      _page('/reports/profit-loss', (_) => const ProfitLossReportScreen()),
+      _page('/reports/daily-profit', (_) => const DailyProfitScreen()),
+      _page('/reports/billwise-profit', (_) => const BillwiseProfitScreen()),
+      _page('/reports/stock', (_) => const StockReportScreen()),
+      _page('/reports/party-balance', (_) => const PartyBalanceReportScreen()),
+      _page('/reports/outstanding', (_) => const OutstandingScreen()),
+      _page('/reports/customers', (_) => const RankReportScreen(kind: RankKind.customers)),
+      _page('/reports/products', (_) => const RankReportScreen(kind: RankKind.products)),
+      _page('/reports/categories', (_) => const RankReportScreen(kind: RankKind.categories)),
+      _page('/reports/payments', (_) => const PaymentsAnalyticsScreen()),
+      _page('/gst', (_) => const GstScreen()),
       GoRoute(
         path: '/m/:id',
         parentNavigatorKey: _rootKey,

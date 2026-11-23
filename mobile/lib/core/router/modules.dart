@@ -48,7 +48,7 @@ class ModuleGroup {
 
 /// Roadmap phases that are built. Modules from other phases open a
 /// "coming soon" page. Phases don't land strictly in order.
-const builtPhases = {0, 1, 2, 5};
+const builtPhases = {0, 1, 2, 5, 6};
 
 const moduleGroups = <ModuleGroup>[
   ModuleGroup('Parties', Color(0xFF7C3AED), Icons.groups_rounded, [
@@ -91,11 +91,14 @@ const moduleGroups = <ModuleGroup>[
   ]),
   ModuleGroup('Reports', Color(0xFF9333EA), Icons.bar_chart_rounded, [
     AppModule(id: 'reports', name: 'All Reports', icon: Icons.grid_view_rounded, route: '/reports', phase: 6),
-    AppModule(id: 'daily-report', name: 'Daily Report', icon: Icons.today_rounded, route: '/reports/daily', phase: 6),
+    AppModule(id: 'daily-report', name: 'Day & Period', icon: Icons.today_rounded, route: '/reports/daily', phase: 6, keywords: 'daily summary'),
     AppModule(id: 'profit-loss', name: 'Profit & Loss', icon: Icons.balance_rounded, route: '/reports/profit-loss', phase: 6),
+    AppModule(id: 'daily-profit', name: 'Daily Profit', icon: Icons.show_chart_rounded, route: '/reports/daily-profit', phase: 6),
+    AppModule(id: 'billwise-profit', name: 'Bill-wise Profit', icon: Icons.receipt_long_rounded, route: '/reports/billwise-profit', phase: 6, keywords: 'margin'),
     AppModule(id: 'stock-report', name: 'Stock Report', icon: Icons.warehouse_rounded, route: '/reports/stock', phase: 6),
     AppModule(id: 'party-balance', name: 'Party Balances', icon: Icons.groups_rounded, route: '/reports/party-balance', phase: 6),
-    AppModule(id: 'gst', name: 'GST Reports', icon: Icons.calculate_rounded, route: '/gst', phase: 6, keywords: 'gstr tax'),
+    AppModule(id: 'outstanding', name: 'Outstanding', icon: Icons.hourglass_bottom_rounded, route: '/reports/outstanding', phase: 6, keywords: 'aging overdue receivable'),
+    AppModule(id: 'gst', name: 'GST Reports', icon: Icons.calculate_rounded, route: '/gst', phase: 6, keywords: 'gstr tax einvoice'),
   ]),
   ModuleGroup('HR & Payroll', Color(0xFFDB2777), Icons.badge_rounded, [
     AppModule(id: 'staff', name: 'Staff', icon: Icons.people_alt_rounded, route: '/staff', phase: 7, keywords: 'employee'),

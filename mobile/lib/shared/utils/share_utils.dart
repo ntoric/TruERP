@@ -11,19 +11,30 @@ import '../widgets/common.dart';
 
 /// Downloads a server-generated PDF (with auth headers) and opens the
 /// system share sheet, from which the user can view, print or send it.
-Future<void> sharePdf(BuildContext context, ApiClient api, String path, String fileName) async {
+Future<void> sharePdf(BuildContext context, ApiClient api, String path, String fileName) =>
+    shareFile(context, api, path, fileName);
+
+/// Downloads any server-generated file (PDF, Excel, CSV) and shares it.
+Future<void> shareFile(
+  BuildContext context,
+  ApiClient api,
+  String path,
+  String fileName, {
+  Map<String, dynamic>? query,
+  String mimeType = 'application/pdf',
+}) async {
   final messenger = ScaffoldMessenger.of(context);
-  messenger.showSnackBar(const SnackBar(content: Text('Preparing PDF…'), duration: Duration(seconds: 20)));
+  messenger.showSnackBar(const SnackBar(content: Text('Preparing file…'), duration: Duration(seconds: 30)));
   try {
     final dir = await getTemporaryDirectory();
     final safe = fileName.replaceAll(RegExp(r'[^A-Za-z0-9._-]'), '_');
     final file = File('${dir.path}/$safe');
-    await api.download(path, file.path);
+    await api.download(path, file.path, query: query);
     messenger.hideCurrentSnackBar();
     if (!context.mounted) return;
     final box = context.findRenderObject() as RenderBox?;
     await SharePlus.instance.share(ShareParams(
-      files: [XFile(file.path, mimeType: 'application/pdf')],
+      files: [XFile(file.path, mimeType: mimeType)],
       subject: fileName,
       sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
     ));
