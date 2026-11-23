@@ -17,16 +17,24 @@ import (
 )
 
 type storeInput struct {
-	Name        string `json:"name"`
-	Code        string `json:"code"`
-	Description string `json:"description"`
-	Address     string `json:"address"`
-	City        string `json:"city"`
-	State       string `json:"state"`
-	Pincode     string `json:"pincode"`
-	Phone       string `json:"phone"`
-	Email       string `json:"email"`
-	IsActive    *bool  `json:"is_active"`
+	Name          string `json:"name"`
+	Code          string `json:"code"`
+	Description   string `json:"description"`
+	Address       string `json:"address"`
+	City          string `json:"city"`
+	State         string `json:"state"`
+	Pincode       string `json:"pincode"`
+	Phone         string `json:"phone"`
+	Email         string `json:"email"`
+	GSTIN         string `json:"gstin"`
+	PAN           string `json:"pan"`
+	StateCode     string `json:"state_code"`
+	BankName      string `json:"bank_name"`
+	AccountNumber string `json:"account_number"`
+	IFSCCode      string `json:"ifsc_code"`
+	UPIID         string `json:"upi_id"`
+	IsActive      *bool  `json:"is_active"`
+	ForceUpdate   *bool  `json:"force_update"`
 }
 
 type storeUserInput struct {
@@ -49,6 +57,7 @@ func storeUserResponse(u models.User) gin.H {
 	if u.StoreID != nil {
 		resp["store_id"] = u.StoreID
 	}
+	resp["store_ids"] = utils.AssignedStoreIDs(utils.DB, u.ID, u.StoreID)
 	return resp
 }
 
@@ -92,7 +101,7 @@ func createStoreOwnerUser(tx *gorm.DB, storeName string) (models.User, error) {
 	return owner, nil
 }
 
-func createStoreRecord(tx *gorm.DB, form utils.NormalizedStoreForm, ownerID uuid.UUID, isActive *bool) (models.Store, error) {
+func createStoreRecord(tx *gorm.DB, form utils.NormalizedStoreForm, ownerID uuid.UUID, isActive, forceUpdate *bool) (models.Store, error) {
 	baseCode := form.Code
 	if baseCode == "" {
 		baseCode = utils.NormalizeStoreCode("", form.Name)
@@ -114,6 +123,9 @@ func createStoreRecord(tx *gorm.DB, form utils.NormalizedStoreForm, ownerID uuid
 	}
 	if isActive != nil {
 		store.IsActive = *isActive
+	}
+	if forceUpdate != nil {
+		store.ForceUpdate = *forceUpdate
 	}
 	if err := tx.Create(&store).Error; err != nil {
 		return models.Store{}, err
@@ -197,7 +209,7 @@ func ListStores(c *gin.Context) {
 	for _, s := range stores {
 		item := gin.H(utils.StorePublicJSON(s))
 		var userCount int64
-		utils.DB.Model(&models.User{}).Where("store_id = ? AND is_store_owner = ?", s.ID, false).Count(&userCount)
+		usersAssignedToStoreQuery(s.ID).Count(&userCount)
 		item["user_count"] = userCount
 		out = append(out, item)
 	}
@@ -311,7 +323,7 @@ func CreateStore(c *gin.Context) {
 		if ownerErr != nil {
 			return ownerErr
 		}
-		created, createErr := createStoreRecord(tx, form, owner.ID, input.IsActive)
+		created, createErr := createStoreRecord(tx, form, owner.ID, input.IsActive, input.ForceUpdate)
 		if createErr != nil {
 			return createErr
 		}
@@ -386,20 +398,30 @@ func UpdateStore(c *gin.Context) {
 	}
 
 	updates := map[string]interface{}{
-		"name":        form.Name,
-		"description": form.Description,
-		"address":     form.Address,
-		"city":        form.City,
-		"state":       form.State,
-		"pincode":     form.Pincode,
-		"phone":       form.Phone,
-		"email":       form.Email,
+		"name":           form.Name,
+		"description":    form.Description,
+		"address":        form.Address,
+		"city":           form.City,
+		"state":          form.State,
+		"pincode":        form.Pincode,
+		"phone":          form.Phone,
+		"email":          form.Email,
+		"gstin":          input.GSTIN,
+		"pan":            input.PAN,
+		"state_code":     input.StateCode,
+		"bank_name":      input.BankName,
+		"account_number": input.AccountNumber,
+		"ifsc_code":      input.IFSCCode,
+		"upi_id":         input.UPIID,
 	}
 	if form.Code != "" {
 		updates["code"] = form.Code
 	}
 	if input.IsActive != nil {
 		updates["is_active"] = *input.IsActive
+	}
+	if input.ForceUpdate != nil {
+		updates["force_update"] = *input.ForceUpdate
 	}
 
 	if err := utils.DB.Model(&store).Updates(updates).Error; err != nil {
@@ -437,7 +459,7 @@ func DeleteStore(c *gin.Context) {
 	}
 
 	var userCount int64
-	utils.DB.Model(&models.User{}).Where("store_id = ? AND is_store_owner = ?", store.ID, false).Count(&userCount)
+	usersAssignedToStoreQuery(store.ID).Count(&userCount)
 	if userCount > 0 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Remove or reassign store users before deleting the store"})
 		return
@@ -447,6 +469,8 @@ func DeleteStore(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete store"})
 		return
 	}
+	// Drop any extra assignments pointing at the removed store.
+	utils.DB.Where("store_id = ?", store.ID).Delete(&models.UserStore{})
 
 	CreateAuditLog(
 		actor.ID,
@@ -797,6 +821,8 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 		}
 		// Documents referencing invoices/parties must go before invoices.
 		if err := wipeStoreScopeModels(tx, ownerID,
+			&models.B2BOrderItem{},
+			&models.B2BOrder{},
 			&models.InvoiceStatusHistory{},
 			&models.Payment{},
 			&models.CreditNote{},
@@ -951,6 +977,9 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 		if err := hardDeleteByUser(tx, &models.StockOpeningOverride{}, ownerID); err != nil {
 			return err
 		}
+		if err := hardDeleteByUser(tx, &models.B2BCatalogItem{}, ownerID); err != nil {
+			return err
+		}
 		// Detach the product link on line items instead of failing — documents keep
 		// their description/qty/price even after the catalog entry is gone.
 		if len(productIDs) > 0 {
@@ -958,6 +987,7 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 				&models.InvoiceItem{},
 				&models.SalesReturnItem{},
 				&models.QuotationItem{},
+				&models.B2BOrderItem{},
 			} {
 				if err := tx.Unscoped().Model(model).
 					Where("product_id IN ?", productIDs).
@@ -1001,12 +1031,15 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 			&models.EmailMarketing{},
 			&models.SMSMarketing{},
 			&models.WhatsAppMarketing{},
+			&models.WhatsAppInvoiceSettings{},
+			&models.WhatsAppInvoiceLog{},
 			&models.LoyaltyTransaction{},
 			&models.LoyaltySettings{},
 			&models.PrintSettings{},
 			&models.AppearanceSettings{},
 			&models.WeighingScaleSettings{},
 			&models.Reminder{},
+			&models.AttendanceReminderSettings{},
 			&models.Notification{},
 			&models.NotificationTemplate{},
 			&models.NotificationPreference{},
@@ -1016,10 +1049,12 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 			&models.MediaFile{},
 			&models.CustomerPortalAccess{},
 			&models.CustomerPortalSettings{},
+			&models.B2BShopSettings{},
 			&models.SupportTicket{},
 			&models.DataBackup{},
 			&models.GDPRRequest{},
 			&models.DailyReportEmailSettings{},
+			&models.PartyBalanceReportEmailSettings{},
 			&models.IPRestriction{},
 			&models.MigrationJob{},
 		); err != nil {
@@ -1123,6 +1158,7 @@ func wipeStoreOperationalData(tx *gorm.DB, ownerID uuid.UUID, scopes storeResetS
 			{&models.SalesReturn{}, "party_id", "sales returns", "Sales"},
 			{&models.DeliveryChallan{}, "party_id", "delivery challans", "Sales"},
 			{&models.Quotation{}, "party_id", "quotations", "Sales"},
+			{&models.B2BOrder{}, "party_id", "B2B orders", "Sales"},
 			{&models.CustomerStatement{}, "party_id", "customer statements", "Sales"},
 			{&models.PurchaseOrder{}, "party_id", "purchase orders", "Purchases"},
 			{&models.PurchaseReceipt{}, "party_id", "purchase receipts", "Purchases"},
@@ -1185,7 +1221,7 @@ func ListStoreUsers(c *gin.Context) {
 	}
 
 	var users []models.User
-	if err := utils.DB.Where("store_id = ? AND is_store_owner = ?", storeID, false).
+	if err := usersAssignedToStoreQuery(storeID).
 		Order("created_at ASC").Find(&users).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to list store users"})
 		return
@@ -1298,17 +1334,16 @@ func MyStores(c *gin.Context) {
 		return
 	}
 
-	if actor.StoreID == nil {
+	ids := utils.AssignedStoreIDs(utils.DB, actor.ID, actor.StoreID)
+	if len(ids) == 0 {
 		c.JSON(http.StatusOK, gin.H{"stores": []gin.H{}, "can_switch": false})
 		return
 	}
-	store, err := utils.FindStoreByID(utils.DB, *actor.StoreID)
-	if err != nil || !store.IsActive {
-		c.JSON(http.StatusOK, gin.H{"stores": []gin.H{}, "can_switch": false})
-		return
+	var stores []models.Store
+	utils.DB.Where("id IN ? AND is_active = ?", ids, true).Order("name ASC").Find(&stores)
+	out := make([]gin.H, 0, len(stores))
+	for _, s := range stores {
+		out = append(out, gin.H(utils.StorePublicJSON(s)))
 	}
-	c.JSON(http.StatusOK, gin.H{
-		"stores":     []gin.H{gin.H(utils.StorePublicJSON(store))},
-		"can_switch": false,
-	})
+	c.JSON(http.StatusOK, gin.H{"stores": out, "can_switch": len(stores) > 1})
 }

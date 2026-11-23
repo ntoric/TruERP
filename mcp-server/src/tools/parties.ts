@@ -147,6 +147,20 @@ export function registerPartyTools(server: McpServer, ctx: Ctx) {
       point_value: z.number().optional().describe("Currency value per redeemed point"),
       min_redeem_points: z.number().int().optional(),
       max_redeem_percent: z.number().optional(),
+      reward_type: z
+        .enum(["points", "cash"])
+        .optional()
+        .describe("points = earn/redeem points; cash = credit cashback_percent of each bill as ₹ cashback"),
+      cashback_percent: z.number().optional().describe("Cash mode: % of bill credited as ₹ cashback"),
+      min_redeem_amount: z.number().optional().describe("Cash mode: minimum ₹ cashback per redemption"),
+      earn_basis: z
+        .enum(["bill", "margin"])
+        .optional()
+        .describe("bill = earn rate applies to bill total; margin = applies to profit on items meeting min_margin_percent"),
+      min_margin_percent: z
+        .number()
+        .optional()
+        .describe("Margin basis: minimum item margin % on selling price for an item to earn rewards"),
     },
   );
   endpoint(server, ctx, "get_loyalty_stats", "Get loyalty program stats.", "GET", "/api/v1/loyalty/stats");
@@ -181,10 +195,15 @@ export function registerPartyTools(server: McpServer, ctx: Ctx) {
     server,
     ctx,
     "adjust_party_loyalty",
-    "Manually adjust a party's loyalty points (positive or negative).",
+    "Manually adjust a party's loyalty points or ₹ cashback balance (positive or negative).",
     "POST",
     "/api/v1/loyalty/parties/:party_id/adjust",
-    { party_id: zUuid, points: z.number().int(), notes: z.string().optional() },
+    {
+      party_id: zUuid,
+      points: z.number().int().optional().describe("Points delta (points mode)"),
+      amount: z.number().optional().describe("₹ cashback delta (cash mode)"),
+      notes: z.string().optional(),
+    },
   );
   endpoint(
     server,

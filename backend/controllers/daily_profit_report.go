@@ -127,6 +127,7 @@ func loadDailyProfitAggregates(db *gorm.DB, userID uuid.UUID, start, end string)
 			COALESCE(SUM(amount_paid - payment_out_discount), 0) AS value
 		 FROM payment_outs
 		 WHERE user_id = ? AND invoice_id IS NOT NULL AND deleted_at IS NULL
+		 AND COALESCE(status, '') != 'cancelled'
 		 AND `+dayRange("date")+`
 		 GROUP BY `+utils.SQLDateExpr("date"), userID, start, end))
 	for day, v := range salesReturn {
@@ -191,6 +192,7 @@ func loadDailyProfitAggregates(db *gorm.DB, userID uuid.UUID, start, end string)
 		`SELECT `+utils.SQLDateExpr("date")+` AS day, COALESCE(SUM(amount), 0) AS value
 		 FROM expenses
 		 WHERE user_id = ? AND deleted_at IS NULL
+		 AND COALESCE(status, '') != 'cancelled'
 		 AND `+dayRange("date")+`
 		 GROUP BY `+utils.SQLDateExpr("date"), userID, start, end) {
 		at(day).Expenses = v
@@ -199,16 +201,18 @@ func loadDailyProfitAggregates(db *gorm.DB, userID uuid.UUID, start, end string)
 	return agg
 }
 
-// dailyStockPosition is the business-wide stock value at the start and end of
-// a calendar day, read from the materialized snapshot table.
+// dailyStockPosition is the business-wide stock position at the start and end
+// of a calendar day, read from the materialized snapshot table.
 type dailyStockPosition struct {
-	Opening float64
-	Closing float64
+	OpeningQty float64
+	Opening    float64
+	ClosingQty float64
+	Closing    float64
 }
 
 // loadDailyStockPositions returns opening/closing stock value per day over
-// [start, end], carrying positions forward across days with no snapshot rows
-// and applying opening-stock overrides the same way overallPositionAsOf does.
+// [start, end], carrying positions forward across days with no snapshot rows.
+// An opening-stock override replaces only the opening of its own date.
 // Callers must run ensureStockSnapshots first.
 func loadDailyStockPositions(db *gorm.DB, userID uuid.UUID, start, end string) map[string]dailyStockPosition {
 	positions := make(map[string]dailyStockPosition)
@@ -217,14 +221,18 @@ func loadDailyStockPositions(db *gorm.DB, userID uuid.UUID, start, end string) m
 	}
 
 	type stockDayRow struct {
-		Day     string
-		Opening float64
-		Closing float64
+		Day        string
+		OpeningQty float64
+		Opening    float64
+		ClosingQty float64
+		Closing    float64
 	}
 	var stockRows []stockDayRow
 	db.Raw(
 		`SELECT `+utils.SQLDateExpr("snapshot_date")+` AS day,
+			COALESCE(SUM(opening_qty), 0) AS opening_qty,
 			COALESCE(SUM(opening_value), 0) AS opening,
+			COALESCE(SUM(closing_qty), 0) AS closing_qty,
 			COALESCE(SUM(closing_value), 0) AS closing
 		 FROM stock_daily_snapshots
 		 WHERE user_id = ?
@@ -233,7 +241,10 @@ func loadDailyStockPositions(db *gorm.DB, userID uuid.UUID, start, end string) m
 
 	raw := make(map[string]dailyStockPosition, len(stockRows))
 	for _, r := range stockRows {
-		raw[normalizeReportDay(r.Day)] = dailyStockPosition{Opening: r.Opening, Closing: r.Closing}
+		raw[normalizeReportDay(r.Day)] = dailyStockPosition{
+			OpeningQty: r.OpeningQty, Opening: r.Opening,
+			ClosingQty: r.ClosingQty, Closing: r.Closing,
+		}
 	}
 
 	// Baseline: computed stock value at close of the day before the range.
@@ -246,59 +257,46 @@ func loadDailyStockPositions(db *gorm.DB, userID uuid.UUID, start, end string) m
 		return positions
 	}
 	prevDay := startT.AddDate(0, 0, -1).Format("2006-01-02")
-	var prevClosing float64
+	var prevClosingQty, prevClosing float64
 	for _, p := range snapshotPositionsAsOfDB(db, userID, prevDay) {
+		prevClosingQty += p.Qty
 		prevClosing += p.Value
 	}
 
-	// Opening-stock overrides shift every day's computed position by a
-	// constant once their base day (effective_date − 1) is reached.
-	type overrideDelta struct {
-		base  string
-		delta float64
-	}
-	var deltas []overrideDelta
+	// Opening-stock overrides replace only the opening of their own date;
+	// closing positions are always the computed figures.
+	overrides := map[string]models.StockOpeningOverride{}
 	if db.Migrator().HasTable(&models.StockOpeningOverride{}) {
-		var overrides []models.StockOpeningOverride
-		db.Unscoped().Where("user_id = ?", userID).Order("effective_date").Find(&overrides)
-		for _, o := range overrides {
-			base := o.EffectiveDate.AddDate(0, 0, -1).Format("2006-01-02")
-			var baseValue float64
-			for _, p := range snapshotPositionsAsOfDB(db, userID, base) {
-				baseValue += p.Value
-			}
-			deltas = append(deltas, overrideDelta{base: base, delta: o.Value - baseValue})
+		var rows []models.StockOpeningOverride
+		db.Where("user_id = ?", userID).
+			Where(utils.SQLDateGTE("effective_date"), start).
+			Where(utils.SQLDateLTE("effective_date"), end).
+			Order("created_at").Find(&rows)
+		for _, o := range rows {
+			overrides[o.EffectiveDate.Format("2006-01-02")] = o
 		}
 	}
 
-	// Seed the opening delta with overrides whose base day is on or before
-	// prevDay: the first day's opening must equal the previous day's
-	// override-adjusted closing so the position carries across range
-	// boundaries (e.g. Oct 1 opening = Sep 30 closing).
-	di := 0
-	var deltaPrev float64
-	for di < len(deltas) && deltas[di].base <= prevDay {
-		deltaPrev = deltas[di].delta
-		di++
-	}
 	for d := startT; !d.After(endT); d = d.AddDate(0, 0, 1) {
 		day := d.Format("2006-01-02")
-		delta := deltaPrev
-		for di < len(deltas) && deltas[di].base <= day {
-			delta = deltas[di].delta
-			di++
-		}
 		pos := raw[day]
 		if pos.Closing == 0 && pos.Opening == 0 {
 			// No snapshot rows this day: position carries forward unchanged.
+			pos.ClosingQty = prevClosingQty
 			pos.Closing = prevClosing
 		}
-		positions[day] = dailyStockPosition{
-			Opening: prevClosing + deltaPrev,
-			Closing: pos.Closing + delta,
+		openingQty, opening := prevClosingQty, prevClosing
+		if o, ok := overrides[day]; ok {
+			openingQty, opening = o.Quantity, o.Value
 		}
+		positions[day] = dailyStockPosition{
+			OpeningQty: openingQty,
+			Opening:    opening,
+			ClosingQty: pos.ClosingQty,
+			Closing:    pos.Closing,
+		}
+		prevClosingQty = pos.ClosingQty
 		prevClosing = pos.Closing
-		deltaPrev = delta
 	}
 	return positions
 }

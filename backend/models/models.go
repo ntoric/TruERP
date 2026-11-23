@@ -141,18 +141,28 @@ type User struct {
 
 // Store is a multi-tenant business unit. Operational data is scoped to OwnerUserID.
 type Store struct {
-	ID          uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	Name        string    `json:"name" gorm:"not null"`
-	Code        string    `json:"code" gorm:"uniqueIndex;not null"`
-	Description string    `json:"description"`
-	Address     string    `json:"address"`
-	City        string    `json:"city"`
-	State       string    `json:"state"`
-	Pincode     string    `json:"pincode"`
-	Phone       string    `json:"phone"`
-	Email       string    `json:"email"`
-	OwnerUserID uuid.UUID `json:"owner_user_id" gorm:"type:uuid;not null;uniqueIndex"`
-	IsActive    bool      `json:"is_active" gorm:"default:true"`
+	ID            uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	Name          string    `json:"name" gorm:"not null"`
+	Code          string    `json:"code" gorm:"uniqueIndex;not null"`
+	Description   string    `json:"description"`
+	Address       string    `json:"address"`
+	City          string    `json:"city"`
+	State         string    `json:"state"`
+	Pincode       string    `json:"pincode"`
+	Phone         string    `json:"phone"`
+	Email         string    `json:"email"`
+	GSTIN         string    `json:"gstin"`
+	PAN           string    `json:"pan"`
+	StateCode     string    `json:"state_code"`
+	BankName      string    `json:"bank_name"`
+	AccountNumber string    `json:"account_number"`
+	IFSCCode      string    `json:"ifsc_code"`
+	UPIID         string    `json:"upi_id"`
+	OwnerUserID   uuid.UUID `json:"owner_user_id" gorm:"type:uuid;not null;uniqueIndex"`
+	IsActive      bool      `json:"is_active" gorm:"default:true"`
+	// When set by a super admin, desktop clients for this store automatically
+	// download and install available app updates without prompting.
+	ForceUpdate bool `json:"force_update" gorm:"default:false"`
 	// Last Tauri desktop app version reported by this store's clients.
 	AppVersion       string         `json:"app_version"`
 	AppVersionSeenAt *time.Time     `json:"app_version_seen_at"`
@@ -161,11 +171,23 @@ type Store struct {
 	DeletedAt        gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
+// UserStore assigns a user to stores beyond their primary store
+// (users.store_id). Each extra row lets the user switch into that
+// store's data scope from the backoffice store selector.
+type UserStore struct {
+	ID        uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID    uuid.UUID `json:"user_id" gorm:"type:uuid;not null;uniqueIndex:idx_user_stores_pair"`
+	StoreID   uuid.UUID `json:"store_id" gorm:"type:uuid;not null;uniqueIndex:idx_user_stores_pair"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 type Business struct {
 	ID              uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
 	UserID          uuid.UUID `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
 	Name            string    `json:"name" gorm:"not null"`
 	GSTIN           string    `json:"gstin"`
+	PAN             string    `json:"pan"`
 	Address         string    `json:"address"`
 	City            string    `json:"city"`
 	State           string    `json:"state"`
@@ -243,37 +265,48 @@ type Invoice struct {
 	LoyaltyPointsRedeemed int64              `json:"loyalty_points_redeemed" gorm:"default:0"`
 	LoyaltyPointsEarned   int64              `json:"loyalty_points_earned" gorm:"default:0"`
 	LoyaltyDiscount       float64            `json:"loyalty_discount" gorm:"default:0"`
-	PaymentMode           string             `json:"payment_mode"`
-	BankAccountID         *uuid.UUID         `json:"bank_account_id,omitempty" gorm:"type:uuid;index"`
-	PaymentSplits         []PaymentSplit     `json:"payment_splits,omitempty" gorm:"-"`
-	Notes                 string             `json:"notes"`
+	// Cash-mode loyalty: ₹ cashback credited to / redeemed from the customer's
+	// loyalty cash wallet on this invoice (see LoyaltySettings.RewardType).
+	LoyaltyCashEarned   float64        `json:"loyalty_cash_earned" gorm:"default:0"`
+	LoyaltyCashRedeemed float64        `json:"loyalty_cash_redeemed" gorm:"default:0"`
+	PaymentMode         string         `json:"payment_mode"`
+	BankAccountID       *uuid.UUID     `json:"bank_account_id,omitempty" gorm:"type:uuid;index"`
+	PaymentSplits       []PaymentSplit `json:"payment_splits,omitempty" gorm:"-"`
+	Notes               string         `json:"notes"`
 	// SourceURL is the original external invoice link (e.g. myBillBook
 	// https://mybillbook.in/csi/<id>). Populated during migration import so
 	// the source document can be re-opened later. Kept out of Notes so it is
 	// rendered as a link instead of note text.
-	SourceURL           string         `json:"source_url" gorm:"type:text"`
-	Terms               string         `json:"terms"`
-	IsInterState        bool           `json:"is_inter_state" gorm:"default:false"`
-	EWayBillRequired    bool           `json:"eway_bill_required" gorm:"default:false"`
-	EWayBillNumber      string         `json:"eway_bill_number"`
-	EWayBillStatus      string         `json:"eway_bill_status" gorm:"default:'pending'"` // pending, generated, cancelled
-	EWayBillValidUntil  *time.Time     `json:"eway_bill_valid_until,omitempty"`
-	Signature           string         `json:"signature"`                                 // Base64 encoded signature
-	CustomFields        string         `json:"custom_fields" gorm:"type:text"`            // JSON map of custom field key -> value
-	PDFTemplate         string         `json:"pdf_template"`                              // optional per-invoice layout: classic, modern, minimal
-	PlaceOfSupply       string         `json:"place_of_supply"`                           // State code for GST compliance
-	ReverseCharge       bool           `json:"reverse_charge" gorm:"default:false"`       // Reverse charge mechanism
-	IRN                 string         `json:"irn"`                                       // Invoice Reference Number for e-invoicing
-	EInvoiceStatus      string         `json:"e_invoice_status" gorm:"default:'pending'"` // pending, generated, cancelled
-	EInvoiceGeneratedAt *time.Time     `json:"e_invoice_generated_at,omitempty"`
-	IsPOS               bool           `json:"is_pos" gorm:"default:false"`
-	ClientSaleID        *uuid.UUID     `json:"client_sale_id,omitempty" gorm:"type:uuid;index;uniqueIndex:idx_invoice_user_client_sale"`
-	PosSessionID        *uuid.UUID     `json:"pos_session_id,omitempty" gorm:"type:uuid;index"`
-	Party               Party          `json:"party,omitempty" gorm:"foreignKey:PartyID"`
-	Items               []InvoiceItem  `json:"items" gorm:"foreignKey:InvoiceID;constraint:OnDelete:CASCADE;"`
-	CreatedAt           time.Time      `json:"created_at"`
-	UpdatedAt           time.Time      `json:"updated_at"`
-	DeletedAt           gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	SourceURL             string         `json:"source_url" gorm:"type:text"`
+	Terms                 string         `json:"terms"`
+	IsInterState          bool           `json:"is_inter_state" gorm:"default:false"`
+	EWayBillRequired      bool           `json:"eway_bill_required" gorm:"default:false"`
+	EWayBillNumber        string         `json:"eway_bill_number"`
+	EWayBillStatus        string         `json:"eway_bill_status" gorm:"default:'pending'"` // pending, generated, cancelled
+	EWayBillValidUntil    *time.Time     `json:"eway_bill_valid_until,omitempty"`
+	Signature             string         `json:"signature"`                                 // Base64 encoded signature
+	CustomFields          string         `json:"custom_fields" gorm:"type:text"`            // JSON map of custom field key -> value
+	PDFTemplate           string         `json:"pdf_template"`                              // optional per-invoice layout: classic, modern, minimal
+	PlaceOfSupply         string         `json:"place_of_supply"`                           // State code for GST compliance
+	ReverseCharge         bool           `json:"reverse_charge" gorm:"default:false"`       // Reverse charge mechanism
+	ShippingAddress       string         `json:"shipping_address" gorm:"type:text"`         // Ship-to address when different from billing
+	OriginalInvoiceNumber string         `json:"original_invoice_number"`                   // Reference to original invoice for debit/credit notes or revised documents
+	OriginalInvoiceDate   *time.Time     `json:"original_invoice_date,omitempty"`           // Date of the original invoice referenced
+	CessTotal             float64        `json:"cess_total" gorm:"default:0"`               // Total GST cess across line items
+	IRN                   string         `json:"irn"`                                       // Invoice Reference Number for e-invoicing
+	EInvoiceStatus        string         `json:"e_invoice_status" gorm:"default:'pending'"` // pending, generated, cancelled
+	EInvoiceGeneratedAt   *time.Time     `json:"e_invoice_generated_at,omitempty"`
+	IsPOS                 bool           `json:"is_pos" gorm:"default:false"`
+	CancelReason          string         `json:"cancel_reason"`
+	CancelledAt           *time.Time     `json:"cancelled_at,omitempty"`
+	CancelledBy           string         `json:"cancelled_by"`
+	ClientSaleID          *uuid.UUID     `json:"client_sale_id,omitempty" gorm:"type:uuid;index;uniqueIndex:idx_invoice_user_client_sale"`
+	PosSessionID          *uuid.UUID     `json:"pos_session_id,omitempty" gorm:"type:uuid;index"`
+	Party                 Party          `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	Items                 []InvoiceItem  `json:"items" gorm:"foreignKey:InvoiceID;constraint:OnDelete:CASCADE;"`
+	CreatedAt             time.Time      `json:"created_at"`
+	UpdatedAt             time.Time      `json:"updated_at"`
+	DeletedAt             gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type InvoiceItem struct {
@@ -290,13 +323,19 @@ type InvoiceItem struct {
 	CGST        float64    `json:"cgst" gorm:"default:0"`
 	SGST        float64    `json:"sgst" gorm:"default:0"`
 	IGST        float64    `json:"igst" gorm:"default:0"`
+	CessRate    float64    `json:"cess_rate" gorm:"default:0"`
+	CessAmount  float64    `json:"cess_amount" gorm:"default:0"`
 	Total       float64    `json:"total" gorm:"default:0"`
 	HSNCode     string     `json:"hsn_code"`
 	SACCode     string     `json:"sac_code"`
 	BatchNo     string     `json:"batch_no"`
 	ExpDate     *time.Time `json:"exp_date,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	// PurchasePrice snapshots the product's purchase price when the item was billed.
+	PurchasePrice *float64 `json:"purchase_price,omitempty"`
+	// StockBalance snapshots the product's remaining stock when the item was billed.
+	StockBalance *float64  `json:"stock_balance,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type Payment struct {
@@ -309,10 +348,16 @@ type Payment struct {
 	AmountReceived    float64        `json:"amount_received" gorm:"default:0"`
 	PaymentInDiscount float64        `json:"payment_in_discount" gorm:"default:0"`
 	PaymentInNumber   string         `json:"payment_in_number"`
-	Mode              string         `json:"mode"` // cash, upi, bank_transfer, cheque, card, initial_investment
+	Mode              string         `json:"mode"`                                             // cash, upi, bank_transfer, cheque, card, initial_investment
+	BankAccountID     *uuid.UUID     `json:"bank_account_id,omitempty" gorm:"type:uuid;index"` // nil = cash in-hand
+	BankAccount       *BankAccount   `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
 	Date              time.Time      `json:"date" gorm:"index:idx_payments_user_date,priority:2"`
 	Reference         string         `json:"reference"`
 	Notes             string         `json:"notes"`
+	Status            string         `json:"status" gorm:"default:'active';index"` // active, cancelled
+	CancelReason      string         `json:"cancel_reason"`
+	CancelledAt       *time.Time     `json:"cancelled_at,omitempty"`
+	CancelledBy       string         `json:"cancelled_by"`
 	CreatedAt         time.Time      `json:"created_at"`
 	UpdatedAt         time.Time      `json:"updated_at"`
 	DeletedAt         gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
@@ -345,10 +390,16 @@ type PaymentOut struct {
 	AmountPaid         float64        `json:"amount_paid" gorm:"default:0"`
 	PaymentOutDiscount float64        `json:"payment_out_discount" gorm:"default:0"`
 	PaymentOutNumber   string         `json:"payment_out_number"`
-	Mode               string         `json:"mode"` // cash, upi, bank_transfer, cheque, card, initial_investment
+	Mode               string         `json:"mode"`                                             // cash, upi, bank_transfer, cheque, card, initial_investment
+	BankAccountID      *uuid.UUID     `json:"bank_account_id,omitempty" gorm:"type:uuid;index"` // nil = cash in-hand
+	BankAccount        *BankAccount   `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
 	Date               time.Time      `json:"date" gorm:"index:idx_payment_outs_user_date,priority:2"`
 	Reference          string         `json:"reference"`
 	Notes              string         `json:"notes"`
+	Status             string         `json:"status" gorm:"default:'active';index"` // active, cancelled
+	CancelReason       string         `json:"cancel_reason"`
+	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
+	CancelledBy        string         `json:"cancelled_by"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
@@ -373,6 +424,10 @@ type Expense struct {
 	BankAccount        *BankAccount   `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
 	Notes              string         `json:"notes"`
 	ReceiptURL         string         `json:"receipt_url"`
+	Status             string         `json:"status" gorm:"default:'active';index"` // active, cancelled
+	CancelReason       string         `json:"cancel_reason"`
+	CancelledAt        *time.Time     `json:"cancelled_at,omitempty"`
+	CancelledBy        string         `json:"cancelled_by"`
 	Items              []ExpenseItem  `json:"items" gorm:"foreignKey:ExpenseID;constraint:OnDelete:CASCADE;"`
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
@@ -394,6 +449,7 @@ type ExpenseItem struct {
 
 type DashboardStats struct {
 	TotalSales       float64 `json:"total_sales"`
+	TotalSalesPaid   float64 `json:"total_sales_paid"`
 	TotalInvoices    int64   `json:"total_invoices"`
 	TotalParties     int64   `json:"total_parties"`
 	TotalCustomers   int64   `json:"total_customers"`
@@ -483,6 +539,9 @@ type LoyaltyReportSummary struct {
 	EarnTransactions   int64   `json:"earn_transactions"`
 	RedeemTransactions int64   `json:"redeem_transactions"`
 	RedemptionValue    float64 `json:"redemption_value"`
+	RewardType         string  `json:"reward_type"`
+	CashEarned         float64 `json:"cash_earned"`
+	CashRedeemed       float64 `json:"cash_redeemed"`
 }
 
 // PeriodReport is a DailyReport-style summary over an arbitrary date range.
@@ -861,6 +920,39 @@ type StockOpeningOverride struct {
 	DeletedAt     gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
+// DailyStockSummaryLog is the materialized business-wide stock position for
+// one calendar day: the aggregate opening and closing quantity/value across
+// all products and outlets, plus the day's sales, COGS, purchase, and expense
+// totals (all tax-exclusive, matching the daily profit report). Rows are
+// written by the daily 1AM IST scheduler — each run writes one row dated the
+// previous day: its opening equals the previous log row's closing, and its
+// closing is the current stock quantity and value at run time — so the table
+// doubles as a frozen audit trail of day-end inventory positions. Each entry
+// is store-specific: StoreID is the store that owns the data
+// (stores.owner_user_id ↔ user_id is 1:1).
+type DailyStockSummaryLog struct {
+	ID      uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID  uuid.UUID  `json:"user_id" gorm:"type:uuid;not null;uniqueIndex:idx_daily_stock_summary_log"`
+	StoreID *uuid.UUID `json:"store_id,omitempty" gorm:"type:uuid;index"`
+	Store   *Store     `json:"store,omitempty" gorm:"foreignKey:StoreID"`
+	LogDate time.Time  `json:"log_date" gorm:"not null;uniqueIndex:idx_daily_stock_summary_log"` // calendar day (IST) at day start
+
+	OpeningQty   float64 `json:"opening_qty" gorm:"not null;default:0"`
+	OpeningValue float64 `json:"opening_value" gorm:"not null;default:0"`
+	ClosingQty   float64 `json:"closing_qty" gorm:"not null;default:0"`
+	ClosingValue float64 `json:"closing_value" gorm:"not null;default:0"`
+
+	Sales    float64 `json:"sales" gorm:"not null;default:0"`
+	COGS     float64 `json:"cogs" gorm:"not null;default:0"`
+	Purchase float64 `json:"purchase" gorm:"not null;default:0"`
+	Expenses float64 `json:"expenses" gorm:"not null;default:0"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+func (DailyStockSummaryLog) TableName() string { return "daily_stock_summary_log" }
+
 // StockSnapshotMeta stores the fingerprint of the stock source data used by
 // the last snapshot rebuild for a user, so reports rebuild only when the
 // underlying entries or inventory stocks have changed. ThroughDate is the
@@ -1147,7 +1239,10 @@ type CreditNote struct {
 	Reason           string           `json:"reason"`
 	TotalAmount      float64          `json:"total_amount" gorm:"default:0"`
 	RefundMode       string           `json:"refund_mode"`                   // cash, original_payment, credit_note
-	Status           string           `json:"status" gorm:"default:'draft'"` // draft, issued
+	Status           string           `json:"status" gorm:"default:'draft'"` // draft, issued, cancelled
+	CancelReason     string           `json:"cancel_reason"`
+	CancelledAt      *time.Time       `json:"cancelled_at,omitempty"`
+	CancelledBy      string           `json:"cancelled_by"`
 	Date             time.Time        `json:"date" gorm:"not null"`
 	Items            []CreditNoteItem `json:"items" gorm:"foreignKey:CreditNoteID;constraint:OnDelete:CASCADE;"`
 	CreatedAt        time.Time        `json:"created_at"`
@@ -1183,7 +1278,10 @@ type DebitNote struct {
 	Reason           string          `json:"reason"`
 	TotalAmount      float64         `json:"total_amount" gorm:"default:0"`
 	RefundMode       string          `json:"refund_mode"`                   // cash, original_payment, debit_note
-	Status           string          `json:"status" gorm:"default:'draft'"` // draft, issued
+	Status           string          `json:"status" gorm:"default:'draft'"` // draft, issued, cancelled
+	CancelReason     string          `json:"cancel_reason"`
+	CancelledAt      *time.Time      `json:"cancelled_at,omitempty"`
+	CancelledBy      string          `json:"cancelled_by"`
 	Date             time.Time       `json:"date" gorm:"not null"`
 	Items            []DebitNoteItem `json:"items" gorm:"foreignKey:DebitNoteID;constraint:OnDelete:CASCADE;"`
 	CreatedAt        time.Time       `json:"created_at"`
@@ -1226,6 +1324,7 @@ type Party struct {
 	PAN            string         `json:"pan"`
 	Notes          string         `json:"notes"`
 	LoyaltyPoints  int64          `json:"loyalty_points" gorm:"default:0"`
+	LoyaltyCash    float64        `json:"loyalty_cash" gorm:"default:0"` // ₹ cashback wallet (cash-mode loyalty)
 	IsActive       bool           `json:"is_active" gorm:"default:true"`
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
@@ -1233,40 +1332,116 @@ type Party struct {
 }
 
 type LoyaltySettings struct {
-	ID               uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID           uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
-	IsEnabled        bool           `json:"is_enabled" gorm:"default:false"`
-	SpendAmount      float64        `json:"spend_amount" gorm:"default:100"`   // ₹ spent to earn points
-	PointsPerSpend   int64          `json:"points_per_spend" gorm:"default:1"` // points earned per SpendAmount
-	PointValue       float64        `json:"point_value" gorm:"default:1"`      // ₹ discount per point redeemed
-	MinRedeemPoints  int64          `json:"min_redeem_points" gorm:"default:50"`
-	MaxRedeemPercent float64        `json:"max_redeem_percent" gorm:"default:25"` // max % of bill payable with points
+	ID               uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID           uuid.UUID `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
+	IsEnabled        bool      `json:"is_enabled" gorm:"default:false"`
+	SpendAmount      float64   `json:"spend_amount" gorm:"default:100"`   // ₹ spent to earn points
+	PointsPerSpend   int64     `json:"points_per_spend" gorm:"default:1"` // points earned per SpendAmount
+	PointValue       float64   `json:"point_value" gorm:"default:1"`      // ₹ discount per point redeemed
+	MinRedeemPoints  int64     `json:"min_redeem_points" gorm:"default:50"`
+	MaxRedeemPercent float64   `json:"max_redeem_percent" gorm:"default:25"` // max % of bill payable with points / cashback
+	// RewardType selects how customers are rewarded: "points" (earn points,
+	// redeem at PointValue) or "cash" (earn CashbackPercent of the bill as ₹
+	// credit, redeemed rupee-for-rupee as a discount).
+	RewardType      string  `json:"reward_type" gorm:"default:'points'"`
+	CashbackPercent float64 `json:"cashback_percent" gorm:"default:1"`  // % of bill credited as ₹ (cash mode)
+	MinRedeemAmount float64 `json:"min_redeem_amount" gorm:"default:0"` // min ₹ cashback per redemption (cash mode)
+	// EarnBasis is what the earn rate applies to: "bill" (the invoice total)
+	// or "margin" (profit on eligible items: net sale − purchase cost, counting
+	// only items whose margin on selling price is at least MinMarginPercent).
+	// The same rates are used — points per SpendAmount, or CashbackPercent.
+	EarnBasis        string         `json:"earn_basis" gorm:"default:'bill'"`
+	MinMarginPercent float64        `json:"min_margin_percent" gorm:"default:0"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type LoyaltyTransaction struct {
-	ID              uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
-	UserID          uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
-	PartyID         uuid.UUID      `json:"party_id" gorm:"type:uuid;not null;index"`
-	Party           Party          `json:"party,omitempty" gorm:"foreignKey:PartyID"`
-	TransactionType string         `json:"transaction_type" gorm:"not null"` // earn, redeem, adjust, expire
-	Points          int64          `json:"points" gorm:"not null"`           // positive = credit, negative = debit
-	BalanceAfter    int64          `json:"balance_after" gorm:"not null"`
-	ReferenceType   string         `json:"reference_type"` // invoice, manual
-	ReferenceID     *uuid.UUID     `json:"reference_id,omitempty" gorm:"type:uuid"`
-	ReferenceNumber string         `json:"reference_number"`
-	Notes           string         `json:"notes"`
-	CreatedAt       time.Time      `json:"created_at"`
-	DeletedAt       gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+	ID              uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID          uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
+	PartyID         uuid.UUID `json:"party_id" gorm:"type:uuid;not null;index"`
+	Party           Party     `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	TransactionType string    `json:"transaction_type" gorm:"not null"` // earn, redeem, adjust, expire
+	Points          int64     `json:"points" gorm:"not null"`           // positive = credit, negative = debit
+	BalanceAfter    int64     `json:"balance_after" gorm:"not null"`
+	// RewardType is "points" or "cash". Cash entries carry the ₹ movement in
+	// Amount / AmountBalanceAfter and leave Points / BalanceAfter at 0.
+	RewardType         string         `json:"reward_type" gorm:"default:'points'"`
+	Amount             float64        `json:"amount" gorm:"default:0"`
+	AmountBalanceAfter float64        `json:"amount_balance_after" gorm:"default:0"`
+	ReferenceType      string         `json:"reference_type"` // invoice, manual
+	ReferenceID        *uuid.UUID     `json:"reference_id,omitempty" gorm:"type:uuid"`
+	ReferenceNumber    string         `json:"reference_number"`
+	Notes              string         `json:"notes"`
+	CreatedAt          time.Time      `json:"created_at"`
+	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type LoyaltyStats struct {
-	TotalMembers            int64 `json:"total_members"`
-	TotalPointsOutstanding  int64 `json:"total_points_outstanding"`
-	PointsEarnedThisMonth   int64 `json:"points_earned_this_month"`
-	PointsRedeemedThisMonth int64 `json:"points_redeemed_this_month"`
+	TotalMembers            int64   `json:"total_members"`
+	TotalPointsOutstanding  int64   `json:"total_points_outstanding"`
+	PointsEarnedThisMonth   int64   `json:"points_earned_this_month"`
+	PointsRedeemedThisMonth int64   `json:"points_redeemed_this_month"`
+	CashOutstanding         float64 `json:"cash_outstanding"`
+	CashEarnedThisMonth     float64 `json:"cash_earned_this_month"`
+	CashRedeemedThisMonth   float64 `json:"cash_redeemed_this_month"`
+}
+
+// LoyaltyCardDesign holds the per-store artwork configuration used when a
+// store generates printable PVC loyalty cards. StoreID scopes the row to a
+// store; rows with a NULL store_id are the fallback for scopes that have no
+// store record. NextSerial is the running counter for the card number series
+// and is only advanced inside GenerateLoyaltyCards' transaction.
+type LoyaltyCardDesign struct {
+	ID           uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID       uuid.UUID  `json:"user_id" gorm:"type:uuid;not null;index"`
+	StoreID      *uuid.UUID `json:"store_id,omitempty" gorm:"type:uuid;index"`
+	Theme        string     `json:"theme" gorm:"default:'midnight'"`
+	PrimaryColor string     `json:"primary_color" gorm:"default:'#0f172a'"`
+	AccentColor  string     `json:"accent_color" gorm:"default:'#f59e0b'"`
+	CardPrefix   string     `json:"card_prefix" gorm:"default:'LC'"`
+	CardTitle    string     `json:"card_title"`
+	Tagline      string     `json:"tagline" gorm:"default:'LOYALTY REWARDS'"`
+	FooterText   string     `json:"footer_text"`
+	ShowLogo     bool       `json:"show_logo" gorm:"default:true"`
+	ShowChip     bool       `json:"show_chip" gorm:"default:true"`
+	IncludeBack  bool       `json:"include_back" gorm:"default:true"`
+	BackTerms    string     `json:"back_terms"`
+	// ContentJSON holds the full card content configuration (labels, texts and
+	// per-element visibility) as JSON. CardTitle/Tagline/FooterText/BackTerms
+	// are the legacy single-purpose fields and seed the defaults.
+	ContentJSON string `json:"-" gorm:"column:content_json;type:text"`
+	// Typography & artwork selections (whitelisted keys resolved client-side).
+	FontFamily   string `json:"font_family" gorm:"default:'sans'"`
+	NumberFont   string `json:"number_font" gorm:"default:'mono'"`
+	Decor        string `json:"decor" gorm:"default:'orbits'"`
+	FrontGraphic string `json:"front_graphic" gorm:"default:'none'"`
+	BackGraphic  string `json:"back_graphic" gorm:"default:'none'"`
+	// LayoutJSON stores per-element geometry {front:{el:{x,y,w,h,size}},back:{…}}
+	// in 0.1mm viewBox units, produced by the drag/resize designer.
+	LayoutJSON string         `json:"-" gorm:"column:layout_json;type:text"`
+	NextSerial int64          `json:"next_serial" gorm:"default:1"`
+	CreatedAt  time.Time      `json:"created_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	DeletedAt  gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// LoyaltyCard is one generated card in a store's loyalty card series. Cards
+// are created in batches by GenerateLoyaltyCards; PartyID is reserved for
+// assigning a card to a customer later.
+type LoyaltyCard struct {
+	ID         uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID     uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
+	StoreID    *uuid.UUID     `json:"store_id,omitempty" gorm:"type:uuid;index;uniqueIndex:idx_loyalty_cards_store_number,priority:1"`
+	BatchID    uuid.UUID      `json:"batch_id" gorm:"type:uuid;not null;index"`
+	CardNumber string         `json:"card_number" gorm:"not null;index;uniqueIndex:idx_loyalty_cards_store_number,priority:2"`
+	Serial     int64          `json:"serial"`
+	Status     string         `json:"status" gorm:"default:'active'"` // active, void
+	PartyID    *uuid.UUID     `json:"party_id,omitempty" gorm:"type:uuid"`
+	Party      *Party         `json:"party,omitempty" gorm:"foreignKey:PartyID"`
+	CreatedAt  time.Time      `json:"created_at"`
+	DeletedAt  gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type PartyStats struct {
@@ -1563,7 +1738,9 @@ type StaffAdvancePayment struct {
 	IsRecovered           bool           `json:"is_recovered" gorm:"default:false"`
 	RecoveredAmount       float64        `json:"recovered_amount" gorm:"default:0"`
 	PendingAmount         float64        `json:"pending_amount" gorm:"default:0"`
-	PaymentMode           string         `json:"payment_mode"` // cash, bank_transfer, upi, cheque
+	PaymentMode           string         `json:"payment_mode"`                                     // cash, bank_transfer, upi, cheque
+	BankAccountID         *uuid.UUID     `json:"bank_account_id,omitempty" gorm:"type:uuid;index"` // nil = cash in-hand
+	BankAccount           *BankAccount   `json:"bank_account,omitempty" gorm:"foreignKey:BankAccountID"`
 	Reference             string         `json:"reference"`
 	Notes                 string         `json:"notes"`
 	Status                string         `json:"status" gorm:"default:'pending'"` // pending, partial, recovered
@@ -1632,7 +1809,7 @@ type InvoiceSettings struct {
 type AppearanceSettings struct {
 	ID         uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
 	UserID     uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
-	ColorTheme string         `json:"color_theme" gorm:"default:'runerail'"`
+	ColorTheme string         `json:"color_theme" gorm:"default:'crimson'"`
 	CustomHex  string         `json:"custom_hex"`
 	ThemeMode  string         `json:"theme_mode" gorm:"default:'light'"`
 	CreatedAt  time.Time      `json:"created_at"`
@@ -1724,6 +1901,23 @@ type Reminder struct {
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
 	DeletedAt        gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// AttendanceReminderSettings configures the daily on-screen attendance
+// reminder shown in the app. The reminder fires when the wall clock in
+// Timezone reaches ReminderTime ("HH:MM", 24h). An empty Timezone means
+// "use the device's local timezone". RemindLaterMinutes is the snooze
+// interval used by the "Remind me later" action.
+type AttendanceReminderSettings struct {
+	ID                 uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID             uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;index"`
+	Enabled            bool           `json:"enabled" gorm:"default:false"`
+	ReminderTime       string         `json:"reminder_time" gorm:"default:'09:00'"` // HH:MM, 24h, in Timezone
+	Timezone           string         `json:"timezone"`                             // IANA name; empty = device local
+	RemindLaterMinutes int            `json:"remind_later_minutes" gorm:"default:30"`
+	CreatedAt          time.Time      `json:"created_at"`
+	UpdatedAt          time.Time      `json:"updated_at"`
+	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
 type Notification struct {
@@ -2690,6 +2884,11 @@ type DeveloperSettings struct {
 	// columns are computed live from transactions whenever the report is read.
 	AsyncDailyProfit bool `json:"async_daily_profit" gorm:"default:false"`
 
+	// BulkDownloadLimit caps how many invoices may be included in a single bulk
+	// PDF ZIP download (sales and purchase invoice lists). Values <= 0 fall
+	// back to the default of 25.
+	BulkDownloadLimit int `json:"bulk_download_limit" gorm:"default:25"`
+
 	// Encrypted fields (database storage only)
 	EncryptedSMTPPassword        string `json:"-" gorm:"column:smtp_password"`
 	EncryptedSendGridAPIKey      string `json:"-" gorm:"column:sendgrid_api_key"`
@@ -2850,6 +3049,31 @@ type PageFeatureSettings struct {
 	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
 }
 
+// SaleDiscountSettings picks which invoice-level discount style a store uses.
+// "manual" keeps the free-form amount/percent entry; "auto" computes the
+// discount automatically as DiscountValue percent (discount_type="percent") or
+// a flat amount (discount_type="amount") once the sale total reaches
+// MinSaleAmount — the player then applies it with an explicit Apply button.
+// StoreID scopes the row to a store; rows with a NULL store_id act as the
+// global fallback (the pre-store-scoping singleton) used when the active
+// store has no row of its own.
+type SaleDiscountSettings struct {
+	ID      uuid.UUID  `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	StoreID *uuid.UUID `json:"store_id,omitempty" gorm:"type:uuid;uniqueIndex:idx_sale_discount_store"`
+	// IsEnabled is the master switch for discounting across the whole app.
+	// When false, every discount input (line discounts, invoice-level
+	// discounts, payment in/out discounts, product default discounts) is
+	// hidden from the UI — only the dedicated Discount page stays reachable.
+	IsEnabled     bool           `json:"is_enabled" gorm:"default:true"`
+	Mode          string         `json:"mode" gorm:"default:'manual'"`           // manual, auto
+	DiscountType  string         `json:"discount_type" gorm:"default:'percent'"` // percent, amount
+	DiscountValue float64        `json:"discount_value" gorm:"default:0"`
+	MinSaleAmount float64        `json:"min_sale_amount" gorm:"default:0"`
+	CreatedAt     time.Time      `json:"created_at"`
+	UpdatedAt     time.Time      `json:"updated_at"`
+	DeletedAt     gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
 // DailyReportEmailSettings stores per-user configuration for automatically
 // emailing a daily/periodic report PDF export to a list of recipients.
 // One row per user (UserID is unique). The scheduler reads these rows and
@@ -2861,6 +3085,27 @@ type DailyReportEmailSettings struct {
 	RecipientEmails string         `json:"recipient_emails" gorm:"type:text"` // comma/newline separated
 	Period          string         `json:"period" gorm:"default:'daily'"`     // today, daily, weekly, monthly
 	SendTime        string         `json:"send_time" gorm:"default:'09:00'"`  // HH:MM (24h, server local)
+	Subject         string         `json:"subject"`                           // optional custom subject
+	LastSentAt      *time.Time     `json:"last_sent_at,omitempty"`            // any send (manual or scheduled)
+	LastSentStatus  string         `json:"last_sent_status"`                  // success, partial, failed
+	LastSentError   string         `json:"last_sent_error,omitempty"`
+	LastScheduledAt *time.Time     `json:"last_scheduled_at,omitempty" gorm:"index"` // scheduler sends only
+	CreatedAt       time.Time      `json:"created_at"`
+	UpdatedAt       time.Time      `json:"updated_at"`
+	DeletedAt       gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// PartyBalanceReportEmailSettings stores per-user configuration for
+// automatically emailing the Party Balance Report PDF (opening/closing balance
+// of every party with a non-zero balance) at a scheduled time each day.
+type PartyBalanceReportEmailSettings struct {
+	ID              uuid.UUID      `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID          uuid.UUID      `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
+	IsEnabled       bool           `json:"is_enabled" gorm:"default:false"`
+	RecipientEmails string         `json:"recipient_emails" gorm:"type:text"` // comma/newline separated
+	ReportDay       string         `json:"report_day" gorm:"default:'today'"` // today, previous_day
+	PartyType       string         `json:"party_type" gorm:"default:'all'"`   // all, customer, vendor
+	SendTime        string         `json:"send_time" gorm:"default:'21:00'"`  // HH:MM (24h, configured timezone)
 	Subject         string         `json:"subject"`                           // optional custom subject
 	LastSentAt      *time.Time     `json:"last_sent_at,omitempty"`            // any send (manual or scheduled)
 	LastSentStatus  string         `json:"last_sent_status"`                  // success, partial, failed
@@ -3027,4 +3272,84 @@ type ProfitDistribution struct {
 	CreatedAt          time.Time      `json:"created_at"`
 	UpdatedAt          time.Time      `json:"updated_at"`
 	DeletedAt          gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// WhatsAppInvoiceSettings configures the automatic "purchase summary"
+// WhatsApp message (with the invoice PDF attached) sent to a customer when a
+// sales invoice is created. One row per store-owner scope (user_id), so each
+// store enables/configures it independently.
+type WhatsAppInvoiceSettings struct {
+	ID      uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID  uuid.UUID `json:"user_id" gorm:"type:uuid;not null;uniqueIndex"`
+	Enabled bool      `json:"enabled" gorm:"default:false"`
+	// Provider is the WhatsApp gateway: "whatsapp_cloud" (Meta directly),
+	// "fast2sms" (Fast2SMS's Meta-format WhatsApp API) or "twilio" (Twilio
+	// Messages API with Content templates). EncryptedAPIKey holds the Meta
+	// access token, the Fast2SMS API key or the Twilio Auth Token accordingly.
+	Provider string `json:"provider" gorm:"default:'whatsapp_cloud'"`
+	// MessageID is the approved template's name in WhatsApp Manager, or the
+	// Twilio Content SID (HX...).
+	MessageID string `json:"message_id"`
+	// PhoneNumberID is the sender's WhatsApp Business phone number ID from
+	// Meta → WhatsApp → API Setup, or the Fast2SMS WhatsApp Manager. For
+	// Twilio it is the WhatsApp sender number (+14155238886) or a Messaging
+	// Service SID (MG...).
+	PhoneNumberID string `json:"phone_number_id"`
+	// AccountSID is the Twilio Account SID (AC...); unused by other providers.
+	AccountSID string `json:"account_sid"`
+	// LanguageCode is the template's language (e.g. en, en_US, hi).
+	LanguageCode string `json:"language_code" gorm:"default:'en'"`
+	// VariableMapping is a comma-separated list of field keys; position N
+	// fills template variable {{N}}. See whatsAppInvoiceFields.
+	VariableMapping string `json:"variable_mapping"`
+	// StoreDisplayName overrides the business/store name used by the
+	// store_name field. Empty = use the store name.
+	StoreDisplayName string `json:"store_display_name"`
+	// TemplateBody is a copy of the approved template's body text, used only
+	// for the settings-page preview. The real wording always comes from the
+	// approved template; this is never sent.
+	TemplateBody string `json:"template_body" gorm:"type:text"`
+	// NoLoyalty* configure the alternate template sent while the store's
+	// loyalty program is disabled (a template without the points lines).
+	// Empty NoLoyaltyMessageID = always send the main template. Language,
+	// sender and PDF settings are shared with the main template.
+	NoLoyaltyMessageID       string `json:"no_loyalty_message_id"`
+	NoLoyaltyVariableMapping string `json:"no_loyalty_variable_mapping"`
+	NoLoyaltyTemplateBody    string `json:"no_loyalty_template_body" gorm:"type:text"`
+	// AttachPDF sends the invoice PDF as the template's document header. For
+	// Twilio the document comes from the Content template's media URL, whose
+	// variable must be mapped to the invoice_pdf_file field.
+	AttachPDF bool `json:"attach_pdf" gorm:"default:true"`
+	// PublicBaseURL is this backend's internet-reachable origin (e.g.
+	// https://api.example.com) used to build the PDF link WhatsApp downloads.
+	PublicBaseURL string `json:"public_base_url"`
+	// CountryCode is prefixed to 10-digit customer numbers.
+	CountryCode   string `json:"country_code" gorm:"default:'91'"`
+	SendForPOS    bool   `json:"send_for_pos" gorm:"default:true"`
+	SendForNonPOS bool   `json:"send_for_non_pos" gorm:"default:true"`
+	// PDFLinkTTLMinutes is how long the signed invoice PDF link stays valid.
+	// Editable by super admins only. 0 = default (60).
+	PDFLinkTTLMinutes int `json:"pdf_link_ttl_minutes" gorm:"default:60"`
+
+	EncryptedAPIKey string `json:"-" gorm:"column:api_key"`
+
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
+	DeletedAt gorm.DeletedAt `json:"deleted_at,omitempty" gorm:"index"`
+}
+
+// WhatsAppInvoiceLog records each invoice WhatsApp send attempt.
+type WhatsAppInvoiceLog struct {
+	ID            uuid.UUID `json:"id" gorm:"type:uuid;primary_key;default:(uuid_generate_v4())"`
+	UserID        uuid.UUID `json:"user_id" gorm:"type:uuid;not null;index"`
+	InvoiceID     uuid.UUID `json:"invoice_id" gorm:"type:uuid;index"`
+	InvoiceNumber string    `json:"invoice_number"`
+	PartyName     string    `json:"party_name"`
+	Phone         string    `json:"phone"`
+	Trigger       string    `json:"trigger"` // auto, manual, test
+	Status        string    `json:"status"`  // sent, failed, skipped
+	RequestID     string    `json:"request_id"`
+	Error         string    `json:"error" gorm:"type:text"`
+	Response      string    `json:"response" gorm:"type:text"`
+	CreatedAt     time.Time `json:"created_at" gorm:"index"`
 }

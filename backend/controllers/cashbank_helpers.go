@@ -202,6 +202,7 @@ func createLinkedSalePaymentInWithModeInternal(tx *gorm.DB, userID uuid.UUID, in
 		AmountReceived:  amount,
 		PaymentInNumber: number,
 		Mode:            mode,
+		BankAccountID:   accountID,
 		Date:            date,
 		Reference:       invoice.InvoiceNumber,
 		Notes:           notes,
@@ -346,7 +347,7 @@ func sumInitialInvestmentCapital(db *gorm.DB, userID uuid.UUID, startDate, endDa
 	var total float64
 	// Opening stock and other purchases settled as owner's capital.
 	q := db.Model(&models.PaymentOut{}).
-		Where("user_id = ? AND LOWER(TRIM(COALESCE(mode, ''))) = ?", userID, paymentMethodInitialInvestment)
+		Where("user_id = ? AND LOWER(TRIM(COALESCE(mode, ''))) = ? AND COALESCE(status, '') != 'cancelled'", userID, paymentMethodInitialInvestment)
 	if startDate != "" {
 		q = q.Where(utils.SQLDateGTE("date"), startDate)
 	}
@@ -465,6 +466,15 @@ func adjustPartyBalance(tx *gorm.DB, userID, partyID uuid.UUID, delta float64) e
 		return err
 	}
 	return tx.Model(&party).Update("balance", party.Balance+delta).Error
+}
+
+// invoicePartyDebit is the receivable leg an invoice contributes to the party
+// balance; a cancelled invoice contributes nothing.
+func invoicePartyDebit(invoice *models.Invoice) float64 {
+	if invoice.Status == "cancelled" {
+		return 0
+	}
+	return invoice.TotalAmount
 }
 
 func reverseCashAddTransaction(tx *gorm.DB, userID uuid.UUID, txn models.CashTransaction) error {
@@ -592,8 +602,10 @@ func reverseLinkedInvoicePayments(tx *gorm.DB, userID uuid.UUID, invoice *models
 		return nil
 	}
 
+	// Cancelled payments were already reversed when cancelled — leave them
+	// on file and out of the reversal set.
 	var payments []models.Payment
-	if err := tx.Where("user_id = ? AND invoice_id = ?", userID, invoice.ID).Find(&payments).Error; err != nil {
+	if err := tx.Where("user_id = ? AND invoice_id = ? AND COALESCE(status, '') != ?", userID, invoice.ID, "cancelled").Find(&payments).Error; err != nil {
 		return err
 	}
 	totalPaid := invoicePaymentsTotal(payments)
@@ -730,6 +742,57 @@ func rewriteLinkedInvoicePayments(tx *gorm.DB, userID uuid.UUID, previous, curre
 	return nil
 }
 
+// cancelLinkedInvoicePayments marks every non-cancelled payment-in linked to
+// an invoice as cancelled and reverses its effects — GL journal, the linked
+// cash/bank ledger row, the invoice's paid amount, and the party balance.
+// The payment rows stay on file for reference; the cash transactions they
+// created are derived rows and are removed outright. Used when an invoice is
+// cancelled so its payments stop counting alongside it.
+func cancelLinkedInvoicePayments(userID uuid.UUID, invoice *models.Invoice, reason, actor string) error {
+	var payments []models.Payment
+	if err := utils.DB.Where(
+		"user_id = ? AND invoice_id = ? AND COALESCE(status, '') != ?",
+		userID, invoice.ID, "cancelled",
+	).Find(&payments).Error; err != nil {
+		return err
+	}
+
+	return utils.DB.Transaction(func(tx *gorm.DB) error {
+		now := time.Now()
+		cancelReason := fmt.Sprintf("Invoice %s cancelled", invoice.InvoiceNumber)
+		if trimmed := strings.TrimSpace(reason); trimmed != "" {
+			cancelReason = fmt.Sprintf("%s: %s", cancelReason, trimmed)
+		}
+		for i := range payments {
+			payment := payments[i]
+			if err := reversePaymentEffects(tx, userID, &payment); err != nil {
+				return err
+			}
+			if err := tx.Model(&payment).Updates(map[string]interface{}{
+				"status":        "cancelled",
+				"cancel_reason": cancelReason,
+				"cancelled_at":  now,
+				"cancelled_by":  actor,
+			}).Error; err != nil {
+				return err
+			}
+		}
+
+		// Sweep any remaining cash rows posted against the invoice number so
+		// nothing for this invoice keeps counting in cash/bank.
+		txns, err := findInvoiceCashTransactions(tx, userID, invoice.InvoiceNumber)
+		if err != nil {
+			return err
+		}
+		for _, txn := range txns {
+			if err := reverseCashAddTransaction(tx, userID, txn); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // resyncLinkedInvoicePayments updates existing cash/bank transactions and payment-in
 // rows for an invoice when the amount, method, or destination account changes.
 func resyncLinkedInvoicePayments(db *gorm.DB, userID uuid.UUID, previous, current *models.Invoice) error {
@@ -801,6 +864,7 @@ func createLinkedPurchasePaymentOutWithModeInternal(tx *gorm.DB, userID uuid.UUI
 		AmountPaid:       amount,
 		PaymentOutNumber: number,
 		Mode:             mode,
+		BankAccountID:    accountID,
 		Date:             date,
 		Reference:        bill.BillNumber,
 		Notes:            notes,
@@ -855,7 +919,7 @@ func reverseLinkedPurchasePaymentOuts(tx *gorm.DB, userID uuid.UUID, bill *model
 	}
 
 	var paymentOuts []models.PaymentOut
-	if err := tx.Where("user_id = ? AND purchase_bill_id = ?", userID, bill.ID).Find(&paymentOuts).Error; err != nil {
+	if err := tx.Where("user_id = ? AND purchase_bill_id = ? AND COALESCE(status, '') != ?", userID, bill.ID, "cancelled").Find(&paymentOuts).Error; err != nil {
 		return err
 	}
 	totalPaid := 0.0

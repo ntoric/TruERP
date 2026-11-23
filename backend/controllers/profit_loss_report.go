@@ -43,9 +43,8 @@ func stockPositionsAsOf(userID uuid.UUID, date string) map[uuid.UUID]stockPositi
 	return snapshotPositionsAsOf(userID, date)
 }
 
-// computeStockValueAsOf returns inventory quantity and value at the end of the
-// given date — the materialized stock snapshots adjusted by the latest overall
-// opening-stock override.
+// computeStockValueAsOf returns the computed inventory quantity and value at
+// the end of the given date, from the materialized stock snapshots.
 func computeStockValueAsOf(userID uuid.UUID, date string) (qty, value float64) {
 	return overallPositionAsOf(userID, date)
 }
@@ -109,13 +108,13 @@ func loadProfitLossReport(userID uuid.UUID, period, anchorDate, startDate, endDa
 
 	report.Sales = plSumMetric(&models.Invoice{}, userID, "date", "total_amount", "status != 'cancelled'", start, end)
 	report.Purchases = plSumMetric(&models.PurchaseBill{}, userID, "bill_date", "total_amount", "", start, end)
-	report.Expenses = plSumMetric(&models.Expense{}, userID, "date", "amount", "", start, end)
+	report.Expenses = plSumMetric(&models.Expense{}, userID, "date", "amount", "COALESCE(status, '') != 'cancelled'", start, end)
 
 	salesReturns := plSumMetric(&models.SalesReturn{}, userID, "date", "amount", "status != 'cancelled'", start, end)
 	creditNotes := plSumMetric(&models.CreditNote{}, userID, "date", "total_amount", "status != 'cancelled'", start, end)
 	// Invoice-linked refund payment outs reverse revenue with no return or
 	// credit-note document — they belong in the same deduction line.
-	invoiceRefunds := plSumMetric(&models.PaymentOut{}, userID, "date", "amount_paid - payment_out_discount", "invoice_id IS NOT NULL", start, end)
+	invoiceRefunds := plSumMetric(&models.PaymentOut{}, userID, "date", "amount_paid - payment_out_discount", "invoice_id IS NOT NULL AND COALESCE(status, '') != 'cancelled'", start, end)
 	report.SalesReturns = models.DailyReportMetric{
 		TotalAmount: salesReturns.TotalAmount + creditNotes.TotalAmount + invoiceRefunds.TotalAmount,
 		Count:       salesReturns.Count + creditNotes.Count + invoiceRefunds.Count,
@@ -129,13 +128,12 @@ func loadProfitLossReport(userID uuid.UUID, period, anchorDate, startDate, endDa
 	}
 
 	// Opening stock is the inventory value at the close of the day before the
-	// period starts; closing stock is the value at the period end. Positions
+	// period starts (or the opening-stock override effective on the start
+	// date); closing stock is the computed value at the period end. Positions
 	// come from the materialized daily snapshot table, refreshed if the stock
 	// source data changed since the last rebuild.
 	ensureStockSnapshots(userID)
-	startT, _ := time.Parse("2006-01-02", start)
-	openingDate := startT.AddDate(0, 0, -1).Format("2006-01-02")
-	report.OpeningStockQty, report.OpeningStock = computeStockValueAsOf(userID, openingDate)
+	report.OpeningStockQty, report.OpeningStock = overallOpeningPositionOn(userID, start)
 	report.ClosingStockQty, report.ClosingStock = computeStockValueAsOf(userID, end)
 
 	netSales := report.Sales.TotalAmount - report.SalesReturns.TotalAmount
@@ -151,6 +149,7 @@ func loadProfitLossReport(userID uuid.UUID, period, anchorDate, startDate, endDa
 
 	report.NetProfit = report.GrossProfit +
 		report.OtherIncome.TotalAmount -
+		report.IndirectExpenses.TotalAmount -
 		report.Expenses.TotalAmount
 
 	report.ExpenseLines = loadExpenseLines(userID, start, end)
@@ -226,6 +225,15 @@ func profitLossStatementRows(r models.ProfitLossReport) []plStatementRow {
 		rows = append(rows, plStatementRow{
 			Label: line.Name, Amount: line.Amount, Count: line.Count,
 			Kind: "detail", CountLabel: "postings",
+		})
+	}
+	rows = append(rows,
+		plStatementRow{Label: "Indirect Expenses", Amount: r.IndirectExpenses.TotalAmount, Count: r.IndirectExpenses.Count, Kind: "item", Negative: true, CountLabel: "postings"},
+	)
+	for _, line := range r.IndirectExpenseLines {
+		rows = append(rows, plStatementRow{
+			Label: line.Name, Amount: line.Amount, Count: line.Count,
+			Kind: "detail", Negative: true, CountLabel: "postings",
 		})
 	}
 	rows = append(rows,
@@ -336,7 +344,7 @@ func ExportProfitLossReportExcel(c *gin.Context) {
 
 	writeRow("")
 	writeRow("Note", "Gross profit = net sales − net purchases + closing stock − opening stock.")
-	writeRow("Note", "Net profit = gross profit + other income − expenses.")
+	writeRow("Note", "Net profit = gross profit + other income − indirect expenses − expenses.")
 
 	filename := fmt.Sprintf("profit_loss_%s_%s_%s.xlsx", report.Period, report.StartDate, report.EndDate)
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -488,7 +496,7 @@ func buildProfitLossReportPDF(report models.ProfitLossReport) ([]byte, error) {
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "I", 8)
 	pdf.SetTextColor(140, 140, 140)
-	pdf.MultiCell(0, 4.5, sanitizePDFText("Gross profit = net sales - net purchases + closing stock - opening stock. Net profit = gross profit + other income - expenses. Stock values use weighted average cost from the stock ledger. Generated from TruERP."), "", "L", false)
+	pdf.MultiCell(0, 4.5, sanitizePDFText("Gross profit = net sales - net purchases + closing stock - opening stock. Net profit = gross profit + other income - indirect expenses - expenses. Stock values use weighted average cost from the stock ledger. Generated from TruERP."), "", "L", false)
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {

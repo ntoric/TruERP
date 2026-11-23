@@ -1,8 +1,10 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"truerp/models"
+	"truerp/services"
 	"truerp/utils"
 
 	"github.com/gin-gonic/gin"
@@ -64,6 +67,9 @@ func GetStockBalance(c *gin.Context) {
 
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
+	}
+	if category := c.Query("category"); category != "" && category != "all" {
+		query = query.Where("product_id IN (SELECT id FROM products WHERE user_id = ? AND category = ?)", userID, category)
 	}
 
 	if err := query.Find(&stocks).Error; err != nil {
@@ -266,6 +272,10 @@ func GetStockEntries(c *gin.Context) {
 		query = query.Where("outlet_id = ?", outletID)
 	}
 
+	if category := c.Query("category"); category != "" && category != "all" {
+		query = query.Where("stock_entries.product_id IN (SELECT id FROM products WHERE user_id = ? AND category = ?)", userID, category)
+	}
+
 	if approvalStatus != "" {
 		if approvalStatus == "approved" {
 			query = query.Where("approval_status = ? OR approval_status = ? OR approval_status IS NULL", "approved", "")
@@ -283,9 +293,10 @@ func GetStockEntries(c *gin.Context) {
 
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + strings.ToLower(search) + "%"
+		compact := utils.CompactLikePattern(search)
 		query = query.Where(
-			"LOWER(stock_entries.item_name) LIKE ? OR LOWER(stock_entries.item_code) LIKE ? OR LOWER(stock_entries.batch_no) LIKE ? OR stock_entries.product_id IN (SELECT id FROM products WHERE LOWER(name) LIKE ? OR LOWER(sku) LIKE ?)",
-			like, like, like, like, like,
+			utils.SQLCompactLike("stock_entries.item_name")+" OR LOWER(stock_entries.item_code) LIKE ? OR LOWER(stock_entries.batch_no) LIKE ? OR stock_entries.product_id IN (SELECT id FROM products WHERE "+utils.SQLCompactLike("name")+" OR LOWER(sku) LIKE ?)",
+			compact, like, like, compact, like,
 		)
 	}
 	query = query.Order("entry_date DESC")
@@ -516,7 +527,9 @@ func UpdateStockEntry(c *gin.Context) {
 
 	// Only adjust available stock for already-approved entries
 	if entry.ProductID != nil && stockEntryIsApproved(entry.ApprovalStatus) {
-		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -oldQty, entry.CostPrice, oldBatch, nil, nil)
+		// Reversal must not re-rate average cost — sale-type entries carry the
+		// selling price in cost_price, not the stock cost.
+		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -oldQty, 0, oldBatch, nil, nil)
 		updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", input.Quantity, input.CostPrice, newBatch, mfgDate, expDate)
 	}
 
@@ -1080,14 +1093,18 @@ func applyInvoiceSaleStock(userID uuid.UUID, invoice *models.Invoice) {
 		}
 
 		batchNo := strings.TrimSpace(item.BatchNo)
+
+		var product models.Product
+		productFound := utils.DB.Where("user_id = ? AND id = ?", userID, *item.ProductID).First(&product).Error == nil
+
 		outletID := resolveSaleWarehouseID(userID, *item.ProductID)
 		if outletID == uuid.Nil {
 			fmt.Printf("[DEBUG] applyInvoiceSaleStock - No warehouse for user %s product %s\n", userID, *item.ProductID)
+			if productFound {
+				snapshotInvoiceItemProductState(userID, item, product.PurchasePrice)
+			}
 			continue
 		}
-
-		var product models.Product
-		_ = utils.DB.Where("user_id = ? AND id = ?", userID, *item.ProductID).First(&product).Error
 
 		if product.EnableBatching && batchNo == "" {
 			if stock, ok := pickFEFOBatch(userID, *item.ProductID, outletID, math.Abs(item.Quantity)); ok {
@@ -1142,6 +1159,30 @@ func applyInvoiceSaleStock(userID uuid.UUID, invoice *models.Invoice) {
 			continue
 		}
 		updateInventoryStock(userID, *item.ProductID, outletID, "sale", qty, 0, batchNo, nil, item.ExpDate)
+		if productFound {
+			snapshotInvoiceItemProductState(userID, item, product.PurchasePrice)
+		}
+	}
+}
+
+// snapshotInvoiceItemProductState records the product's purchase price and the
+// remaining stock balance on the invoice item at the time it was billed.
+func snapshotInvoiceItemProductState(userID uuid.UUID, item *models.InvoiceItem, purchasePrice float64) {
+	var balance float64
+	if err := utils.DB.Model(&models.InventoryStock{}).
+		Where("user_id = ? AND product_id = ?", userID, *item.ProductID).
+		Select("COALESCE(SUM(quantity), 0)").
+		Scan(&balance).Error; err != nil {
+		fmt.Printf("[DEBUG] snapshotInvoiceItemProductState - balance query error: %v\n", err)
+		return
+	}
+	item.PurchasePrice = &purchasePrice
+	item.StockBalance = &balance
+	if err := utils.DB.Model(item).Updates(map[string]interface{}{
+		"purchase_price": purchasePrice,
+		"stock_balance":  balance,
+	}).Error; err != nil {
+		fmt.Printf("[DEBUG] snapshotInvoiceItemProductState - item update error: %v\n", err)
 	}
 }
 
@@ -1159,7 +1200,9 @@ func restoreInvoiceSaleStockQuantities(userID, invoiceID uuid.UUID) {
 	for _, entry := range entries {
 		if entry.ProductID != nil && stockEntryIsApproved(entry.ApprovalStatus) {
 			// Sale entries store negative quantity; -entry.Quantity restores stock.
-			updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -entry.Quantity, entry.CostPrice, entry.BatchNo, entry.MfgDate, entry.ExpDate)
+			// Cost 0: sale entries store the selling price — restoring at it would
+			// re-rate average cost to the sale price on every invoice edit/cancel.
+			updateInventoryStock(userID, *entry.ProductID, entry.OutletID, "adjustment", -entry.Quantity, 0, entry.BatchNo, entry.MfgDate, entry.ExpDate)
 		}
 	}
 }
@@ -1475,11 +1518,28 @@ func GetInventoryStocks(c *gin.Context) {
 	if productID != "" {
 		query = query.Where("product_id = ?", productID)
 	}
+	if raw := strings.TrimSpace(c.Query("product_ids")); raw != "" {
+		// Comma-separated list, e.g. for loading batches of a whole product page at once.
+		ids := make([]uuid.UUID, 0)
+		for _, part := range strings.Split(raw, ",") {
+			if id, err := uuid.Parse(strings.TrimSpace(part)); err == nil {
+				ids = append(ids, id)
+			}
+		}
+		if len(ids) == 0 {
+			c.JSON(http.StatusOK, []models.InventoryStock{})
+			return
+		}
+		query = query.Where("product_id IN ?", ids)
+	}
 	if outletID != "" {
 		query = query.Where("outlet_id = ?", outletID)
 	}
 	if batchNo != "" {
 		query = query.Where("batch_no = ?", batchNo)
+	}
+	if category := c.Query("category"); category != "" && category != "all" {
+		query = query.Where("inventory_stocks.product_id IN (SELECT id FROM products WHERE user_id = ? AND category = ?)", userID, category)
 	}
 	if availableOnly {
 		query = query.Where("available_qty > 0")
@@ -1493,9 +1553,10 @@ func GetInventoryStocks(c *gin.Context) {
 	}
 	if search := strings.TrimSpace(c.Query("search")); search != "" {
 		like := "%" + strings.ToLower(search) + "%"
+		compact := utils.CompactLikePattern(search)
 		query = query.Where(
-			"LOWER(inventory_stocks.batch_no) LIKE ? OR inventory_stocks.product_id IN (SELECT id FROM products WHERE LOWER(name) LIKE ? OR LOWER(sku) LIKE ?)",
-			like, like, like,
+			"LOWER(inventory_stocks.batch_no) LIKE ? OR inventory_stocks.product_id IN (SELECT id FROM products WHERE "+utils.SQLCompactLike("name")+" OR LOWER(sku) LIKE ?)",
+			like, compact, like,
 		)
 	}
 
@@ -2031,6 +2092,13 @@ func GetLowStockAlerts(c *gin.Context) {
 		INNER JOIN inventory_stocks s ON p.id = s.product_id
 		LEFT JOIN warehouses w ON s.outlet_id = w.id
 		WHERE p.user_id = ? AND p.deleted_at IS NULL AND p.low_stock_alert = true
+	`
+	args := []interface{}{userID}
+	if category := c.Query("category"); category != "" && category != "all" {
+		baseQuery += " AND p.category = ?"
+		args = append(args, category)
+	}
+	baseQuery += `
 		GROUP BY p.id, p.name, p.sku, p.min_stock, s.outlet_id, w.name
 		HAVING SUM(s.quantity) <= p.min_stock
 	`
@@ -2046,19 +2114,19 @@ func GetLowStockAlerts(c *gin.Context) {
 		perPage, _ := strconv.Atoi(c.DefaultQuery("per_page", "25"))
 
 		var total int64
-		if err := utils.DB.Raw("SELECT COUNT(*) FROM ("+baseQuery+") consolidated", userID).Scan(&total).Error; err != nil {
+		if err := utils.DB.Raw("SELECT COUNT(*) FROM ("+baseQuery+") consolidated", args...).Scan(&total).Error; err != nil {
 			fmt.Printf("[DEBUG] GetLowStockAlerts - count error: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
 			return
 		}
 
 		pageQuery := baseQuery + " ORDER BY product_name ASC, outlet_name ASC"
-		args := []interface{}{userID}
+		pageArgs := append([]interface{}{}, args...)
 		if perPage > 0 {
 			pageQuery += " LIMIT ? OFFSET ?"
-			args = append(args, perPage, (page-1)*perPage)
+			pageArgs = append(pageArgs, perPage, (page-1)*perPage)
 		}
-		if err := utils.DB.Raw(pageQuery, args...).Scan(&results).Error; err != nil {
+		if err := utils.DB.Raw(pageQuery, pageArgs...).Scan(&results).Error; err != nil {
 			fmt.Printf("[DEBUG] GetLowStockAlerts - DB error: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
 			return
@@ -2074,7 +2142,7 @@ func GetLowStockAlerts(c *gin.Context) {
 		return
 	}
 
-	if err := utils.DB.Raw(baseQuery, userID).Scan(&results).Error; err != nil {
+	if err := utils.DB.Raw(baseQuery, args...).Scan(&results).Error; err != nil {
 		fmt.Printf("[DEBUG] GetLowStockAlerts - DB error: %v\n", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch low stock alerts"})
 		return
@@ -2399,4 +2467,165 @@ func BulkUpdateStockExcel(c *gin.Context) {
 		"updated": updatedCount,
 		"errors":  errors,
 	})
+}
+
+// BulkAdjustStockCSV enqueues a bulk stock adjustment import. The CSV (item
+// identifier + signed quantity) is processed in the background so large files
+// don't time out the request; poll GetBulkAdjustStockJob for progress. Every
+// created entry carries the note "bulk import".
+func BulkAdjustStockCSV(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	outletIDStr := strings.TrimSpace(c.PostForm("outlet_id"))
+	outletID, err := uuid.Parse(outletIDStr)
+	if outletIDStr == "" || err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Please select a warehouse"})
+		return
+	}
+
+	var warehouse models.Warehouse
+	if err := utils.DB.Where("user_id = ? AND id = ? AND is_active = ?", userID, outletID, true).First(&warehouse).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Warehouse not found"})
+		return
+	}
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "No file uploaded"})
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to open file"})
+		return
+	}
+	defer src.Close()
+
+	content, err := io.ReadAll(src)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Failed to read file"})
+		return
+	}
+
+	jobID, err := services.EnqueueMigrationJob(utils.DB, userID, "stock-bulk-adjust", file.Filename, content, map[string]string{
+		"outlet_id": warehouse.ID.String(),
+	})
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusAccepted, gin.H{"job_id": jobID, "status": "queued"})
+}
+
+// GetBulkAdjustStockJob returns the live state of a bulk stock adjustment job
+// so the frontend can poll for per-row progress.
+func GetBulkAdjustStockJob(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+
+	jobID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+		return
+	}
+
+	job, ok := services.GetMigrationJob(utils.DB, jobID, userID)
+	if !ok {
+		c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+		return
+	}
+	c.JSON(http.StatusOK, job)
+}
+
+// importBulkStockAdjustRows is the migration runner for "stock-bulk-adjust".
+// It parses the uploaded CSV and posts one adjustment entry per row against
+// the warehouse chosen at upload time, reporting progress after every row.
+func importBulkStockAdjustRows(userID uuid.UUID, content []byte, outletID uuid.UUID, progress services.ProgressFunc) (map[string]interface{}, []string, error) {
+	var warehouse models.Warehouse
+	if err := utils.DB.Where("user_id = ? AND id = ? AND is_active = ?", userID, outletID, true).First(&warehouse).Error; err != nil {
+		return nil, nil, fmt.Errorf("warehouse not found")
+	}
+
+	records, err := csv.NewReader(bytes.NewReader(content)).ReadAll()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to read CSV: %w", err)
+	}
+	if len(records) < 2 {
+		return nil, nil, fmt.Errorf("CSV file is empty or has no data")
+	}
+
+	headers := records[0]
+	// Strip BOM/whitespace so files saved from Excel still match headers.
+	for i := range headers {
+		headers[i] = strings.TrimSpace(strings.TrimPrefix(headers[i], "\uFEFF"))
+	}
+
+	total := len(records) - 1
+	adjustedCount := 0
+	var errors []string
+
+	for i, record := range records[1:] {
+		if len(record) != len(headers) {
+			errors = append(errors, fmt.Sprintf("Row %d: Column count mismatch", i+2))
+		} else {
+			identifier := firstCSVValue(record, headers, "SKU", "Item Code", "Itemcode", "Product Code", "Product ID", "Barcode")
+			quantityStr := firstCSVValue(record, headers, "Quantity", "Adjustment Quantity", "Adjustment", "Qty")
+
+			if err := processBulkAdjustRow(userID, identifier, quantityStr, warehouse.ID); err != nil {
+				errors = append(errors, fmt.Sprintf("Row %d: %v", i+2, err))
+			} else {
+				adjustedCount++
+			}
+		}
+		if progress != nil {
+			progress(i+1, total, adjustedCount)
+		}
+	}
+
+	return map[string]interface{}{"adjusted": adjustedCount, "imported": adjustedCount}, errors, nil
+}
+
+// processBulkAdjustRow resolves the product by its unique identifier and posts
+// a single adjustment entry (note: "bulk import") against the given warehouse.
+func processBulkAdjustRow(userID uuid.UUID, identifier, quantityStr string, outletID uuid.UUID) error {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return fmt.Errorf("SKU is required")
+	}
+
+	quantityStr = strings.TrimSpace(quantityStr)
+	quantity, err := strconv.ParseFloat(quantityStr, 64)
+	if quantityStr == "" || err != nil {
+		return fmt.Errorf("invalid quantity %q", quantityStr)
+	}
+	if quantity == 0 {
+		return fmt.Errorf("quantity cannot be zero")
+	}
+
+	product, err := findProductForBulkStock(userID, identifier, identifier, identifier)
+	if err != nil {
+		return err
+	}
+
+	productID := product.ID
+	entry := models.StockEntry{
+		ID:        uuid.New(),
+		UserID:    userID,
+		ItemName:  product.Name,
+		ProductID: &productID,
+		OutletID:  outletID,
+		EntryType: "adjustment",
+		Quantity:  quantity,
+		ItemCode:  product.ItemCode,
+		Notes:     "bulk import",
+		EntryDate: time.Now(),
+	}
+
+	if err := utils.DB.Create(&entry).Error; err != nil {
+		return err
+	}
+
+	updateInventoryStock(userID, product.ID, outletID, "adjustment", quantity, 0, "", nil, nil)
+	return nil
 }

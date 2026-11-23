@@ -30,6 +30,9 @@ func GetPayments(c *gin.Context) {
 	if mode := c.Query("mode"); mode != "" {
 		query = query.Where("mode = ?", mode)
 	}
+	if status := c.Query("status"); status != "" {
+		query = query.Where("status = ?", status)
+	}
 	// Day-inclusive range: payments.date is a timestamp.
 	if from := c.Query("from"); from != "" {
 		query = query.Where(utils.SQLDateGTE("payments.date"), from)
@@ -103,6 +106,7 @@ func CreatePayment(c *gin.Context) {
 		PaymentInDiscount float64    `json:"payment_in_discount" binding:"gte=0"`
 		PaymentInNumber   string     `json:"payment_in_number"`
 		Mode              string     `json:"mode" binding:"required"`
+		BankAccountID     *uuid.UUID `json:"bank_account_id"`
 		Date              time.Time  `json:"date" binding:"required"`
 		Reference         string     `json:"reference"`
 		Notes             string     `json:"notes"`
@@ -173,13 +177,14 @@ func CreatePayment(c *gin.Context) {
 	// settlements move no money at all.
 	var accountID *uuid.UUID
 	if !isInitialInvestmentPayment(payment.Mode) && !isCreditSettlementPayment(payment.Mode) && netAmount > 0 {
-		resolved, err := resolveBankAccountForPaymentMode(userID, payment.Mode, nil)
+		resolved, err := resolveBankAccountForPaymentMode(userID, payment.Mode, input.BankAccountID)
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid bank account for payment method"})
 			return
 		}
 		accountID = resolved
 	}
+	payment.BankAccountID = accountID
 
 	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&payment).Error; err != nil {
@@ -249,12 +254,99 @@ func CreatePayment(c *gin.Context) {
 	c.JSON(http.StatusCreated, payment)
 }
 
+// reversePaymentEffects undoes every side effect a payment-in created:
+// the GL journal, the cash/bank ledger row, the linked invoice's paid
+// amount, and the party balance. Shared by delete and cancel — the caller
+// decides whether the payment row is then removed or kept as cancelled.
+func reversePaymentEffects(tx *gorm.DB, userID uuid.UUID, payment *models.Payment) error {
+	// Calculate net amount (amount received minus discount)
+	netAmount := payment.AmountReceived - payment.PaymentInDiscount
+
+	var linkedInvoice models.Invoice
+	if payment.InvoiceID != nil {
+		tx.Where("user_id = ? AND id = ?", userID, *payment.InvoiceID).First(&linkedInvoice)
+	}
+
+	// Reverse the standalone journal and the linked cash/bank ledger row.
+	if err := reverseAccountingByRef(tx, userID, "payment_in_record", payment.ID); err != nil {
+		return err
+	}
+	txns, err := findPaymentCashTransactions(tx, userID, "in", payment.PaymentInNumber)
+	if err != nil {
+		return err
+	}
+	if len(txns) == 0 && linkedInvoice.ID != uuid.Nil {
+		// Payments created at sale time write the cash row with the
+		// "Sales invoice <n>" convention instead of the payment number.
+		found, ferr := findInvoiceCashTransactions(tx, userID, linkedInvoice.InvoiceNumber)
+		if ferr != nil {
+			return ferr
+		}
+		for _, txn := range found {
+			if math.Abs(txn.Amount-netAmount) < 0.01 {
+				txns = []models.CashTransaction{txn}
+				break
+			}
+		}
+	}
+	for _, txn := range txns {
+		if err := reverseCashAddTransaction(tx, userID, txn); err != nil {
+			return err
+		}
+	}
+
+	// Reverse invoice payment
+	if linkedInvoice.ID != uuid.Nil {
+		newPaid := linkedInvoice.AmountPaid - netAmount
+		if newPaid < 0 {
+			newPaid = 0
+		}
+		if err := tx.Model(&linkedInvoice).Updates(map[string]interface{}{
+			"amount_paid": newPaid,
+			"status":      invoiceStatusForPaidAmount(linkedInvoice, newPaid),
+		}).Error; err != nil {
+			return err
+		}
+	}
+
+	// Reverse party balance
+	var party models.Party
+	if err := tx.Where("user_id = ? AND id = ?", userID, payment.PartyID).First(&party).Error; err == nil {
+		if err := tx.Model(&party).Update("balance", party.Balance+netAmount).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func paymentCancellationRequested(c *gin.Context) (string, bool) {
+	var input struct {
+		Reason string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cancellation reason is required"})
+		return "", false
+	}
+	reason := strings.TrimSpace(input.Reason)
+	if reason == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cancellation reason is required"})
+		return "", false
+	}
+	return reason, true
+}
+
+func actorName(c *gin.Context) string {
+	if name, exists := c.Get("user_name"); exists {
+		if s, ok := name.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
 func DeletePayment(c *gin.Context) {
 	userID := c.MustGet("user_id").(uuid.UUID)
-	userName := ""
-	if name, exists := c.Get("user_name"); exists {
-		userName = name.(string)
-	}
+	userName := actorName(c)
 	id := c.Param("id")
 
 	var payment models.Payment
@@ -262,66 +354,12 @@ func DeletePayment(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
 		return
 	}
-
-	// Calculate net amount (amount received minus discount)
 	netAmount := payment.AmountReceived - payment.PaymentInDiscount
 
-	var linkedInvoice models.Invoice
-	if payment.InvoiceID != nil {
-		utils.DB.Where("user_id = ? AND id = ?", userID, *payment.InvoiceID).First(&linkedInvoice)
-	}
-
 	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
-		// Reverse the standalone journal and the linked cash/bank ledger row.
-		if err := reverseAccountingByRef(tx, userID, "payment_in_record", payment.ID); err != nil {
+		if err := reversePaymentEffects(tx, userID, &payment); err != nil {
 			return err
 		}
-		txns, err := findPaymentCashTransactions(tx, userID, "in", payment.PaymentInNumber)
-		if err != nil {
-			return err
-		}
-		if len(txns) == 0 && linkedInvoice.ID != uuid.Nil {
-			// Payments created at sale time write the cash row with the
-			// "Sales invoice <n>" convention instead of the payment number.
-			found, ferr := findInvoiceCashTransactions(tx, userID, linkedInvoice.InvoiceNumber)
-			if ferr != nil {
-				return ferr
-			}
-			for _, txn := range found {
-				if math.Abs(txn.Amount-netAmount) < 0.01 {
-					txns = []models.CashTransaction{txn}
-					break
-				}
-			}
-		}
-		for _, txn := range txns {
-			if err := reverseCashAddTransaction(tx, userID, txn); err != nil {
-				return err
-			}
-		}
-
-		// Reverse invoice payment
-		if linkedInvoice.ID != uuid.Nil {
-			newPaid := linkedInvoice.AmountPaid - netAmount
-			if newPaid < 0 {
-				newPaid = 0
-			}
-			if err := tx.Model(&linkedInvoice).Updates(map[string]interface{}{
-				"amount_paid": newPaid,
-				"status":      invoiceStatusForPaidAmount(linkedInvoice, newPaid),
-			}).Error; err != nil {
-				return err
-			}
-		}
-
-		// Reverse party balance
-		var party models.Party
-		if err := tx.Where("user_id = ? AND id = ?", userID, payment.PartyID).First(&party).Error; err == nil {
-			if err := tx.Model(&party).Update("balance", party.Balance+netAmount).Error; err != nil {
-				return err
-			}
-		}
-
 		return tx.Delete(&payment).Error
 	}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete payment"})
@@ -348,6 +386,68 @@ func DeletePayment(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, gin.H{"message": "Payment deleted successfully"})
+}
+
+// CancelPayment reverses a payment-in like a delete but keeps the row with a
+// mandatory cancellation reason, so the document stays on file without
+// counting in balances or reports.
+func CancelPayment(c *gin.Context) {
+	userID := c.MustGet("user_id").(uuid.UUID)
+	userName := actorName(c)
+	id := c.Param("id")
+
+	reason, ok := paymentCancellationRequested(c)
+	if !ok {
+		return
+	}
+
+	var payment models.Payment
+	if err := utils.DB.Where("user_id = ? AND id = ?", userID, id).First(&payment).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "Payment not found"})
+		return
+	}
+	if payment.Status == "cancelled" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Payment is already cancelled"})
+		return
+	}
+	netAmount := payment.AmountReceived - payment.PaymentInDiscount
+
+	now := time.Now()
+	if err := utils.DB.Transaction(func(tx *gorm.DB) error {
+		if err := reversePaymentEffects(tx, userID, &payment); err != nil {
+			return err
+		}
+		return tx.Model(&payment).Updates(map[string]interface{}{
+			"status":        "cancelled",
+			"cancel_reason": reason,
+			"cancelled_at":  now,
+			"cancelled_by":  userName,
+		}).Error
+	}); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel payment"})
+		return
+	}
+
+	CreateAuditLog(
+		userID,
+		userName,
+		"cancel",
+		"payment",
+		&payment.ID,
+		payment.PaymentInNumber,
+		fmt.Sprintf("Cancelled payment: %.2f - %s", netAmount, reason),
+		c.ClientIP(),
+		c.GetHeader("User-Agent"),
+		map[string]interface{}{
+			"amount":        netAmount,
+			"invoice_id":    payment.InvoiceID,
+			"cancel_reason": reason,
+		},
+		"success",
+		"",
+	)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Payment cancelled successfully"})
 }
 
 func GetNextPaymentInNumber(c *gin.Context) {

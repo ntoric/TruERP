@@ -26,7 +26,7 @@ import {
   fetchPartyLedger,
   partyLedgerModeLabel,
   partyLedgerRange,
-  printPartyLedger,
+  downloadPartyLedgerPdf,
   type PartyLedger,
   type PartyLedgerEntry,
   type PartyLedgerPeriod,
@@ -37,13 +37,14 @@ import {
   Download,
   Mail,
   MessageCircle,
-  Printer,
+  FileDown,
   Receipt,
   Star,
   TrendingUp,
   Wallet,
   AlertTriangle,
 } from 'lucide-react'
+import BrandLoader from '@/components/BrandLoader'
 
 const FAVOURITE_KEY = 'party-ledger'
 
@@ -184,13 +185,14 @@ export default function PartyLedgerPage() {
     }
   }
 
-  const printLedger = async () => {
-    if (!partyId) return
+  const downloadPdf = async () => {
+    if (!partyId || !ledger) return
     setBusy('pdf')
     try {
-      await printPartyLedger(partyId, fromDate, toDate)
+      await downloadPartyLedgerPdf(partyId, fromDate, toDate, ledger.party.name)
+      notifySuccess('PDF downloaded')
     } catch (err) {
-      notifyError(err instanceof Error ? err.message : 'Print failed')
+      notifyError(err instanceof Error ? err.message : 'PDF download failed')
     } finally {
       setBusy(null)
     }
@@ -232,9 +234,9 @@ export default function PartyLedgerPage() {
                 <Download className="mr-2 h-4 w-4" />
                 {busy === 'excel' ? 'Exporting…' : 'Download Excel'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => void printLedger()} disabled={!ledger || busy !== null}>
-                <Printer className="mr-2 h-4 w-4" />
-                {busy === 'pdf' ? 'Preparing…' : 'Print PDF'}
+              <Button variant="outline" size="sm" onClick={() => void downloadPdf()} disabled={!ledger || busy !== null}>
+                <FileDown className="mr-2 h-4 w-4" />
+                {busy === 'pdf' ? 'Downloading…' : 'Download PDF'}
               </Button>
             </>
           }
@@ -324,7 +326,7 @@ export default function PartyLedgerPage() {
           <CardContent className="p-0">
             {loading ? (
               <div className="flex h-64 items-center justify-center">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-blue-600 border-t-transparent" />
+                <BrandLoader />
               </div>
             ) : !ledger ? (
               <div className="flex h-64 items-center justify-center text-sm text-gray-500">

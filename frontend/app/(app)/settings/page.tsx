@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { apiFetch } from '@/hooks/useAuth'
+import { apiFetch, useAuth } from '@/hooks/useAuth'
+import { isSuperAdmin } from '@/lib/roles'
 import DashboardLayout from '@/components/layout/DashboardLayout'
 import PageSkeleton, { FormPageSkeleton } from '@/components/layout/PageSkeleton'
 import { Button } from '@/components/ui/button'
@@ -14,6 +15,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { SearchableSelect } from '@/components/ui/searchable-select'
+import { INDIAN_STATES, STATE_CODE_BY_NAME } from '@/lib/indianStates'
 import ImageCropModal from '@/components/ImageCropModal'
 import LogoAspectRatioPicker from '@/components/LogoAspectRatioPicker'
 import { logoPreviewBoxClass, normalizeLogoAspectRatio, type LogoAspectRatio } from '@/lib/logoAspect'
@@ -25,7 +28,8 @@ import { hasDesktopUpdater } from '@/lib/desktopBridge'
 import WeighingScaleSettingsCard from '@/components/WeighingScaleSettingsCard'
 import PrintSettingsCard from '@/components/PrintSettingsCard'
 import DesktopUpdatesCard from '@/components/DesktopUpdatesCard'
-import AppearanceSettingsCard from '@/components/AppearanceSettingsCard'
+import AppearanceSettings from '@/components/appearance/AppearanceSettings'
+import WhatsAppInvoiceToggleCard from '@/components/WhatsAppInvoiceToggleCard'
 import { usePagination } from '@/hooks/usePagination'
 import PaginationControls from '@/components/ui/pagination-controls'
 import { usePageFeatures } from '@/hooks/usePageFeatures'
@@ -34,6 +38,8 @@ import { useConfirmDialog } from '@/hooks/useConfirmDialog'
 interface Business {
   name: string
   gstin: string
+  pan: string
+  state_code: string
   address: string
   city: string
   state: string
@@ -99,6 +105,7 @@ interface InvoiceCustomFieldDef {
 export default function SettingsPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { user: authUser } = useAuth()
   const { isPageEnabled } = usePageFeatures()
   const { confirm, confirmDialog } = useConfirmDialog()
   const remindersEnabled = isPageEnabled('/settings/reminders')
@@ -108,7 +115,7 @@ export default function SettingsPage() {
   
   // Business state
   const [business, setBusiness] = useState<Business>({
-    name: '', gstin: '', address: '', city: '', state: '', pincode: '',
+    name: '', gstin: '', pan: '', state_code: '', address: '', city: '', state: '', pincode: '',
     phone: '', email: '', bank_name: '', account_number: '', ifsc_code: '', upi_id: '',
     logo_url: '', logo_aspect_ratio: 'square', signature_url: '',
     enable_ai_hsn_search: false, enable_ai_bill_parsing: false, gemini_api_key: '',
@@ -737,6 +744,14 @@ export default function SettingsPage() {
                       <Label htmlFor="gstin">GSTIN</Label>
                       <Input id="gstin" value={business.gstin} onChange={(e) => handleChange('gstin', e.target.value, setBusiness)} placeholder="22AAAAA0000A1Z5" />
                     </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="pan">PAN Number</Label>
+                      <Input id="pan" value={business.pan} onChange={(e) => handleChange('pan', e.target.value, setBusiness)} placeholder="AAAAA0000A" />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="state_code">State Code</Label>
+                      <Input id="state_code" value={business.state_code} onChange={(e) => handleChange('state_code', e.target.value, setBusiness)} placeholder="33" />
+                    </div>
                     <div className="space-y-2 sm:col-span-2">
                       <Label htmlFor="address">Address</Label>
                       <Input id="address" value={business.address} onChange={(e) => handleChange('address', e.target.value, setBusiness)} />
@@ -747,7 +762,21 @@ export default function SettingsPage() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="state">State</Label>
-                      <Input id="state" value={business.state} onChange={(e) => handleChange('state', e.target.value, setBusiness)} />
+                      <SearchableSelect
+                        value={business.state}
+                        onValueChange={(value) =>
+                          setBusiness((prev) => ({
+                            ...prev,
+                            state: value,
+                            state_code: value ? (STATE_CODE_BY_NAME[value] ?? prev.state_code) : '',
+                          }))
+                        }
+                        options={INDIAN_STATES.map((s) => ({ value: s.name, label: s.name }))}
+                        placeholder="Select state"
+                        searchPlaceholder="Search states..."
+                        emptyMessage="No state found"
+                        clearable
+                      />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="pincode">Pincode</Label>
@@ -836,11 +865,12 @@ export default function SettingsPage() {
           </TabsContent>
 
           <TabsContent value="appearance">
-            <AppearanceSettingsCard />
+            <AppearanceSettings />
           </TabsContent>
 
           {/* Invoice Settings Tab */}
           <TabsContent value="invoice">
+            {isSuperAdmin(authUser?.role) && (
             <Card className="mb-6 border-blue-100 bg-blue-50/40">
               <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
                 <div>
@@ -854,6 +884,8 @@ export default function SettingsPage() {
                 </Button>
               </CardContent>
             </Card>
+            )}
+            {activeTab === 'invoice' && <WhatsAppInvoiceToggleCard />}
             <Card>
               <CardHeader className="flex flex-row items-center gap-2">
                 <FileText className="h-5 w-5 text-blue-600" />
@@ -1219,19 +1251,11 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <h3 className="font-semibold">Documentation</h3>
-                  <p className="text-sm text-gray-600">Access our comprehensive documentation to learn how to use all features effectively.</p>
-                  <Button variant="outline">View Documentation</Button>
-                </div>
-                <div className="space-y-2">
                   <h3 className="font-semibold">Contact Support</h3>
                   <p className="text-sm text-gray-600">Need help? Contact our support team for assistance.</p>
-                  <Button variant="outline">Contact Support</Button>
-                </div>
-                <div className="space-y-2">
-                  <h3 className="font-semibold">FAQ</h3>
-                  <p className="text-sm text-gray-600">Find answers to commonly asked questions.</p>
-                  <Button variant="outline">View FAQ</Button>
+                  <Button variant="outline" asChild>
+                    <Link href="/support">Contact Support</Link>
+                  </Button>
                 </div>
               </CardContent>
             </Card>

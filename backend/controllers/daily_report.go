@@ -72,7 +72,7 @@ func computeProductProfitForRange(userID uuid.UUID, startDate, endDate string) f
 	// matching how the daily profit report treats the same rows.
 	var invoiceRefunds float64
 	utils.DB.Model(&models.PaymentOut{}).
-		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND invoice_id IS NOT NULL", userID, startDate, endDate).
+		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND invoice_id IS NOT NULL AND COALESCE(status, '') != 'cancelled'", userID, startDate, endDate).
 		Select("COALESCE(SUM(amount_paid - payment_out_discount), 0)").Scan(&invoiceRefunds)
 
 	return salesProfit - returnsProfit - creditNoteProfit - invoiceRefunds
@@ -191,11 +191,11 @@ func loadReportForRange(userID uuid.UUID, startDate, endDate string) (models.Dai
 	aggregate(&models.PurchaseBill{}, "bill_date", "total_amount", "", &report.Purchases)
 	aggregate(&models.CreditNote{}, "date", "total_amount", "status != 'cancelled'", &report.CreditNotes)
 	aggregate(&models.DebitNote{}, "date", "total_amount", "status != 'cancelled'", &report.DebitNotes)
-	aggregate(&models.Expense{}, "date", "amount", "", &report.Expenses)
+	aggregate(&models.Expense{}, "date", "amount", "COALESCE(status, '') != 'cancelled'", &report.Expenses)
 	// credit_note payments settle invoices with return credit — no money
 	// was received, so they stay out of Payments Received / net cash flow.
-	aggregate(&models.Payment{}, "date", "amount_received", "COALESCE(LOWER(TRIM(mode)), '') != 'credit_note'", &report.PaymentsIn)
-	aggregate(&models.PaymentOut{}, "date", "amount_paid", "", &report.PaymentsOut)
+	aggregate(&models.Payment{}, "date", "amount_received", "COALESCE(LOWER(TRIM(mode)), '') != 'credit_note' AND COALESCE(status, '') != 'cancelled'", &report.PaymentsIn)
+	aggregate(&models.PaymentOut{}, "date", "amount_paid", "COALESCE(status, '') != 'cancelled'", &report.PaymentsOut)
 	aggregate(&models.SalesReturn{}, "date", "amount", "status != 'cancelled'", &report.SalesReturns)
 	aggregate(&models.PurchaseReturn{}, "date", "amount", "status != 'cancelled'", &report.PurchaseReturns)
 	aggregate(&models.ProfitDistribution{}, "date", "amount", "", &report.ProfitDistributions)
@@ -242,7 +242,7 @@ func loadReportForRange(userID uuid.UUID, startDate, endDate string) (models.Dai
 	// documents; bill-linked and standalone payments are not revenue events.
 	var invoiceRefunds float64
 	utils.DB.Model(&models.PaymentOut{}).
-		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND invoice_id IS NOT NULL", userID, startDate, endDate).
+		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND invoice_id IS NOT NULL AND COALESCE(status, '') != 'cancelled'", userID, startDate, endDate).
 		Select("COALESCE(SUM(amount_paid - payment_out_discount), 0)").Scan(&invoiceRefunds)
 
 	report.DailyProfit = report.Sales.TotalAmount -
@@ -267,7 +267,22 @@ func loadLoyaltyReportSummary(userID uuid.UUID, startDate, endDate string) *mode
 		return nil
 	}
 
-	summary := &models.LoyaltyReportSummary{Enabled: true}
+	summary := &models.LoyaltyReportSummary{Enabled: true, RewardType: LoyaltyRewardPoints}
+	if IsCashLoyalty(settings) {
+		summary.RewardType = LoyaltyRewardCash
+		utils.DB.Model(&models.LoyaltyTransaction{}).
+			Where("user_id = ? AND reward_type = ? AND transaction_type = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
+				userID, LoyaltyRewardCash, "earn", startDate, endDate).
+			Select("COALESCE(SUM(amount), 0), COUNT(*)").
+			Row().Scan(&summary.CashEarned, &summary.EarnTransactions)
+		utils.DB.Model(&models.LoyaltyTransaction{}).
+			Where("user_id = ? AND reward_type = ? AND transaction_type = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
+				userID, LoyaltyRewardCash, "redeem", startDate, endDate).
+			Select("COALESCE(SUM(ABS(amount)), 0), COUNT(*)").
+			Row().Scan(&summary.CashRedeemed, &summary.RedeemTransactions)
+		summary.RedemptionValue = summary.CashRedeemed
+		return summary
+	}
 
 	utils.DB.Model(&models.LoyaltyTransaction{}).
 		Where("user_id = ? AND transaction_type = ? AND DATE(created_at) >= ? AND DATE(created_at) <= ?",
@@ -317,6 +332,28 @@ func paymentMethodLabel(method string) string {
 	}
 }
 
+// cashBankMethodTotals aggregates per-method totals into cash vs bank buckets.
+// Bank = UPI, Card, Bank Transfer and Cheque; other modes (e.g. initial
+// investment) are excluded from both rows.
+func cashBankMethodTotals(methods []models.PaymentMethodTotal) (cashIn, cashOut, bankIn, bankOut models.DailyReportMetric) {
+	for _, m := range methods {
+		var in, out *models.DailyReportMetric
+		switch normalizePaymentMethod(m.Method) {
+		case "cash":
+			in, out = &cashIn, &cashOut
+		case "upi", "card", "bank_transfer", "cheque", "check":
+			in, out = &bankIn, &bankOut
+		default:
+			continue
+		}
+		in.TotalAmount += m.In.TotalAmount
+		in.Count += m.In.Count
+		out.TotalAmount += m.Out.TotalAmount
+		out.Count += m.Out.Count
+	}
+	return cashIn, cashOut, bankIn, bankOut
+}
+
 func loadPaymentsByMethod(userID uuid.UUID, startDate, endDate string) []models.PaymentMethodTotal {
 	type agg struct {
 		Method      string
@@ -339,6 +376,7 @@ func loadPaymentsByMethod(userID uuid.UUID, startDate, endDate string) []models.
 		FROM payments
 		WHERE user_id = ? AND `+dateWhere+` AND deleted_at IS NULL
 			AND COALESCE(LOWER(TRIM(mode)), '') != 'credit_note'
+			AND COALESCE(status, '') != 'cancelled'
 		GROUP BY `+methodExpr, userID, startDate, endDate).Scan(&inRows)
 	utils.DB.Raw(`
 		SELECT `+methodExpr+` AS method,
@@ -346,6 +384,7 @@ func loadPaymentsByMethod(userID uuid.UUID, startDate, endDate string) []models.
 			COUNT(*) AS count
 		FROM payment_outs
 		WHERE user_id = ? AND `+dateWhere+` AND deleted_at IS NULL
+			AND COALESCE(status, '') != 'cancelled'
 		GROUP BY `+methodExpr, userID, startDate, endDate).Scan(&outRows)
 
 	byMethod := make(map[string]*models.PaymentMethodTotal)
@@ -395,7 +434,13 @@ func loadPaymentsByMethod(userID uuid.UUID, startDate, endDate string) []models.
 	for _, key := range extra {
 		result = append(result, *byMethod[key])
 	}
-	return result
+	filtered := result[:0]
+	for _, row := range result {
+		if row.Method != paymentMethodInitialInvestment {
+			filtered = append(filtered, row)
+		}
+	}
+	return filtered
 }
 
 func loadDailyReport(userID uuid.UUID, date string) (models.DailyReport, error) {
@@ -409,7 +454,7 @@ func loadDailyReport(userID uuid.UUID, date string) (models.DailyReport, error) 
 func loadExpenseLines(userID uuid.UUID, startDate, endDate string) []models.ExpenseLine {
 	var expenses []models.Expense
 	if err := utils.DB.
-		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ?", userID, startDate, endDate).
+		Where("user_id = ? AND DATE(date) >= ? AND DATE(date) <= ? AND COALESCE(status, '') != 'cancelled'", userID, startDate, endDate).
 		Preload("Items").
 		Order("date DESC, created_at DESC").
 		Find(&expenses).Error; err != nil {
@@ -559,7 +604,13 @@ func writePeriodReportCSV(c *gin.Context, report models.PeriodReport, filename s
 	_ = writer.Write([]string{"Period Profit (Sales − Expenses − Sales Returns/Credit Notes/Refunds)", "", fmt.Sprintf("%.2f", report.DailyProfit)})
 	_ = writer.Write([]string{"Product Profit (sale value − purchase cost on items sold)", "", fmt.Sprintf("%.2f", report.ProductProfit)})
 	_ = writer.Write([]string{"Net Cash Flow (In − Out − Expenses − Profit Distributions)", "", fmt.Sprintf("%.2f", report.NetCashFlow)})
-	if report.Loyalty != nil && report.Loyalty.Enabled {
+	if report.Loyalty != nil && report.Loyalty.Enabled && report.Loyalty.RewardType == LoyaltyRewardCash {
+		_ = writer.Write([]string{""})
+		_ = writer.Write([]string{"Loyalty cashback"})
+		_ = writer.Write([]string{"Activity", "Transactions", "Amount (INR)"})
+		_ = writer.Write([]string{"Cashback credited", fmt.Sprintf("%d", report.Loyalty.EarnTransactions), fmt.Sprintf("%.2f", report.Loyalty.CashEarned)})
+		_ = writer.Write([]string{"Cashback redeemed", fmt.Sprintf("%d", report.Loyalty.RedeemTransactions), fmt.Sprintf("%.2f", report.Loyalty.CashRedeemed)})
+	} else if report.Loyalty != nil && report.Loyalty.Enabled {
 		_ = writer.Write([]string{""})
 		_ = writer.Write([]string{"Loyalty points"})
 		_ = writer.Write([]string{"Activity", "Transactions", "Points", "Value (INR)"})
@@ -588,6 +639,21 @@ func writePeriodReportCSV(c *gin.Context, report models.PeriodReport, filename s
 			fmt.Sprintf("%.2f", method.Out.TotalAmount),
 		})
 	}
+	cashIn, cashOut, bankIn, bankOut := cashBankMethodTotals(report.PaymentsByMethod)
+	_ = writer.Write([]string{
+		"Total Cash",
+		fmt.Sprintf("%d", cashIn.Count),
+		fmt.Sprintf("%.2f", cashIn.TotalAmount),
+		fmt.Sprintf("%d", cashOut.Count),
+		fmt.Sprintf("%.2f", cashOut.TotalAmount),
+	})
+	_ = writer.Write([]string{
+		"Total in Bank",
+		fmt.Sprintf("%d", bankIn.Count),
+		fmt.Sprintf("%.2f", bankIn.TotalAmount),
+		fmt.Sprintf("%d", bankOut.Count),
+		fmt.Sprintf("%.2f", bankOut.TotalAmount),
+	})
 	_ = writer.Write([]string{
 		"Total",
 		fmt.Sprintf("%d", report.PaymentsIn.Count),
@@ -789,6 +855,26 @@ func writePaymentsByMethodPDF(pdf *fpdf.Fpdf, report models.PeriodReport) {
 		pdf.CellFormat(colOutAmt, 7, fmt.Sprintf("%.2f", method.Out.TotalAmount), "1", 1, "R", true, 0, "")
 	}
 
+	cashIn, cashOut, bankIn, bankOut := cashBankMethodTotals(methods)
+	summaryRows := []struct {
+		label string
+		in    models.DailyReportMetric
+		out   models.DailyReportMetric
+	}{
+		{label: "Total Cash", in: cashIn, out: cashOut},
+		{label: "Total in Bank", in: bankIn, out: bankOut},
+	}
+	for _, row := range summaryRows {
+		pdf.SetFillColor(239, 246, 255)
+		pdf.SetFont("Arial", "B", 9)
+		pdf.SetTextColor(30, 64, 175)
+		pdf.CellFormat(colMethod, 7, row.label, "1", 0, "L", true, 0, "")
+		pdf.CellFormat(colInCount, 7, fmt.Sprintf("%d", row.in.Count), "1", 0, "R", true, 0, "")
+		pdf.CellFormat(colInAmt, 7, fmt.Sprintf("%.2f", row.in.TotalAmount), "1", 0, "R", true, 0, "")
+		pdf.CellFormat(colOutCount, 7, fmt.Sprintf("%d", row.out.Count), "1", 0, "R", true, 0, "")
+		pdf.CellFormat(colOutAmt, 7, fmt.Sprintf("%.2f", row.out.TotalAmount), "1", 1, "R", true, 0, "")
+	}
+
 	pdf.SetFillColor(219, 234, 254)
 	pdf.SetFont("Arial", "B", 9)
 	pdf.SetTextColor(30, 64, 175)
@@ -898,17 +984,30 @@ func writeLoyaltySummaryPDF(pdf *fpdf.Fpdf, report models.PeriodReport) {
 	if loyalty == nil || !loyalty.Enabled {
 		return
 	}
-	if loyalty.PointsEarned == 0 && loyalty.PointsRedeemed == 0 {
+	isCash := loyalty.RewardType == LoyaltyRewardCash
+	if isCash && loyalty.CashEarned == 0 && loyalty.CashRedeemed == 0 {
 		return
+	}
+	if !isCash && loyalty.PointsEarned == 0 && loyalty.PointsRedeemed == 0 {
+		return
+	}
+	title, subtitle := "LOYALTY POINTS", "Points credited to customers and redeemed against bills in this period."
+	unitHeader, earnLabel, redeemLabel := "Points", "Points earned", "Points redeemed"
+	earnUnits, redeemUnits, earnValue := fmt.Sprintf("%d", loyalty.PointsEarned), fmt.Sprintf("%d", loyalty.PointsRedeemed), "-"
+	if isCash {
+		title, subtitle = "LOYALTY CASHBACK", "Cashback credited to customers and redeemed against bills in this period."
+		unitHeader, earnLabel, redeemLabel = "Cashback", "Cashback credited", "Cashback redeemed"
+		earnUnits, redeemUnits = fmt.Sprintf("%.2f", loyalty.CashEarned), fmt.Sprintf("%.2f", loyalty.CashRedeemed)
+		earnValue = earnUnits
 	}
 
 	pdf.Ln(8)
 	pdf.SetFont("Arial", "B", 11)
 	pdf.SetTextColor(37, 99, 235)
-	pdf.CellFormat(0, 7, "LOYALTY POINTS", "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 7, title, "", 1, "L", false, 0, "")
 	pdf.SetFont("Arial", "", 8)
 	pdf.SetTextColor(100, 100, 100)
-	pdf.CellFormat(0, 5, "Points credited to customers and redeemed against bills in this period.", "", 1, "L", false, 0, "")
+	pdf.CellFormat(0, 5, subtitle, "", 1, "L", false, 0, "")
 	pdf.Ln(2)
 
 	pageW, _ := pdf.GetPageSize()
@@ -925,23 +1024,23 @@ func writeLoyaltySummaryPDF(pdf *fpdf.Fpdf, report models.PeriodReport) {
 	pdf.SetTextColor(120, 53, 15)
 	pdf.CellFormat(colActivity, 8, "Activity", "1", 0, "L", true, 0, "")
 	pdf.CellFormat(colTxn, 8, "Transactions", "1", 0, "R", true, 0, "")
-	pdf.CellFormat(colPoints, 8, "Points", "1", 0, "R", true, 0, "")
+	pdf.CellFormat(colPoints, 8, unitHeader, "1", 0, "R", true, 0, "")
 	pdf.CellFormat(colValue, 8, "Value (INR)", "1", 1, "R", true, 0, "")
 
 	pdf.SetFillColor(254, 249, 235)
 	pdf.SetFont("Arial", "", 9)
 	pdf.SetTextColor(40, 40, 40)
-	pdf.CellFormat(colActivity, 7, "Points earned", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(colActivity, 7, earnLabel, "1", 0, "L", true, 0, "")
 	pdf.CellFormat(colTxn, 7, fmt.Sprintf("%d", loyalty.EarnTransactions), "1", 0, "R", true, 0, "")
 	pdf.SetTextColor(22, 101, 52)
-	pdf.CellFormat(colPoints, 7, fmt.Sprintf("%d", loyalty.PointsEarned), "1", 0, "R", true, 0, "")
+	pdf.CellFormat(colPoints, 7, earnUnits, "1", 0, "R", true, 0, "")
 	pdf.SetTextColor(40, 40, 40)
-	pdf.CellFormat(colValue, 7, "-", "1", 1, "R", true, 0, "")
+	pdf.CellFormat(colValue, 7, earnValue, "1", 1, "R", true, 0, "")
 
-	pdf.CellFormat(colActivity, 7, "Points redeemed", "1", 0, "L", true, 0, "")
+	pdf.CellFormat(colActivity, 7, redeemLabel, "1", 0, "L", true, 0, "")
 	pdf.CellFormat(colTxn, 7, fmt.Sprintf("%d", loyalty.RedeemTransactions), "1", 0, "R", true, 0, "")
 	pdf.SetTextColor(154, 52, 18)
-	pdf.CellFormat(colPoints, 7, fmt.Sprintf("%d", loyalty.PointsRedeemed), "1", 0, "R", true, 0, "")
+	pdf.CellFormat(colPoints, 7, redeemUnits, "1", 0, "R", true, 0, "")
 	pdf.CellFormat(colValue, 7, fmt.Sprintf("%.2f", loyalty.RedemptionValue), "1", 1, "R", true, 0, "")
 }
 

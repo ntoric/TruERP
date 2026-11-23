@@ -190,7 +190,8 @@ func GenerateThermalPrint(c *gin.Context) {
 
 	switch req.DocumentType {
 	case "invoice":
-		content, width, logoURL = generateInvoiceThermal(userID, req.DocumentID, req.PrintSize)
+		storeID, _ := currentStoreID(c)
+		content, width, logoURL = generateInvoiceThermal(userID, req.DocumentID, req.PrintSize, &storeID)
 	case "expense":
 		content, width, logoURL = generateExpenseThermal(userID, req.DocumentID, req.PrintSize)
 	default:
@@ -236,17 +237,18 @@ func GenerateDocumentPrint(c *gin.Context) {
 		if err := utils.DB.Where("user_id = ? AND id = ?", userID, req.DocumentID).
 			Preload("Party").
 			Preload("Items").
+			Preload("Items.Product").
 			First(&invoice).Error; err != nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "Invoice not found"})
 			return
 		}
 		attachInvoicePaymentSplits(utils.DB, &invoice)
 		title := "Invoice " + invoice.InvoiceNumber
-		var business models.Business
-		_ = utils.DB.Where("user_id = ?", userID).First(&business)
+		storeID, _ := currentStoreID(c)
+		business := resolveSellerBusiness(userID, &storeID)
 
 		if mode == "thermal" {
-			content, width, logoURL := generateInvoiceThermal(userID, req.DocumentID, printSize)
+			content, width, logoURL := generateInvoiceThermal(userID, req.DocumentID, printSize, &storeID)
 			if content == "" {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate thermal print"})
 				return
@@ -484,7 +486,7 @@ body { display: flex; align-items: center; justify-content: center; min-height: 
 	return bodyDoc
 }
 
-func generateInvoiceThermal(userID uuid.UUID, invoiceID uuid.UUID, printSize string) (string, int, string) {
+func generateInvoiceThermal(userID uuid.UUID, invoiceID uuid.UUID, printSize string, storeID *uuid.UUID) (string, int, string) {
 	var invoice models.Invoice
 	if err := utils.DB.Where("user_id = ? AND id = ?", userID, invoiceID).
 		Preload("Party").
@@ -493,8 +495,7 @@ func generateInvoiceThermal(userID uuid.UUID, invoiceID uuid.UUID, printSize str
 		return "", 0, ""
 	}
 
-	var business models.Business
-	utils.DB.Where("user_id = ?", userID).First(&business)
+	business := resolveSellerBusiness(userID, storeID)
 
 	printSize = normalizeThermalPrintSize(printSize)
 	width := thermalWidthMM(printSize)
@@ -766,7 +767,7 @@ func prepareInvoiceData(invoice models.Invoice, business models.Business, printS
 	sepStrong := thermalSep(cols, '=')
 	sepWeak := thermalSep(cols, '-')
 
-	header := buildThermalBusinessHeader(business, cols, "TAX INVOICE")
+	header := buildThermalBusinessHeader(business, cols, "BILL OF SUPPLY")
 
 	docInfo := formatLabelValue("Invoice", invoice.InvoiceNumber, cols)
 	docInfo += "\n" + formatLabelValue("Date", invoice.Date.Format("02-01-2006"), cols)
@@ -856,6 +857,18 @@ func prepareInvoiceData(invoice models.Invoice, business models.Business, printS
 		if balance > 0.009 {
 			totalLines = append(totalLines, formatLabelValue("Balance", fmt.Sprintf("%.2f", balance), cols))
 		}
+	}
+	if lp := invoiceLoyaltyPrintSummary(invoice); lp != nil && lp.IsCash {
+		totalLines = append(totalLines, sepWeak, "@C@@B@LOYALTY CASHBACK")
+		totalLines = append(totalLines, formatLabelValue("Redeemed", fmt.Sprintf("%.2f", lp.CashRedeemed), cols))
+		totalLines = append(totalLines, formatLabelValue("Credited", fmt.Sprintf("%.2f", lp.CashEarned), cols))
+		totalLines = append(totalLines, formatLabelValue("Balance", fmt.Sprintf("%.2f", lp.CashBalance), cols))
+	} else if lp != nil {
+		totalLines = append(totalLines, sepWeak, "@C@@B@LOYALTY POINTS")
+		totalLines = append(totalLines, formatLabelValue("Pts Redeemed", fmt.Sprintf("%d", lp.Redeemed), cols))
+		totalLines = append(totalLines, formatLabelValue("Pts Discount", fmt.Sprintf("%.2f", lp.Discount), cols))
+		totalLines = append(totalLines, formatLabelValue("Pts Credited", fmt.Sprintf("%d", lp.Earned), cols))
+		totalLines = append(totalLines, formatLabelValue("Pts Balance", fmt.Sprintf("%d", lp.Balance), cols))
 	}
 	totals := strings.Join(totalLines, "\n")
 

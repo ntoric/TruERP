@@ -146,12 +146,13 @@ func loadInvoiceSettings(userID uuid.UUID) models.InvoiceSettings {
 	var settings models.InvoiceSettings
 	if err := utils.DB.Where("user_id = ?", userID).First(&settings).Error; err != nil {
 		return models.InvoiceSettings{
-			Template:       "classic",
-			PrimaryColor:   "#2563eb",
-			SecondaryColor: "#1e40af",
-			Theme:          "light",
-			ShowLogo:       true,
-			ShowTerms:      true,
+			Template:        "classic",
+			PrimaryColor:    "#2563eb",
+			SecondaryColor:  "#1e40af",
+			Theme:           "light",
+			ShowLogo:        true,
+			ShowBankDetails: true,
+			ShowTerms:       true,
 		}
 	}
 	return settings
@@ -450,6 +451,10 @@ func UpdateInvoiceStatus(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid status"})
 		return
 	}
+	if input.Status == "cancelled" && invoice.Status != "cancelled" && strings.TrimSpace(input.Note) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Cancellation reason is required"})
+		return
+	}
 
 	previousInvoice := invoiceCashSnapshot(invoice)
 	prevStatus := invoice.Status
@@ -465,14 +470,57 @@ func UpdateInvoiceStatus(c *gin.Context) {
 	}
 	normalizeInvoicePaymentStatus(&invoice)
 
+	// Record who cancelled and why; clear the stamp when the invoice is
+	// reinstated so it isn't mistaken for a still-cancelled document.
+	if prevStatus != "cancelled" && invoice.Status == "cancelled" {
+		now := time.Now()
+		invoice.CancelReason = strings.TrimSpace(input.Note)
+		invoice.CancelledAt = &now
+		invoice.CancelledBy = userName
+	} else if prevStatus == "cancelled" && invoice.Status != "cancelled" {
+		invoice.CancelReason = ""
+		invoice.CancelledAt = nil
+		invoice.CancelledBy = ""
+	}
+
 	if err := utils.DB.Save(&invoice).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update status"})
 		return
 	}
 
-	if err := resyncLinkedInvoicePayments(utils.DB, userID, &previousInvoice, &invoice); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Status updated but failed to update cash/bank"})
-		return
+	// A cancelled invoice no longer counts anywhere — return its items to
+	// stock, cancel its linked payments so they stop counting too, and drop
+	// its sale ledger rows; reinstating deducts stock again but leaves the
+	// payments cancelled, so the invoice comes back unpaid.
+	if prevStatus != "cancelled" && invoice.Status == "cancelled" {
+		reverseInvoiceSaleStock(userID, invoice.ID)
+		if err := cancelLinkedInvoicePayments(userID, &invoice, invoice.CancelReason, userName); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Status updated but failed to cancel linked payments"})
+			return
+		}
+		invoice.AmountPaid = 0
+	} else if prevStatus == "cancelled" && invoice.Status != "cancelled" {
+		var items []models.InvoiceItem
+		utils.DB.Where("invoice_id = ?", invoice.ID).Find(&items)
+		invoice.Items = items
+		applyInvoiceSaleStock(userID, &invoice)
+	}
+
+	// Cancelling already reversed the linked payments; resyncing on top of
+	// that would rewrite the rows that were just cancelled.
+	if invoice.Status != "cancelled" {
+		if err := resyncLinkedInvoicePayments(utils.DB, userID, &previousInvoice, &invoice); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Status updated but failed to update cash/bank"})
+			return
+		}
+	}
+
+	// A cancelled invoice carries no receivable leg on the party balance;
+	// reinstating restores it.
+	if prevStatus != "cancelled" && invoice.Status == "cancelled" {
+		_ = adjustPartyBalance(utils.DB, userID, invoice.PartyID, -invoice.TotalAmount)
+	} else if prevStatus == "cancelled" && invoice.Status != "cancelled" {
+		_ = adjustPartyBalance(utils.DB, userID, invoice.PartyID, invoice.TotalAmount)
 	}
 
 	changedBy := userName

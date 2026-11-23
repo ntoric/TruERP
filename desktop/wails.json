@@ -8,15 +8,15 @@
   "frontend:dev:watcher": "",
   "frontend:dev:serverUrl": "",
   "author": {
-    "name": "TruERP",
+    "name": "Gooseroot",
     "email": ""
   },
   "info": {
-    "companyName": "TruERP",
+    "companyName": "Gooseroot",
     "productName": "TruERP",
     "productVersion": "1.0.0",
-    "copyright": "Copyright TruERP",
-    "comments": "TruERP desktop billing application for Windows"
+    "copyright": "Copyright © Gooseroot",
+    "comments": "TruERP by Gooseroot — desktop billing application for Windows"
   },
   "nsisType": "multiple"
 }

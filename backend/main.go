@@ -43,7 +43,6 @@ func main() {
 
 	controllers.EnsureDefaultSuperAdmin()
 	controllers.EnsureStoresMigrated()
-	controllers.SeedDefaultOAuthClients(utils.DB)
 	_ = services.GetDefaultStorageService()
 
 	// Register all migration importers with the async job framework so the
@@ -57,6 +56,7 @@ func main() {
 	// Start the background scheduler that auto-emails the daily/periodic
 	// report PDF to configured recipients at the configured time each day.
 	controllers.StartDailyReportEmailScheduler()
+	controllers.StartPartyBalanceReportEmailScheduler()
 
 	// Start the background scheduler that runs the nightly database
 	// maintenance (dead-tuple / bloat cleanup) at the configured IST time
@@ -75,6 +75,12 @@ func main() {
 	// profit rows every 2 minutes for users who enabled asynchronous
 	// daily-profit updates in Developer Settings, plus priority refresh jobs.
 	controllers.StartDailyProfitScheduler()
+
+	// Start the background cron that records the current stock quantity and
+	// value at 1AM IST daily — one daily_stock_summary_log row dated the
+	// previous day, opening at the prior row's closing and closing at the
+	// current position.
+	controllers.StartDailyStockSummaryLogScheduler()
 
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.Default()

@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"time"
 	"truerp/controllers"
 	"truerp/middleware"
 
@@ -24,25 +25,6 @@ func SetupRoutes(r *gin.Engine) {
 		auth.PUT("/profile", middleware.AuthRequired(), controllers.UpdateProfile)
 		auth.GET("/my-stores", middleware.AuthRequired(), controllers.MyStores)
 		auth.POST("/app-version", middleware.AuthRequired(), controllers.ReportAppVersion)
-	}
-
-	// OAuth 2.0 Discovery & Endpoints
-	r.GET("/.well-known/oauth-authorization-server", controllers.OAuthDiscovery)
-	r.GET("/.well-known/openid-configuration", controllers.OAuthDiscovery)
-
-	oauth := r.Group("/api/v1/oauth")
-	{
-		oauth.GET("/.well-known/oauth-authorization-server", controllers.OAuthDiscovery)
-		oauth.GET("/authorize", controllers.OAuthAuthorize)
-		oauth.POST("/authorize", controllers.OAuthAuthorize)
-		oauth.POST("/token", controllers.OAuthToken)
-		oauth.POST("/revoke", controllers.OAuthRevoke)
-		oauth.GET("/userinfo", middleware.AuthRequired(), controllers.OAuthUserInfo)
-
-		// OAuth client management (super admin)
-		oauth.GET("/clients", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.ListOAuthClients)
-		oauth.POST("/clients", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.CreateOAuthClient)
-		oauth.DELETE("/clients/:id", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.DeleteOAuthClient)
 	}
 
 	// Store management (super admin)
@@ -76,6 +58,9 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		invoices.GET("", controllers.GetInvoices)
 		invoices.POST("", controllers.CreateInvoice)
+		invoices.POST("/:id/whatsapp", controllers.SendInvoiceWhatsApp)
+		invoices.POST("/check-stock", controllers.CheckInvoiceStock)
+		invoices.POST("/download-pdf", controllers.DownloadInvoicesPDFZip)
 		invoices.POST("/import/csv", controllers.ImportInvoicesCSV)
 		invoices.GET("/stats", controllers.GetInvoiceStats)
 		invoices.GET("/next-number", controllers.GetNextInvoiceNumber)
@@ -87,7 +72,7 @@ func SetupRoutes(r *gin.Engine) {
 		invoices.GET("/:id/pdf", controllers.GenerateInvoicePDF)
 		invoices.GET("/:id", controllers.GetInvoice)
 		invoices.PUT("/:id", controllers.UpdateInvoice)
-		invoices.DELETE("/:id", controllers.DeleteInvoice)
+		invoices.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeleteInvoice)
 	}
 
 	invoiceTemplates := r.Group("/api/v1/invoice-templates")
@@ -138,7 +123,8 @@ func SetupRoutes(r *gin.Engine) {
 		payments.GET("", controllers.GetPayments)
 		payments.GET("/next-number", controllers.GetNextPaymentInNumber)
 		payments.POST("", controllers.CreatePayment)
-		payments.DELETE("/:id", controllers.DeletePayment)
+		payments.POST("/:id/cancel", controllers.CancelPayment)
+		payments.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeletePayment)
 		payments.GET("/:id/pdf", controllers.GenerateReceiptPDF)
 		payments.POST("/import/csv", middleware.SuperAdminRequired(), controllers.ImportPaymentsCSV)
 	}
@@ -158,7 +144,8 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		paymentOuts.GET("", controllers.GetPaymentOuts)
 		paymentOuts.POST("", controllers.CreatePaymentOut)
-		paymentOuts.DELETE("/:id", controllers.DeletePaymentOut)
+		paymentOuts.POST("/:id/cancel", controllers.CancelPaymentOut)
+		paymentOuts.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeletePaymentOut)
 	}
 
 	// Expense routes
@@ -170,7 +157,8 @@ func SetupRoutes(r *gin.Engine) {
 		expenses.GET("/next-number", controllers.GetNextExpenseNumber)
 		expenses.GET("/:id", controllers.GetExpense)
 		expenses.PUT("/:id", controllers.UpdateExpense)
-		expenses.DELETE("/:id", controllers.DeleteExpense)
+		expenses.POST("/:id/cancel", controllers.CancelExpense)
+		expenses.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeleteExpense)
 		expenses.POST("/import/csv", middleware.SuperAdminRequired(), controllers.ImportExpensesCSV)
 	}
 
@@ -212,6 +200,14 @@ func SetupRoutes(r *gin.Engine) {
 		dashboard.GET("/daily-profit-report/pdf", controllers.ExportDailyProfitReportPDF)
 		dashboard.POST("/daily-profit-report/refresh", controllers.RefreshDailyProfitReport)
 		dashboard.GET("/stock-report", controllers.GetStockReport)
+		dashboard.GET("/stock-report/excel", controllers.ExportStockReportExcel)
+		dashboard.GET("/stock-report/pdf", controllers.ExportStockReportPDF)
+		dashboard.GET("/party-balance-report", controllers.GetPartyBalanceReport)
+		dashboard.GET("/party-balance-report/excel", controllers.ExportPartyBalanceReportExcel)
+		dashboard.GET("/party-balance-report/pdf", controllers.ExportPartyBalanceReportPDF)
+		dashboard.GET("/party-balance-report/email-settings", controllers.GetPartyBalanceReportEmailSettingsHandler)
+		dashboard.PUT("/party-balance-report/email-settings", controllers.UpdatePartyBalanceReportEmailSettingsHandler)
+		dashboard.POST("/party-balance-report/email-settings/send-now", controllers.SendPartyBalanceReportEmailNowHandler)
 
 		// Daily report email automation (auto-mail PDF export to configured recipients)
 		dashboard.GET("/report-email-settings", controllers.GetDailyReportEmailSettingsHandler)
@@ -281,6 +277,8 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		// Stock Balance & Valuation
 		inventory.GET("/balance", controllers.GetStockBalance)
+		inventory.GET("/movements", controllers.GetStockMovements)
+		inventory.GET("/movements/summary", controllers.GetStockMovementSummary)
 		inventory.GET("/valuation", controllers.GetInventoryValuation)
 		inventory.GET("/stats", controllers.GetInventoryStats)
 		inventory.POST("/snapshots/refresh-closing", controllers.RefreshStockClosing)
@@ -311,6 +309,8 @@ func SetupRoutes(r *gin.Engine) {
 		inventory.GET("/stocks/products/:id", controllers.GetProductStock)
 		inventory.GET("/stocks/search", controllers.SearchByItemCode)
 		inventory.POST("/stocks/adjust", controllers.AdjustStock)
+		inventory.POST("/stocks/bulk-adjust", controllers.BulkAdjustStockCSV)
+		inventory.GET("/stocks/bulk-adjust/jobs/:id", controllers.GetBulkAdjustStockJob)
 		inventory.POST("/stocks/bulk-update/csv", controllers.BulkUpdateStockCSV)
 		inventory.POST("/stocks/bulk-update/excel", controllers.BulkUpdateStockExcel)
 		inventory.POST("/stocks/reserve", controllers.ReserveStock)
@@ -375,6 +375,7 @@ func SetupRoutes(r *gin.Engine) {
 		purchase.POST("/bills/labels", controllers.PrintPurchaseBillLabels)
 		purchase.POST("/parse-bill-ai", controllers.ParseBillWithAI)
 		purchase.POST("/bills/import/csv", middleware.SuperAdminRequired(), controllers.ImportPurchaseBillsCSV)
+		purchase.POST("/bills/download-pdf", controllers.DownloadPurchaseBillsPDFZip)
 		purchase.POST("/bills/download-source", middleware.SuperAdminRequired(), controllers.DownloadSourcePurchaseBills)
 	}
 
@@ -566,6 +567,13 @@ func SetupRoutes(r *gin.Engine) {
 		loyalty.GET("/parties/:party_id", controllers.GetPartyLoyaltyBalance)
 		loyalty.POST("/parties/:party_id/adjust", controllers.AdjustPartyLoyalty)
 		loyalty.POST("/calculate-redemption", controllers.CalculateLoyaltyRedemption)
+		loyalty.GET("/card-design", controllers.GetLoyaltyCardDesign)
+		loyalty.PUT("/card-design", controllers.UpdateLoyaltyCardDesign)
+		loyalty.GET("/cards", controllers.ListLoyaltyCards)
+		loyalty.GET("/cards/lookup", controllers.LookupLoyaltyCard)
+		loyalty.POST("/cards/generate", controllers.GenerateLoyaltyCards)
+		loyalty.POST("/cards/:id/assign", controllers.AssignLoyaltyCard)
+		loyalty.DELETE("/cards/:id", controllers.DeleteLoyaltyCard)
 	}
 
 	// Party routes
@@ -574,6 +582,7 @@ func SetupRoutes(r *gin.Engine) {
 	{
 		parties.GET("", controllers.GetParties)
 		parties.GET("/stats", controllers.GetPartyStats)
+		parties.GET("/pdf", controllers.ExportPartiesPDF)
 		parties.POST("", controllers.CreateParty)
 		parties.GET("/:id/ledger", controllers.GetPartyLedger)
 		parties.GET("/:id/ledger/excel", controllers.ExportPartyLedgerExcel)
@@ -620,7 +629,8 @@ func SetupRoutes(r *gin.Engine) {
 		creditNotes.GET("/:id", controllers.GetCreditNote)
 		creditNotes.PUT("/:id", controllers.UpdateCreditNote)
 		creditNotes.POST("/:id/issue", controllers.IssueCreditNote)
-		creditNotes.DELETE("/:id", controllers.DeleteCreditNote)
+		creditNotes.POST("/:id/cancel", controllers.CancelCreditNote)
+		creditNotes.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeleteCreditNote)
 	}
 
 	// Purchase Return routes
@@ -645,7 +655,8 @@ func SetupRoutes(r *gin.Engine) {
 		debitNotes.GET("/:id", controllers.GetDebitNote)
 		debitNotes.PUT("/:id", controllers.UpdateDebitNote)
 		debitNotes.POST("/:id/issue", controllers.IssueDebitNote)
-		debitNotes.DELETE("/:id", controllers.DeleteDebitNote)
+		debitNotes.POST("/:id/cancel", controllers.CancelDebitNote)
+		debitNotes.DELETE("/:id", middleware.SuperAdminRequired(), controllers.DeleteDebitNote)
 	}
 
 	// Cash & Bank routes
@@ -790,6 +801,17 @@ func SetupRoutes(r *gin.Engine) {
 		// Weighing scale settings
 		settings.GET("/weighing-scale", controllers.GetWeighingScaleSettings)
 		settings.PUT("/weighing-scale", controllers.UpdateWeighingScaleSettings)
+
+		// Attendance reminder settings
+		settings.GET("/attendance-reminder", controllers.GetAttendanceReminderSettings)
+		settings.PUT("/attendance-reminder", controllers.UpdateAttendanceReminderSettings)
+
+		// WhatsApp invoice message (WhatsApp Cloud API), per store
+		settings.GET("/whatsapp-invoice", controllers.GetWhatsAppInvoiceSettings)
+		settings.PUT("/whatsapp-invoice", controllers.UpdateWhatsAppInvoiceSettings)
+		settings.PUT("/whatsapp-invoice/enabled", controllers.SetWhatsAppInvoiceEnabled)
+		settings.POST("/whatsapp-invoice/test", controllers.TestWhatsAppInvoice)
+		settings.GET("/whatsapp-invoice/logs", controllers.GetWhatsAppInvoiceLogs)
 
 		// Reminders
 		settings.GET("/reminders", controllers.GetReminders)
@@ -967,6 +989,21 @@ func SetupRoutes(r *gin.Engine) {
 		pageFeatures.PUT("", middleware.SuperAdminRequired(), controllers.UpdatePageFeatures)
 	}
 
+	// Sale discount mode + auto-discount rule (read: any auth user; write: super admin)
+	saleDiscountSettings := r.Group("/api/v1/sale-discount-settings")
+	saleDiscountSettings.Use(middleware.AuthRequired())
+	{
+		saleDiscountSettings.GET("", controllers.GetSaleDiscountSettings)
+		saleDiscountSettings.PUT("", middleware.SuperAdminRequired(), controllers.UpdateSaleDiscountSettings)
+	}
+
+	// Discount transaction history for the dedicated Discount page.
+	discounts := r.Group("/api/v1/discounts")
+	discounts.Use(middleware.AuthRequired())
+	{
+		discounts.GET("/transactions", controllers.GetDiscountTransactions)
+	}
+
 	// In-app support requests (users → platform super admin)
 	supportRequests := r.Group("/api/v1/support-requests")
 	supportRequests.Use(middleware.AuthRequired())
@@ -1073,6 +1110,44 @@ func SetupRoutes(r *gin.Engine) {
 		customerPortalAdmin.GET("/tickets", controllers.AdminListSupportTickets)
 		customerPortalAdmin.PUT("/tickets/:id", controllers.AdminUpdateSupportTicket)
 	}
+
+	// B2B shop — store-side management of the storefront, catalogue and orders.
+	// Scoped to the active store like every other operational route.
+	b2bShop := r.Group("/api/v1/b2b-shop")
+	b2bShop.Use(middleware.AuthRequired())
+	{
+		b2bShop.GET("/settings", controllers.GetB2BShopSettings)
+		b2bShop.PUT("/settings", controllers.UpdateB2BShopSettings)
+		b2bShop.GET("/catalog", controllers.ListB2BCatalog)
+		b2bShop.POST("/catalog/bulk", controllers.BulkUpdateB2BCatalog)
+		b2bShop.PUT("/catalog/:product_id", controllers.UpsertB2BCatalogItem)
+		b2bShop.GET("/catalog/:product_id/images", controllers.GetB2BCatalogImages)
+		b2bShop.PUT("/catalog/:product_id/image", controllers.SetB2BCatalogMainImage)
+		b2bShop.GET("/orders", controllers.ListB2BOrders)
+		b2bShop.GET("/orders/pending-items", controllers.ListB2BPendingItems)
+		b2bShop.GET("/orders/export", controllers.ExportB2BOrders)
+		b2bShop.GET("/orders/:id", controllers.GetB2BOrder)
+		b2bShop.PUT("/orders/:id", controllers.UpdateB2BOrder)
+		b2bShop.PATCH("/orders/:id/status", controllers.UpdateB2BOrderStatus)
+		b2bShop.POST("/orders/:id/estimate", controllers.CreateB2BOrderEstimate)
+		b2bShop.DELETE("/orders/:id", controllers.DeleteB2BOrder)
+	}
+
+	// B2B shop — public storefront (no auth). Rate limited per IP; order
+	// placement and buyer lookup get tighter budgets than browsing.
+	shopPublic := r.Group("/api/v1/shop/:slug")
+	shopPublic.Use(middleware.RateLimitByIP(240, time.Minute))
+	{
+		shopPublic.GET("", controllers.GetPublicB2BShop)
+		shopPublic.GET("/products", controllers.ListPublicB2BProducts)
+		shopPublic.GET("/products/:id", controllers.GetPublicB2BProduct)
+		shopPublic.GET("/buyers", middleware.RateLimitByIP(30, time.Minute), controllers.SearchPublicB2BBuyers)
+		shopPublic.POST("/orders", middleware.RateLimitByIP(10, 10*time.Minute), controllers.PlacePublicB2BOrder)
+		shopPublic.GET("/orders/:number", middleware.RateLimitByIP(20, time.Minute), controllers.TrackPublicB2BOrder)
+	}
+
+	// Signed, expiring public invoice PDF link (WhatsApp document attachment)
+	r.GET("/api/v1/public/invoice-pdf/:token", controllers.PublicInvoicePDF)
 
 	// Customer portal — public & customer session
 	portalPublic := r.Group("/api/v1/portal")
