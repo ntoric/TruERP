@@ -211,6 +211,17 @@ func allApplicationModels() []interface{} {
 		&models.DBBackupSettings{},
 		&models.DBBackupRecord{},
 		&models.MigrationJob{},
+		&models.OAuthClient{},
+		&models.OAuthCode{},
+		&models.OAuthRefreshToken{},
+		&models.APIKey{},
+		&models.IntegrationPolicy{},
+		&models.WebhookEndpoint{},
+		&models.IntegrationEvent{},
+		&models.IntegrationScanCursor{},
+		&models.WebhookDelivery{},
+		&models.APIIdempotencyRecord{},
+		&models.APIRequestLog{},
 	}
 }
 

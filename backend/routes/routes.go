@@ -27,6 +27,29 @@ func SetupRoutes(r *gin.Engine) {
 		auth.POST("/app-version", middleware.AuthRequired(), controllers.ReportAppVersion)
 	}
 
+	// OAuth 2.0 authorization server (discovery, consent, tokens)
+	r.GET("/.well-known/oauth-authorization-server", controllers.OAuthDiscovery)
+	r.GET("/.well-known/openid-configuration", controllers.OAuthDiscovery)
+
+	oauth := r.Group("/api/v1/oauth")
+	{
+		oauth.GET("/.well-known/oauth-authorization-server", controllers.OAuthDiscovery)
+		oauth.GET("/authorize", controllers.OAuthAuthorize)
+		// Credential-checking endpoints are rate limited per IP.
+		oauth.POST("/authorize", middleware.RateLimitByIP(20, time.Minute), controllers.OAuthAuthorize)
+		oauth.POST("/token", middleware.RateLimitByIP(60, time.Minute), controllers.OAuthToken)
+		oauth.POST("/revoke", middleware.RateLimitByIP(60, time.Minute), controllers.OAuthRevoke)
+		oauth.GET("/userinfo", middleware.AuthRequired(), controllers.OAuthUserInfo)
+
+		// Legacy client-management paths (super admin); the admin UI uses
+		// /api/v1/admin/integrations/oauth-clients.
+		oauth.GET("/clients", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.ListOAuthClients)
+		oauth.POST("/clients", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.CreateOAuthClient)
+		oauth.DELETE("/clients/:id", middleware.AuthRequired(), middleware.SuperAdminRequired(), controllers.DeleteOAuthClient)
+	}
+
+	setupPublicAPIRoutes(r)
+
 	// Store management (super admin)
 	stores := r.Group("/api/v1/stores")
 	stores.Use(middleware.AuthRequired(), middleware.SuperAdminRequired())
